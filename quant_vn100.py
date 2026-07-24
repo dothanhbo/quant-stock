@@ -17,16 +17,17 @@ VOL_FACTOR = 1.2     # Volume thực tế gấp >= 1.2 lần MA20
 RSI_MIN = 45         # RSI từ 45 trở lên (xu hướng khỏe)
 RSI_MAX = 70         # RSI dưới 70 (tránh mua đuổi quá mua)
 
-VN100_LIST = [
-    "ACB", "BCM", "BID", "BVH", "CTG", "FPT", "GAS", "GVR", "HDB", "HPG",
-    "MBB", "MSN", "MWG", "PLX", "POW", "SAB", "SSB", "SSI", "STB", "TCB",
-    "TPB", "VCB", "VHM", "VIB", "VIC", "VJC", "VNM", "VPB", "VRE", "AAA",
-    "AGG", "ASM", "BCG", "BFC", "BMP", "CII", "CTD", "DBC", "DCM", "DIG",
-    "DPM", "DXG", "EIB", "EVF", "FRT", "GEX", "HDG", "HHV", "HSG", "KBC",
-    "KDC", "KDH", "LPB", "MSB", "NLG", "NT2", "NVL", "OCB", "PAN", "PC1",
-    "PDR", "PHR", "PVD", "PVT", "REE", "SBT", "SJS", "SZC", "TCH", "VCI",
-    "VGC", "VHC", "VIX", "VPI", "VOS", "VSC"
-]
+from vnstock import Stock
+
+# Lấy danh sách mã thuộc chỉ số VN100 tự động từ HOSE
+try:
+    stock = Stock(source='VCI')
+    # Lấy danh sách toàn bộ mã VN100 hiện tại
+    vn100_df = stock.listing.symbols_by_group('VN100') 
+    VN100_LIST = vn100_df['symbol'].tolist()
+    print(f"✅ Đã tải thành công {len(VN100_LIST)} mã thuộc VN100!")
+except Exception as e:
+    print(f"❌ Không lấy được danh sách VN100 tự động: {e}")
 
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
