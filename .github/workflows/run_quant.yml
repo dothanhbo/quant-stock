@@ -5,11 +5,11 @@ on:
     # 14:45 giờ Việt Nam (UTC+7) tương ứng với 07:45 UTC
     # Chạy từ Thứ 2 đến Thứ 6 hàng tuần
     - cron: '45 7 * * 1-5'
-  workflow_dispatch: # Cho phép nhấn nút chạy thử thủ công bất cứ lúc nào
+  workflow_dispatch: # Cho phép bấm nút chạy thủ công bất kỳ lúc nào
 
 jobs:
   run-quant-script:
-    runs-runs-on: ubuntu-latest
+    runs-on: ubuntu-latest
 
     steps:
       - name: Checkout repository code
