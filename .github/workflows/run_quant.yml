@@ -2,7 +2,7 @@ name: Quant VN100 Daily Scan
 
 on:
   schedule:
-    # 14:45 giờ Việt Nam (UTC+7) tương ứng với 07:45 UTC
+    # 14:45 giờ Việt Nam (UTC+7) = 07:45 UTC
     # Chạy từ Thứ 2 đến Thứ 6 hàng tuần
     - cron: '45 7 * * 1-5'
   workflow_dispatch: # Cho phép bấm nút chạy thủ công bất kỳ lúc nào
