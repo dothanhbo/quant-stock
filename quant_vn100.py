@@ -99,7 +99,7 @@ def scan_quant_signals():
                 print(f"✅ [{i+1}/{len(tickers)}] TÌM THẤY MÃ: {ticker} | Giá: {price_vnd:,.0f} | RSI: {latest['RSI']:.1f}")
                 send_telegram(msg)
 
-            time.sleep(0.5)
+            time.sleep(3)
 
         except Exception as e:
             continue
