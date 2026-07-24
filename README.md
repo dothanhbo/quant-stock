@@ -1,4 +1,5 @@
 #UPDATE SOON
+
 Thêm bộ lọc Thị trường chung (VN-Index Filter):
 
 Cho bot kiểm tra VN-Index trước. Nếu VN-Index nằm dưới MA20 (thị trường xấu/downtrend), bot sẽ ngắt không quét nữa hoặc gửi cảnh báo "Thị trường rủi ro, không khuyến nghị mở vị thế".
