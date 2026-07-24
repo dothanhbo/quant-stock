@@ -80,7 +80,7 @@ def check_vnindex_health():
         
         if vni_close < vni_ma20:
             msg_alert = (
-                "🚨 *[CẢNH BÁO THỊ TRƯỜNG CHUNG]* 🚨\n\n"
+                "🚨 *[CẢNH BÁO THỊ TRƯỜNG CHUNG]*\n\n"
                 f"📌 *VN-Index:* `{vni_close:.2f}` (Dưới MA20 `{vni_ma20:.2f}`)\n"
                 "⚠️ *Đánh giá:* Xu hướng thị trường chung đang đi vào vùng rủi ro/Downtrend ngắn hạn.\n"
                 "⛔ *Hành động:* Bot dừng quét để bảo vệ vốn. **Không khuyến nghị mở vị thế mua mới!**"
@@ -176,7 +176,7 @@ def scan_quant_signals():
                 pct_tp = round(((take_profit - price_vnd) / price_vnd) * 100, 1)
 
                 msg = (
-                    f"🚀 *[TÍN HIỆU QUANT TĂNG TRƯỞNG VN100]* 🚀\n\n"
+                    f"🚀 *[TÍN HIỆU QUANT TĂNG TRƯỞNG VN100]*\n\n"
                     f"📌 *Mã cổ phiếu:* `{ticker}`\n"
                     f"📈 *Giá Mua (Entry):* {price_vnd:,.0f} VNĐ\n"
                     f"📊 *Vol thực tế:* {int(actual_vol):,} CP (Gấp *{vol_ratio}x* MA20)\n"
