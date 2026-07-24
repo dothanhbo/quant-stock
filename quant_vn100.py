@@ -2,7 +2,7 @@ import time
 import requests
 import pandas as pd
 from datetime import datetime, timedelta
-from vnstock import listing  # <-- Sửa dòng này (import module listing)
+from vnstock import Vnstock
 from vnstock.api.quote import Quote
 
 # ==========================================
@@ -22,10 +22,14 @@ RSI_MAX = 70
 # 3. CÁC HÀM BỔ TRỢ
 # ==========================================
 def get_vn100_symbols():
-    """Lấy danh sách mã VN100 trực tiếp từ API bằng module listing"""
-    # Lấy danh sách toàn bộ cổ phiếu niêm yết
-    df_symbols = listing.symbols_by_group('VN100')
-    return df_symbols.tolist()
+    """Lấy danh sách mã VN100 chuẩn từ class Vnstock"""
+    stock = Vnstock()
+    df_symbols = stock.stock(symbol='ACB', source='VCI').listing.symbols_by_group('VN100')
+    
+    # Kiểm tra dữ liệu trả về dạng Series hay DataFrame để lấy danh sách mã
+    if isinstance(df_symbols, pd.DataFrame):
+        return df_symbols['ticker'].tolist()
+    return list(df_symbols)
 
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
@@ -49,7 +53,7 @@ def scan_quant_signals():
     today_str = datetime.now().strftime("%Y-%m-%d")
     start_str = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%d")
 
-    # Gọi hàm lấy danh sách
+    # Lấy danh sách VN100
     tickers = get_vn100_symbols()
 
     print(f"🔍 Bắt đầu quét {len(tickers)} cổ phiếu VN100...")
