@@ -13,7 +13,7 @@ CHAT_ID = "5137019839e"
 # ==========================================
 # 2. THAM SỐ LỌC KỸ THUẬT (CÓ THỂ ĐIỀU CHỈNH)
 # ==========================================
-VOL_FACTOR = 1.2     # Volume dự kiến gấp >= 1.2 lần MA20
+VOL_FACTOR = 1.2     # Volume thực tế gấp >= 1.2 lần MA20
 RSI_MIN = 45         # RSI từ 45 trở lên (xu hướng khỏe)
 RSI_MAX = 70         # RSI dưới 70 (tránh mua đuổi quá mua)
 
@@ -44,32 +44,13 @@ def calculate_rsi(series, period=14):
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
-def get_market_progress():
-    """Tính tỷ lệ thời gian phiên giao dịch đã trôi qua"""
-    now = datetime.now()
-    market_start = now.replace(hour=9, minute=15, second=0)
-    market_end = now.replace(hour=14, minute=30, second=0)
-    
-    if now <= market_start:
-        return 0.1
-    if now >= market_end:
-        return 1.0
-        
-    elapsed = (now - market_start).total_seconds()
-    if now.hour >= 13:
-        elapsed -= 5400
-        
-    return max(0.1, min(1.0, elapsed / 15300))
-
 def scan_quant_signals():
     today_str = datetime.now().strftime("%Y-%m-%d")
     start_str = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%d")
 
-    progress = get_market_progress()
     tickers = list(set(VN100_LIST))
     
-    print(f"🔍 Bắt đầu quét {len(tickers)} cổ phiếu VN100...")
-    print(f"⏱️ Tiến độ phiên giao dịch: {round(progress*100, 1)}%\n")
+    print(f"🔍 Bắt đầu quét {len(tickers)} cổ phiếu VN100 (Dữ liệu sau phiên)...")
     
     count_matches = 0
 
@@ -88,25 +69,23 @@ def scan_quant_signals():
             df['RSI'] = calculate_rsi(df['close'], period=14)
 
             latest = df.iloc[-1]
-            
-            # Dự báo Volume cả ngày dựa trên thời gian thực
-            est_vol = latest['volume'] / progress if progress < 1.0 else latest['volume']
+            actual_vol = latest['volume']  # Sử dụng khối lượng thực tế khớp lệnh trong ngày
 
             # Các điều kiện lọc kỹ thuật
-            cond_ma = latest['close'] > latest['MA10']  # Giá nằm trên MA10
-            cond_vol = est_vol >= (VOL_FACTOR * latest['Vol_MA20'])  # Đột biến Volume
-            cond_rsi = RSI_MIN <= latest['RSI'] <= RSI_MAX  # RSI hợp lý
+            cond_ma = latest['close'] > latest['MA10']        # Giá nằm trên MA10
+            cond_vol = actual_vol >= (VOL_FACTOR * latest['Vol_MA20'])  # Khối lượng vượt mức tiêu chuẩn
+            cond_rsi = RSI_MIN <= latest['RSI'] <= RSI_MAX    # RSI hợp lý
 
             if cond_ma and cond_vol and cond_rsi:
                 count_matches += 1
                 price_vnd = latest['close'] * 1000
-                vol_ratio = round(est_vol / latest['Vol_MA20'], 1)
+                vol_ratio = round(actual_vol / latest['Vol_MA20'], 1)
                 
                 msg = (
                     f"🚀 *[TÍN HIỆU TĂNG TRƯỞNG VN100]* 🚀\n\n"
                     f"📌 *Mã cổ phiếu:* `{ticker}`\n"
-                    f"📈 *Giá hiện tại:* {price_vnd:,.0f} VNĐ\n"
-                    f"📊 *Vol ước tính:* {int(est_vol):,} CP (Gấp *{vol_ratio}x* MA20)\n"
+                    f"📈 *Giá đóng cửa:* {price_vnd:,.0f} VNĐ\n"
+                    f"📊 *Vol thực tế:* {int(actual_vol):,} CP (Gấp *{vol_ratio}x* MA20)\n"
                     f"🎯 *Chỉ số RSI:* {latest['RSI']:.1f}\n"
                     f"⚡ *Đánh giá:* Vượt MA10 + Đột biến Vol + RSI trong vùng mua đẹp!"
                 )
@@ -114,7 +93,7 @@ def scan_quant_signals():
                 print(f"✅ [{i+1}/{len(tickers)}] TÌM THẤY MÃ: {ticker} | Giá: {price_vnd:,.0f} | RSI: {latest['RSI']:.1f}")
                 send_telegram(msg)
 
-            time.sleep(3.0)
+            time.sleep(1.0)  # Giảm sleep time xuống chút vì chạy cuối ngày không cần duy trì liên tục quá lâu
 
         except Exception as e:
             continue
