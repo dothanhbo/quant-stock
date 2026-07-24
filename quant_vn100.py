@@ -17,17 +17,11 @@ VOL_FACTOR = 1.2     # Volume thực tế gấp >= 1.2 lần MA20
 RSI_MIN = 45         # RSI từ 45 trở lên (xu hướng khỏe)
 RSI_MAX = 70         # RSI dưới 70 (tránh mua đuổi quá mua)
 
-from vnstock import Stock
-
-# Lấy danh sách mã thuộc chỉ số VN100 tự động từ HOSE
-try:
-    stock = Stock(source='VCI')
-    # Lấy danh sách toàn bộ mã VN100 hiện tại
-    vn100_df = stock.listing.symbols_by_group('VN100') 
-    VN100_LIST = vn100_df['symbol'].tolist()
-    print(f"✅ Đã tải thành công {len(VN100_LIST)} mã thuộc VN100!")
-except Exception as e:
-    print(f"❌ Không lấy được danh sách VN100 tự động: {e}")
+def get_vn100_symbols():
+    """Lấy danh sách mã VN100 trực tiếp từ API"""
+    df_symbols = listing_companies()
+    vn100_df = df_symbols[df_symbols['group'] == 'VN100']
+    return vn100_df['ticker'].tolist()
 
 def send_telegram(message):
     url = f"https://api.telegram.org/bot{TELEGRAM_TOKEN}/sendMessage"
