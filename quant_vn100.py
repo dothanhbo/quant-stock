@@ -88,7 +88,7 @@ def scan_quant_signals():
                 vol_ratio = round(actual_vol / latest['Vol_MA20'], 1)
                 
                 msg = (
-                    f"🚀 *[TÍN HIỆU TĂNG TRƯỞNG VN100]* 🚀\n\n"
+                    f"🚀 *[TÍN HIỆU TĂNG TRƯỞNG VN100]*\n\n"
                     f"📌 *Mã cổ phiếu:* `{ticker}`\n"
                     f"📈 *Giá đóng cửa:* {price_vnd:,.0f} VNĐ\n"
                     f"📊 *Vol thực tế:* {int(actual_vol):,} CP (Gấp *{vol_ratio}x* MA20)\n"
