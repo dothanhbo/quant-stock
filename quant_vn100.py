@@ -2,6 +2,7 @@ import time
 import requests
 import pandas as pd
 from datetime import datetime, timedelta
+from vnstock import listing_companies
 from vnstock.api.quote import Quote
 
 # ==========================================
@@ -11,12 +12,15 @@ TELEGRAM_TOKEN = "8860199022:AAHNtR2Xd5eekkzRvG_ILrslvrc4pKNwd2I"
 CHAT_ID = "5137019839e"
 
 # ==========================================
-# 2. THAM SỐ LỌC KỸ THUẬT (CÓ THỂ ĐIỀU CHỈNH)
+# 2. THAM SỐ LỌC KỸ THUẬT
 # ==========================================
-VOL_FACTOR = 1.2     # Volume thực tế gấp >= 1.2 lần MA20
-RSI_MIN = 45         # RSI từ 45 trở lên (xu hướng khỏe)
-RSI_MAX = 70         # RSI dưới 70 (tránh mua đuổi quá mua)
+VOL_FACTOR = 1.2
+RSI_MIN = 45
+RSI_MAX = 70
 
+# ==========================================
+# 3. CÁC HÀM BỔ TRỢ
+# ==========================================
 def get_vn100_symbols():
     """Lấy danh sách mã VN100 trực tiếp từ API"""
     df_symbols = listing_companies()
@@ -32,20 +36,23 @@ def send_telegram(message):
         print(f"Lỗi gửi Telegram: {e}")
 
 def calculate_rsi(series, period=14):
-    """Tính RSI bằng Pandas thuần"""
     delta = series.diff()
     gain = (delta.where(delta > 0, 0)).rolling(window=period).mean()
     loss = (-delta.where(delta < 0, 0)).rolling(window=period).mean()
     rs = gain / loss
     return 100 - (100 / (1 + rs))
 
+# ==========================================
+# 4. HÀM SCAN CHÍNH
+# ==========================================
 def scan_quant_signals():
     today_str = datetime.now().strftime("%Y-%m-%d")
     start_str = (datetime.now() - timedelta(days=60)).strftime("%Y-%m-%d")
 
-    tickers = list(set(VN100_LIST))
-    
-    print(f"🔍 Bắt đầu quét {len(tickers)} cổ phiếu VN100 (Dữ liệu sau phiên)...")
+    # Gọi hàm riêng để lấy danh sách
+    tickers = get_vn100_symbols()
+
+    print(f"🔍 Bắt đầu quét {len(tickers)} cổ phiếu VN100...")
     
     count_matches = 0
 
@@ -64,12 +71,12 @@ def scan_quant_signals():
             df['RSI'] = calculate_rsi(df['close'], period=14)
 
             latest = df.iloc[-1]
-            actual_vol = latest['volume']  # Sử dụng khối lượng thực tế khớp lệnh trong ngày
+            actual_vol = latest['volume']
 
-            # Các điều kiện lọc kỹ thuật
-            cond_ma = latest['close'] > latest['MA10']        # Giá nằm trên MA10
-            cond_vol = actual_vol >= (VOL_FACTOR * latest['Vol_MA20'])  # Khối lượng vượt mức tiêu chuẩn
-            cond_rsi = RSI_MIN <= latest['RSI'] <= RSI_MAX    # RSI hợp lý
+            # Điều kiện lọc kỹ thuật
+            cond_ma = latest['close'] > latest['MA10']
+            cond_vol = actual_vol >= (VOL_FACTOR * latest['Vol_MA20'])
+            cond_rsi = RSI_MIN <= latest['RSI'] <= RSI_MAX
 
             if cond_ma and cond_vol and cond_rsi:
                 count_matches += 1
@@ -88,7 +95,7 @@ def scan_quant_signals():
                 print(f"✅ [{i+1}/{len(tickers)}] TÌM THẤY MÃ: {ticker} | Giá: {price_vnd:,.0f} | RSI: {latest['RSI']:.1f}")
                 send_telegram(msg)
 
-            time.sleep(3.0)  # Giảm sleep time xuống chút vì chạy cuối ngày không cần duy trì liên tục quá lâu
+            time.sleep(0.5)
 
         except Exception as e:
             continue
