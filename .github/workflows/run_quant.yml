@@ -2,8 +2,7 @@ name: Run Quant VN100 Script
 
 on:
   schedule:
-   - cron: '30 16 * * 1-5'
-   # 15:00 giờ VN (Thứ 2 - Thứ 6)
+   - cron: '00 8 * * 1-5'
   workflow_dispatch:
 
 jobs:
