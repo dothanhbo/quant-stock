@@ -174,7 +174,7 @@ def scan_quant_signals():
                 print(f"✅ [{i+1}/{len(tickers)}] TÌM THẤY MÃ: {ticker} | Giá: {price_vnd:,.0f} | RSI: {latest['RSI']:.1f}")
                 send_telegram(msg)
 
-            time.sleep(1)  # Giảm delay xuống 1 giây để quét nhanh hơn
+            time.sleep(3)  # Giảm delay xuống 1 giây để quét nhanh hơn
 
         except Exception as e:
             continue
