@@ -101,7 +101,7 @@ def check_vnindex_health():
 # ==========================================
 def scan_quant_signals():
     # Bước 1: Kiểm tra VN-Index trước
-    if check_vnindex_health():
+    if not check_vnindex_health():
         return
 
     today_str = datetime.now().strftime("%Y-%m-%d")
