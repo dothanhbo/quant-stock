@@ -9,6 +9,9 @@ from database import (
     get_latest_price_date,
     save_price_data
 )
+from vnstock import Vnstock
+
+stock_api = Vnstock()
 
 
 # ==========================================
@@ -22,14 +25,6 @@ INITIAL_HISTORY_DAYS = 500
 REFRESH_OVERLAP_DAYS = 7
 
 REQUEST_DELAY_SECONDS = 1.1
-
-
-# Danh sách này có thể thay bằng danh sách VN100
-# mà file hiện tại của bạn đang lấy được.
-VN100 = [
-    "ACB", "ANV", "BAF", "BCM", "BID",
-    # ...
-]
 
 def get_vn100_symbols():
 
@@ -204,4 +199,10 @@ def update_all_symbols(symbols):
 
 if __name__ == "__main__":
     symbols = get_vn100_symbols()
-    update_all_symbols(VN100)
+
+    if len(symbols) < 90:
+        raise RuntimeError(
+            f"Danh sách VN100 không hợp lệ: chỉ có {len(symbols)} mã"
+        )
+
+    update_all_symbols(symbols)
