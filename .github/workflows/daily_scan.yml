@@ -41,12 +41,6 @@ jobs:
           python -m pip install --upgrade pip
           pip install -r requirements.txt
 
-      - name: Create environment file
-        run: |
-          echo "TELEGRAM_TOKEN=$TELEGRAM_TOKEN" >> .env
-          echo "CHAT_ID=$CHAT_ID" >> .env
-          echo "VNSTOCK_API_KEY=$VNSTOCK_API_KEY" >> .env
-
       - name: Run Quant Bot
         run: python main.py
 
