@@ -133,20 +133,18 @@ def init_database():
 def save_price_data(df):
 
     if df.empty:
-        return
-
+        return 0
 
     data = df.copy()
-
 
     # Chuẩn hóa tên cột
     data.columns = [
         c.lower()
         for c in data.columns
     ]
+
     # Convert Timestamp sang string
     data["time"] = data["time"].astype(str)
-
 
     required = [
         "time",
@@ -158,16 +156,11 @@ def save_price_data(df):
         "symbol"
     ]
 
-
     for col in required:
-
         if col not in data.columns:
-
             raise Exception(
                 f"Missing column: {col}"
             )
-
-
 
     records = data[
         required
@@ -175,47 +168,37 @@ def save_price_data(df):
         orient="records"
     )
 
-
     insert_sql = """
-
-    INSERT OR REPLACE INTO prices
-
-    (
-        symbol,
-        time,
-        open,
-        high,
-        low,
-        close,
-        volume
-    )
-
-    VALUES
-
-    (
-        :symbol,
-        :time,
-        :open,
-        :high,
-        :low,
-        :close,
-        :volume
-    )
-
+        INSERT OR REPLACE INTO prices
+        (
+            symbol,
+            time,
+            open,
+            high,
+            low,
+            close,
+            volume
+        )
+        VALUES
+        (
+            :symbol,
+            :time,
+            :open,
+            :high,
+            :low,
+            :close,
+            :volume
+        )
     """
 
-
-
     with engine.connect() as conn:
-
         conn.execute(
             text(insert_sql),
             records
         )
-
         conn.commit()
-return len(records)
 
+    return len(records)
 
 # ==========================
 # LOAD DATA
