@@ -214,7 +214,7 @@ def save_price_data(df):
         )
 
         conn.commit()
-
+return len(records)
 
 
 # ==========================
