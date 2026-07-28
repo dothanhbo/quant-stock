@@ -44,13 +44,15 @@ jobs:
       - name: Run Quant Bot
         run: python main.py
 
-       - name: Save updated database
+      - name: Save updated database
         if: always()
+        shell: bash
         run: |
+          git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git config user.name "quant-bot"
           git config user.email "quant-bot@users.noreply.github.com"
 
-          echo "Git status trước khi commit:"
+          echo "===== Git status trước khi commit ====="
           git status --short
 
           git add market.db
@@ -61,7 +63,4 @@ jobs:
           fi
 
           git commit -m "Update market database $(date +'%Y-%m-%d')"
-
-          # Không dùng git pull --rebase
           git push origin HEAD:main
-          fi
