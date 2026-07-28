@@ -55,6 +55,7 @@ jobs:
           echo "===== Git status trước khi commit ====="
           git status --short
 
+          git restore AGENTS.md 2>/dev/null || true
           git add market.db
 
           if git diff --cached --quiet; then
