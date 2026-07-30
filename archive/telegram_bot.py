@@ -1,7 +1,7 @@
 import requests
 
-from config import TELEGRAM_TOKEN
-from config import CHAT_ID
+from config.settings import TELEGRAM_TOKEN
+from config.settings import CHAT_ID
 
 def send(message):
 

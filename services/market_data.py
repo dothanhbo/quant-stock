@@ -1,7 +1,7 @@
 from vnstock.api.quote import Quote
 import pandas as pd
 
-from database import save_price_data
+from core.database import save_price_data
 
 
 def get_history(symbol):

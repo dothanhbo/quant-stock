@@ -1,4 +1,4 @@
-from database import init_database
+from core.database import init_database
 
 init_database()
 

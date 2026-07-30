@@ -1,7 +1,7 @@
 import pandas as pd
 
-from database import load_price_data
-from modules.indicators import add_indicators
+from core.database import load_price_data
+from strategy.indicators import add_indicators
 
 
 def get_vnindex_status():

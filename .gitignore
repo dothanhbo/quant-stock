@@ -9,3 +9,18 @@ __pycache__/
 *.log
 .DS_Store
 Thumbs.db
+
+# Python
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+
+# IDE
+.vs/
+.vscode/
+
+# Runtime output
+logs/
+backtest_results*/
+*.pkl

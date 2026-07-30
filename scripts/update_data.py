@@ -5,7 +5,7 @@ import pandas as pd
 
 from vnstock.api.quote import Quote
 
-from database import (
+from core.database import (
     get_latest_price_date,
     save_price_data
 )

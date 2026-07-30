@@ -1,7 +1,7 @@
 import numpy as np
 import pandas as pd
 
-from database import load_price_data
+from core.database import load_price_data
 
 
 def calculate_relative_strength(

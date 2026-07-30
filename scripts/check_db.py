@@ -1,4 +1,4 @@
-from database import load_price_data
+from core.database import load_price_data
 
 df = load_price_data("HPG")
 

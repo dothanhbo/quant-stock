@@ -1,6 +1,6 @@
 from sqlalchemy import text
 
-from database import engine
+from core.database import engine
 
 
 def save_signal(signal):

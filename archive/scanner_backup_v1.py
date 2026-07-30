@@ -1,13 +1,13 @@
 from sqlalchemy import text
-from signal_database import save_signal
-from database import (
+from core.signal_database import save_signal
+from core.database import (
     engine,
     load_price_data,
     get_symbol_latest_dates,
     get_reference_market_date
 )
-from modules.indicators import add_indicators
-from modules.telegram import build_scan_message, send_telegram
+from strategy.indicators import add_indicators
+from services.telegram import build_scan_message, send_telegram
 import pandas as pd
 
 # ==========================================

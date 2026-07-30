@@ -6,7 +6,7 @@ from typing import Any
 import pandas as pd
 from sqlalchemy import text
 
-from database import engine, load_price_data
+from core.database import engine, load_price_data
 
 
 # ==========================================
