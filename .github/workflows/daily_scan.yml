@@ -45,18 +45,21 @@ jobs:
         run: python main.py
 
       - name: Save updated database
-        if: always()
+        if: success()
         shell: bash
         run: |
           git config --global --add safe.directory "$GITHUB_WORKSPACE"
           git config user.name "quant-bot"
           git config user.email "quant-bot@users.noreply.github.com"
 
+          # Không commit thay đổi ngoài ý muốn
+          git restore AGENTS.md 2>/dev/null || true
+
           echo "===== Git status trước khi commit ====="
           git status --short
 
-          git restore AGENTS.md 2>/dev/null || true
-          git add market.db
+          # market.db đang bị .gitignore chặn nên cần -f
+          git add -f market.db
 
           if git diff --cached --quiet; then
             echo "market.db không thay đổi."
@@ -64,4 +67,7 @@ jobs:
           fi
 
           git commit -m "Update market database $(date +'%Y-%m-%d')"
+
+          # Hạn chế lỗi khi remote vừa có commit mới
+          git pull --rebase origin main
           git push origin HEAD:main
