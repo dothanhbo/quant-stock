@@ -36,3 +36,7 @@ market-backup.db
 signal_cache.pkl
 __pycache__/
 logs/
+.env
+__pycache__/
+.pytest_cache/
+*.pyc

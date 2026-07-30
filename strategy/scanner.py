@@ -1,530 +1,189 @@
-from sqlalchemy import text
-from core.signal_database import save_signal
-from core.database import (
-    engine,
-    load_price_data,
-    get_symbol_latest_dates,
-    get_reference_market_date
-)
-from strategy.indicators import add_indicators
-from services.telegram import build_scan_message, send_telegram
+"""VN100 scanner orchestration.
+
+Business rules live in dedicated modules:
+- strategy.filters
+- strategy.scoring
+- strategy.watchlist
+- risk.levels
+- reporting.dashboard
+"""
+
+from __future__ import annotations
+
+from collections import Counter
+from typing import Optional
+
 import pandas as pd
+from sqlalchemy import text
 
-# ==========================================
-# CẤU HÌNH CHIẾN LƯỢC
-# ==========================================
+from config.strategy_loader import COMMON_CONFIG
+from core.database import engine, get_reference_market_date, get_symbol_latest_dates, load_price_data
+from core.signal_database import save_signal
+from reporting.dashboard import print_end_of_day_dashboard, print_scan_results
+from risk.levels import calculate_risk_levels
+from services.telegram import build_scan_message, send_telegram
+from strategy.cache import get_indicators_cached
+from strategy.filters import REQUIRED_INDICATORS, evaluate_conditions, trend_passes
+from strategy.market_regime import get_market_regime
+from strategy.relative_strength import calculate_relative_strength
+from strategy.scoring import calculate_score
+from strategy.watchlist import classify
 
-MIN_DATA_ROWS = 80
-TOP_RESULTS = 10
+MIN_DATA_ROWS = int(COMMON_CONFIG["min_data_rows"])
+TOP_RESULTS = int(COMMON_CONFIG["top_results"])
+TOP_WATCHLIST = int(COMMON_CONFIG["top_watchlist"])
+RS_PERIOD = int(COMMON_CONFIG.get("rs_period", 20))
 
-RSI_MIN = 45
-RSI_MAX = 72
-
-MAX_DISTANCE_EMA20 = 10.0
-
-MIN_ADX = 20
-MIN_VOL_RATIO = 1.2
-
-MAX_RETURN_3D = 15.0
-
-RR_RATIO = 2.0
-ATR_STOP_MULTIPLIER = 1.5
-
-DEBUG_REJECTED = False
+# Backward-compatible aliases for earlier imports.
+_trend_passes = trend_passes
 
 
-# ==========================================
-# LẤY DANH SÁCH MÃ TRONG DATABASE
-# ==========================================
-
-def get_all_symbols():
-    query = text("""
-        SELECT DISTINCT symbol
-        FROM prices
-        ORDER BY symbol ASC
-    """)
-
+def get_all_symbols() -> list[str]:
+    query = text("SELECT DISTINCT symbol FROM prices ORDER BY symbol ASC")
     with engine.connect() as connection:
         rows = connection.execute(query).fetchall()
-
-    return [row[0] for row in rows]
-
-# ==========================================
-# CHẤM ĐIỂM
-# ==========================================
-
-def calculate_score(latest):
-    close = float(latest["close"])
-    ema20 = float(latest["EMA20"])
-    volume_ratio = float(latest["Vol_Ratio"])
-    adx = float(latest["ADX14"])
-
-    # ==========================================
-    # HARD FILTER
-    # ==========================================
-    if adx < 15:
-        return None
-
-    if volume_ratio < 0.8:
-        return None
-
-    if close < ema20:
-        return None
-
-    score = 0
-
-    # Trend: tối đa 30 điểm
-    if close > float(latest["EMA10"]):
-        score += 10
-
-    if float(latest["EMA10"]) > ema20:
-        score += 10
-
-    if ema20 > float(latest["EMA50"]):
-        score += 5
-
-    if bool(latest["EMA20_Rising"]):
-        score += 5
-
-    # Volume: tối đa 20 điểm
-    if volume_ratio >= 2.0:
-        score += 20
-    elif volume_ratio >= 1.5:
-        score += 17
-    elif volume_ratio >= 1.2:
-        score += 13
-
-    # RSI: tối đa 15 điểm
-    rsi = float(latest["RSI"])
-
-    if 52 <= rsi <= 65:
-        score += 15
-    elif 48 <= rsi <= 72:
-        score += 10
-    elif 45 <= rsi < 48:
-        score += 5
-
-    # ADX: tối đa 10 điểm
-    if adx >= 30:
-        score += 10
-    elif adx >= 25:
-        score += 8
-    elif adx >= 20:
-        score += 6
-
-    # Breakout: tối đa 15 điểm
-    if bool(latest["Breakout_20D"]):
-        score += 10
-
-    if bool(latest["Volume_Breakout_5D"]):
-        score += 5
-
-    # Price action: tối đa 10 điểm
-    if bool(latest["Green_Candle"]):
-        score += 4
-
-    if bool(latest["Close_Upper_Half"]):
-        score += 3
-
-    if float(latest["Body_Ratio"]) >= 0.35:
-        score += 3
-
-    return min(score, 100)
-
-# ==========================================
-# TÍNH STOP LOSS VÀ TAKE PROFIT
-# ==========================================
-
-def calculate_risk_levels(latest):
-    entry = float(latest["close"])
-    atr = float(latest["ATR14"])
-    ema20 = float(latest["EMA20"])
-
-    atr_stop = entry - (ATR_STOP_MULTIPLIER * atr)
-    ema_stop = ema20 * 0.99
-
-    # Chọn mức stop gần giá hơn nhưng vẫn nằm dưới entry
-    valid_stops = [
-        stop
-        for stop in [atr_stop, ema_stop]
-        if 0 < stop < entry
-    ]
-
-    if valid_stops:
-        stop_loss = max(valid_stops)
-    else:
-        stop_loss = entry * 0.95
-
-    risk = entry - stop_loss
-
-    if risk <= 0:
-        stop_loss = entry * 0.95
-        risk = entry - stop_loss
-
-    take_profit = entry + (risk * RR_RATIO)
-
-    stop_loss_pct = (
-        (stop_loss - entry)
-        / entry
-        * 100
-    )
-
-    take_profit_pct = (
-        (take_profit - entry)
-        / entry
-        * 100
-    )
-
-    return {
-        "entry": round(entry, 2),
-        "stop_loss": round(stop_loss, 2),
-        "take_profit": round(take_profit, 2),
-        "stop_loss_pct": round(stop_loss_pct, 2),
-        "take_profit_pct": round(take_profit_pct, 2)
-    }
+    return [str(row[0]) for row in rows]
 
 
-# ==========================================
-# KIỂM TRA MỘT MÃ
-# ==========================================
-def check_signal(
-    symbol,
-    reference_date=None,
-    end_date=None
-):
+def _prepare_price_data(symbol: str, end_date=None) -> pd.DataFrame:
     df = load_price_data(symbol)
-
     if df.empty:
-        return None
+        return df
 
-    df = df.copy()
+    prepared = df.copy()
+    prepared["time"] = pd.to_datetime(prepared["time"], errors="coerce")
+    prepared = prepared.dropna(subset=["time"]).sort_values("time").reset_index(drop=True)
 
-    df["time"] = pd.to_datetime(
-        df["time"],
-        errors="coerce"
-    )
-
-    df = df.dropna(
-        subset=["time"]
-    )
-
-    df = df.sort_values(
-        by="time"
-    ).reset_index(drop=True)
-
-    # Backtest mode:
-    # Chỉ cho phép strategy nhìn dữ liệu đến end_date.
     if end_date is not None:
-        cutoff_date = pd.to_datetime(
-            end_date,
-            errors="coerce"
-        )
+        cutoff = pd.to_datetime(end_date, errors="coerce")
+        if pd.isna(cutoff):
+            raise ValueError(f"end_date không hợp lệ: {end_date}")
+        prepared = prepared[prepared["time"] <= cutoff].copy()
+    return prepared
 
-        if pd.isna(cutoff_date):
-            raise ValueError(
-                f"end_date không hợp lệ: {end_date}. "
-                "Định dạng đúng: YYYY-MM-DD"
-            )
 
-        df = df[
-            df["time"] <= cutoff_date
-        ].copy()
+def evaluate_symbol(
+    symbol: str,
+    reference_date: Optional[str] = None,
+    end_date=None,
+    market_config: Optional[dict] = None,
+) -> dict:
+    """Evaluate one symbol and always return a structured status/result."""
+    market_config = market_config or get_market_regime(end_date=end_date)
+    base = {"symbol": symbol, "status": "REJECTED", "reason": "other"}
 
-    if df.empty or len(df) < MIN_DATA_ROWS:
-        if DEBUG_REJECTED:
-            print(
-                f"⚠️ {symbol}: Không đủ dữ liệu "
-                f"đến ngày {end_date or 'hiện tại'}"
-            )
+    df = _prepare_price_data(symbol, end_date=end_date)
+    if df.empty:
+        return base
+    if len(df) < MIN_DATA_ROWS:
+        return {**base, "reason": "insufficient_data"}
 
-        return None
-
-    data = add_indicators(df)
-
+    data = get_indicators_cached(symbol, df, end_date=end_date)
     if data.empty:
-        return None
-
-    if data.empty:
-        return None
+        return base
 
     latest = data.iloc[-1]
-    latest_date = pd.to_datetime(
-        latest["time"],
-        errors="coerce"
-    )
-
+    latest_date = pd.to_datetime(latest["time"], errors="coerce")
     if pd.isna(latest_date):
-        if DEBUG_REJECTED:
-            print(
-                f"⚠️ {symbol}: Ngày dữ liệu không hợp lệ"
-            )
+        return base
+    date_text = latest_date.strftime("%Y-%m-%d")
+    if reference_date is not None and date_text != reference_date:
+        return {**base, "reason": "stale_data"}
+    if latest[REQUIRED_INDICATORS].isna().any():
+        return {**base, "reason": "indicator_nan"}
 
-        return None
+    rs = calculate_relative_strength(symbol, period=RS_PERIOD, end_date=end_date)
+    if not rs["available"]:
+        return {**base, "reason": "relative_strength_data"}
+    relative_strength = float(rs["relative_strength"])
 
-    latest_date_text = latest_date.strftime(
-        "%Y-%m-%d"
-    )
+    conditions = evaluate_conditions(latest, relative_strength, market_config)
+    score, reasons = calculate_score(latest, relative_strength)
+    status, reason, missing = classify(score, conditions, market_config)
+    risk = calculate_risk_levels(latest, market_config)
 
-    # Chỉ quét mã có dữ liệu cùng ngày chuẩn thị trường
-    if (
-        reference_date is not None
-        and latest_date_text != reference_date
-    ):
-        if DEBUG_REJECTED:
-            print(
-                f"⚠️ {symbol}: Dữ liệu cũ "
-                f"{latest_date_text}, "
-                f"ngày chuẩn {reference_date}"
-            )
-
-        return None
-
-    required_columns = [
-        "close",
-        "EMA10",
-        "EMA20",
-        "EMA50",
-        "EMA20_Rising",
-        "RSI",
-        "Vol_Ratio",
-        "ATR14",
-        "ADX14",
-        "Distance_EMA20_Pct",
-        "Return_3D_Pct",
-        "Green_Candle",
-        "Close_Upper_Half",
-        "Body_Ratio"
-    ]
-
-    if latest[required_columns].isna().any():
-        if DEBUG_REJECTED:
-            print(f"⚠️ {symbol}: Chỉ báo chưa đầy đủ")
-
-        return None
-
-    # ======================================
-    # ĐIỀU KIỆN CỨNG
-    # ======================================
-
-    cond_trend = (
-        latest["close"] > latest["EMA10"]
-        and latest["EMA10"] > latest["EMA20"]
-        and latest["EMA20"] > latest["EMA50"]
-        and bool(latest["EMA20_Rising"])
-    )
-
-    cond_volume = (
-        latest["Vol_Ratio"] >= MIN_VOL_RATIO
-        or bool(latest["Volume_Breakout_5D"])
-    )
-
-    cond_rsi = (
-        RSI_MIN <= latest["RSI"] <= RSI_MAX
-    )
-
-    cond_adx = (
-        latest["ADX14"] >= MIN_ADX
-    )
-
-    cond_not_extended = (
-        0 <= latest["Distance_EMA20_Pct"]
-        <= MAX_DISTANCE_EMA20
-    )
-
-    cond_not_overheated = (
-        latest["Return_3D_Pct"]
-        <= MAX_RETURN_3D
-    )
-
-    cond_price_action = (
-        bool(latest["Green_Candle"])
-        and bool(latest["Close_Upper_Half"])
-        and latest["Body_Ratio"] >= 0.35
-    )
-
-    mandatory_passed = all([
-        cond_trend,
-        cond_not_extended,
-        cond_not_overheated
-    ])
-
-    if not mandatory_passed:
-        if DEBUG_REJECTED:
-            print(
-                f"❌ {symbol} | "
-                f"Trend={cond_trend} | "
-                f"Distance={cond_not_extended} "
-                f"({latest['Distance_EMA20_Pct']:.2f}%) | "
-                f"3D={cond_not_overheated} "
-                f"({latest['Return_3D_Pct']:.2f}%)"
-            )
-
-        return None
-
-    # Các điều kiện còn lại được dùng để chấm điểm,
-    # không bắt buộc phải đồng thời đạt.
-    score = calculate_score(latest)
-
-    if score is None:
-        return None
-
-    # Chỉ lấy mã đạt từ 55 điểm trở lên
-    if score < 55:
-        if DEBUG_REJECTED:
-            print(
-                f"❌ {symbol} | Score={score} | "
-                f"Vol={latest['Vol_Ratio']:.2f}x | "
-                f"RSI={latest['RSI']:.2f} | "
-                f"ADX={latest['ADX14']:.2f} | "
-                f"Candle={cond_price_action}"
-            )
-
-        return None
-
-    risk = calculate_risk_levels(latest)
-
-    return {
-        "symbol": symbol,
-        "date": latest["time"].strftime("%Y-%m-%d"),
+    result = {
+        **base,
+        "status": status,
+        "reason": reason,
+        "date": date_text,
         "score": score,
-        "entry": risk["entry"],
-        "stop_loss": risk["stop_loss"],
-        "take_profit": risk["take_profit"],
-        "stop_loss_pct": risk["stop_loss_pct"],
-        "take_profit_pct": risk["take_profit_pct"],
+        "min_score": int(market_config["min_score"]),
+        "regime": market_config["regime"],
+        **risk,
         "ema10": round(float(latest["EMA10"]), 2),
         "ema20": round(float(latest["EMA20"]), 2),
         "ema50": round(float(latest["EMA50"]), 2),
         "rsi": round(float(latest["RSI"]), 2),
         "adx": round(float(latest["ADX14"]), 2),
         "atr": round(float(latest["ATR14"]), 2),
-        "atr_percent": round(
-            float(latest["ATR_Percent"]),
-            2
-        ),
-        "volume_ratio": round(
-            float(latest["Vol_Ratio"]),
-            2
-        ),
-        "distance_ema20": round(
-            float(latest["Distance_EMA20_Pct"]),
-            2
-        ),
-        "return_3d": round(
-            float(latest["Return_3D_Pct"]),
-            2
-        ),
-        "breakout_20d": bool(
-            latest["Breakout_20D"]
-        ),
-        "volume_breakout_5d": bool(
-            latest["Volume_Breakout_5D"]
-        )
+        "atr_percent": round(float(latest["ATR_Percent"]), 2),
+        "volume_ratio": round(float(latest["Vol_Ratio"]), 2),
+        "distance_ema20": round(float(latest["Distance_EMA20_Pct"]), 2),
+        "return_3d": round(float(latest["Return_3D_Pct"]), 2),
+        "breakout_20d": bool(latest["Breakout_20D"]),
+        "volume_breakout_5d": bool(latest["Volume_Breakout_5D"]),
+        "stock_return_20d": rs["stock_return"],
+        "index_return_20d": rs["index_return"],
+        "relative_strength_20d": rs["relative_strength"],
+        "conditions": conditions,
+        "failed_conditions": [name for name, passed in conditions.items() if not passed],
+        "reasons": reasons,
     }
+    if status == "WATCHLIST":
+        result["missing"] = missing
+    return result
 
 
-# ==========================================
-# QUÉT TẤT CẢ MÃ
-# ==========================================
+def check_signal(symbol, reference_date=None, end_date=None, market_config=None):
+    """Backtest-compatible API: return a passed signal or ``None``."""
+    evaluation = evaluate_symbol(symbol, reference_date, end_date, market_config)
+    return evaluation if evaluation["status"] == "PASSED" else None
 
-def scan_all_symbols():
-    symbols = get_all_symbols()
 
-    # Không quét VNINDEX như một cổ phiếu
-    symbols = [
-        symbol
-        for symbol in symbols
-        if symbol != "VNINDEX"
-    ]
-
+def scan_all_symbols(market_config=None):
+    market_config = market_config or get_market_regime()
+    symbols = [symbol for symbol in get_all_symbols() if symbol != "VNINDEX"]
     reference_date = get_reference_market_date()
-
     latest_dates = get_symbol_latest_dates()
-
-    fresh_symbols = []
-    stale_symbols = []
-
-    for symbol in symbols:
-        symbol_date = latest_dates.get(symbol)
-
-        if symbol_date == reference_date:
-            fresh_symbols.append(symbol)
-        else:
-            stale_symbols.append({
-                "symbol": symbol,
-                "latest_date": symbol_date
-            })
+    fresh_symbols = [symbol for symbol in symbols if latest_dates.get(symbol) == reference_date]
+    stale_symbols = [
+        {"symbol": symbol, "latest_date": latest_dates.get(symbol)}
+        for symbol in symbols if latest_dates.get(symbol) != reference_date
+    ]
 
     print("\n" + "=" * 65)
     print("📅 KIỂM TRA NGÀY DỮ LIỆU")
     print("=" * 65)
     print(f"Ngày chuẩn thị trường: {reference_date}")
-    print(
-        f"Mã dữ liệu đúng ngày: "
-        f"{len(fresh_symbols)}/{len(symbols)}"
-    )
-    print(
-        f"Mã dữ liệu cũ/lỗi: "
-        f"{len(stale_symbols)}"
-    )
+    print(f"Mã dữ liệu đúng ngày: {len(fresh_symbols)}/{len(symbols)}")
+    print(f"Mã dữ liệu cũ/lỗi: {len(stale_symbols)}")
 
-    if stale_symbols:
-        stale_text = ", ".join(
-            (
-                f"{item['symbol']}"
-                f"({item['latest_date'] or 'không có'})"
-            )
-            for item in stale_symbols
-        )
+    signals: list[dict] = []
+    watchlist: list[dict] = []
+    scan_errors: list[dict] = []
+    reject_stats: Counter = Counter()
+    condition_fail_stats: Counter = Counter()
 
-        print(f"⚠️ Danh sách: {stale_text}")
-
-    signals = []
-    scan_errors = []
-
-    print(
-        f"\n🔍 Bắt đầu quét "
-        f"{len(fresh_symbols)} mã hợp lệ..."
-    )
-
-    for index, symbol in enumerate(
-        fresh_symbols,
-        start=1
-    ):
-        print(
-            f"\rĐang quét "
-            f"{index}/{len(fresh_symbols)}: {symbol}",
-            end="",
-            flush=True
-        )
-
+    print(f"\n🔍 Bắt đầu quét {len(fresh_symbols)} mã hợp lệ...")
+    for index, symbol in enumerate(fresh_symbols, start=1):
+        print(f"\rĐang quét {index}/{len(fresh_symbols)}: {symbol}", end="", flush=True)
         try:
-            signal = check_signal(
-                symbol,
-                reference_date=reference_date
-            )
-
-            if signal:
-                signals.append(signal)
-
+            evaluation = evaluate_symbol(symbol, reference_date=reference_date, market_config=market_config)
+            reject_stats[evaluation["reason"]] += 1
+            condition_fail_stats.update(evaluation.get("failed_conditions", []))
+            if evaluation["status"] == "PASSED":
+                signals.append(evaluation)
+            elif evaluation["status"] == "WATCHLIST":
+                watchlist.append(evaluation)
         except Exception as error:
-            scan_errors.append({
-                "symbol": symbol,
-                "error": str(error)
-            })
+            reject_stats["exception"] += 1
+            scan_errors.append({"symbol": symbol, "error": str(error)})
+            print(f"\n❌ Lỗi quét {symbol}: {error}")
 
-            print(
-                f"\n❌ Lỗi quét {symbol}: {error}"
-            )
-
-    signals.sort(
-        key=lambda item: (
-            item["score"],
-            item["volume_ratio"],
-            item["adx"]
-        ),
-        reverse=True
-    )
+    sort_key = lambda item: (item["score"], item["relative_strength_20d"], item["volume_ratio"], item["adx"])
+    signals.sort(key=sort_key, reverse=True)
+    watchlist.sort(key=sort_key, reverse=True)
 
     scan_stats = {
         "reference_date": reference_date,
@@ -533,188 +192,56 @@ def scan_all_symbols():
         "stale_count": len(stale_symbols),
         "stale_symbols": stale_symbols,
         "error_count": len(scan_errors),
-        "scan_errors": scan_errors
+        "scan_errors": scan_errors,
+        "reject_stats": dict(reject_stats),
+        "condition_fail_stats": dict(condition_fail_stats),
+        "watchlist": watchlist,
+        "market_config": market_config,
     }
-
     return signals, scan_stats
 
 
-# ==========================================
-# IN KẾT QUẢ
-# ==========================================
-
-def print_scan_results(signals):
-    print("\n\n" + "=" * 65)
-    print("🚀 KẾT QUẢ QUÉT CỔ PHIẾU NGẮN HẠN")
+def run_scan() -> tuple[list[dict], dict]:
+    """Run the production scan, persist passed signals and notify Telegram."""
+    market_config = get_market_regime()
+    print("\n" + "=" * 65)
+    print("📊 MARKET REGIME")
     print("=" * 65)
+    print(f"Trạng thái: {market_config['regime']}")
+    print(f"Điểm tối thiểu: {market_config['min_score']}")
+    print(f"ADX tối thiểu: {market_config['min_adx']}")
+    print(f"Volume tối thiểu: {market_config['min_volume_ratio']:.2f}x MA20")
+    print(f"RS tối thiểu: {market_config['min_relative_strength']:+.2f}%")
 
-    if not signals:
-        print(
-            "Không có mã nào thỏa toàn bộ "
-            "điều kiện hôm nay."
-        )
-        return
+    results, scan_stats = scan_all_symbols(market_config=market_config)
+    watchlist = scan_stats["watchlist"]
+    print_scan_results(results, watchlist, top_results=TOP_RESULTS, top_watchlist=TOP_WATCHLIST)
+    print_end_of_day_dashboard(results, scan_stats)
 
-    for index, signal in enumerate(
-        signals[:TOP_RESULTS],
-        start=1
-    ):
-        breakout_text = (
-            "Có"
-            if signal["breakout_20d"]
-            else "Chưa"
-        )
-
-        volume_breakout_text = (
-            "Có"
-            if signal["volume_breakout_5d"]
-            else "Không"
-        )
-
-        print(
-            f"\n#{index} {signal['symbol']} "
-            f"| Điểm: {signal['score']}/100"
-        )
-
-        print(
-            f"Ngày: {signal['date']}"
-        )
-
-        print(
-            f"Entry: {signal['entry']:.2f}"
-        )
-
-        print(
-            f"EMA10 / EMA20 / EMA50: "
-            f"{signal['ema10']:.2f} / "
-            f"{signal['ema20']:.2f} / "
-            f"{signal['ema50']:.2f}"
-        )
-
-        print(
-            f"RSI: {signal['rsi']:.2f} | "
-            f"ADX: {signal['adx']:.2f}"
-        )
-
-        print(
-            f"Volume: "
-            f"{signal['volume_ratio']:.2f}x MA20"
-        )
-
-        print(
-            f"ATR: {signal['atr']:.2f} "
-            f"({signal['atr_percent']:.2f}%)"
-        )
-
-        print(
-            f"Breakout 20D: {breakout_text} | "
-            f"Volume breakout 5D: "
-            f"{volume_breakout_text}"
-        )
-
-        print(
-            f"Cách EMA20: "
-            f"{signal['distance_ema20']:.2f}% | "
-            f"Tăng 3 phiên: "
-            f"{signal['return_3d']:.2f}%"
-        )
-
-        print(
-            f"Stop Loss: "
-            f"{signal['stop_loss']:.2f} "
-            f"({signal['stop_loss_pct']:.2f}%)"
-        )
-
-        print(
-            f"Take Profit: "
-            f"{signal['take_profit']:.2f} "
-            f"(+{signal['take_profit_pct']:.2f}%)"
-        )
-
-        print("-" * 65)
-
-    print(
-        f"\nTổng tín hiệu đạt điều kiện: "
-        f"{len(signals)}"
-    )
-
-
-if __name__ == "__main__":
-    results, scan_stats = scan_all_symbols()
-
-    print_scan_results(results)
-
-    # ======================================
-    # 1. LƯU TÍN HIỆU VÀO DATABASE
-    # ======================================
-
-    saved_count = 0
-    duplicate_count = 0
-    save_failed_count = 0
-
+    saved_count = duplicate_count = save_failed_count = 0
     for signal in results:
         try:
-            inserted = save_signal(signal)
-
-            if inserted:
+            if save_signal(signal):
                 saved_count += 1
-                print(
-                    f"✅ Đã lưu tín hiệu "
-                    f"{signal['symbol']}"
-                )
             else:
                 duplicate_count += 1
-                print(
-                    f"ℹ️ Tín hiệu {signal['symbol']} "
-                    f"đã tồn tại trong ngày"
-                )
-
         except Exception as error:
             save_failed_count += 1
-
-            print(
-                f"❌ Không lưu được "
-                f"{signal['symbol']}: {error}"
-            )
+            print(f"❌ Không lưu được {signal['symbol']}: {error}")
 
     print("\n" + "-" * 60)
     print(f"Tín hiệu mới: {saved_count}")
     print(f"Tín hiệu trùng: {duplicate_count}")
     print(f"Lỗi lưu: {save_failed_count}")
 
-    # ======================================
-    # 2. TẠO NỘI DUNG TELEGRAM
-    # ======================================
-
     try:
-        message = build_scan_message(
-            results,
-            top_n=TOP_RESULTS
-        )
-
+        message = build_scan_message(results, top_n=TOP_RESULTS, watchlist=watchlist, market_config=market_config)
+        send_telegram(message)
+        print("\n✅ Đã gửi kết quả quét lên Telegram.")
     except Exception as error:
-        message = None
+        print(f"\n❌ Gửi Telegram thất bại: {error}")
+    return results, scan_stats
 
-        print(
-            f"❌ Không tạo được nội dung Telegram: "
-            f"{error}"
-        )
 
-    # ======================================
-    # 3. GỬI TELEGRAM RIÊNG
-    # ======================================
-
-    if message:
-        try:
-            send_telegram(message)
-
-            print(
-                "\n✅ Đã gửi kết quả quét "
-                "lên Telegram."
-            )
-
-        except Exception as error:
-            print(
-                f"\n❌ Gửi Telegram thất bại: "
-                f"{error}"
-            )
+if __name__ == "__main__":
+    run_scan()

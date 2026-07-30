@@ -1,0 +1,55 @@
+# Cấu hình Strategy Phase 1
+# Có thể điều chỉnh ngưỡng mà không cần sửa source code.
+common:
+  min_data_rows: 80
+  top_results: 10
+  top_watchlist: 10
+  rsi_min: 45
+  rsi_max: 72
+  rs_period: 20
+  indicator_cache_size: 256
+
+regimes:
+  BULL:
+    min_score: 60
+    min_adx: 18
+    min_volume_ratio: 1.00
+    min_relative_strength: 0.0
+    rr_ratio: 2.5
+    atr_stop_multiplier: 1.5
+    max_distance_ema20: 12.0
+    max_return_3d: 16.0
+    watchlist_margin: 10
+
+  SIDEWAY:
+    min_score: 66
+    min_adx: 20
+    min_volume_ratio: 1.10
+    min_relative_strength: 1.0
+    rr_ratio: 2.2
+    atr_stop_multiplier: 1.6
+    max_distance_ema20: 9.0
+    max_return_3d: 13.0
+    watchlist_margin: 10
+
+  BEAR:
+    min_score: 74
+    min_adx: 24
+    min_volume_ratio: 1.25
+    min_relative_strength: 3.0
+    rr_ratio: 2.0
+    atr_stop_multiplier: 1.8
+    max_distance_ema20: 7.0
+    max_return_3d: 10.0
+    watchlist_margin: 12
+
+  UNKNOWN:
+    min_score: 72
+    min_adx: 22
+    min_volume_ratio: 1.20
+    min_relative_strength: 2.0
+    rr_ratio: 2.0
+    atr_stop_multiplier: 1.7
+    max_distance_ema20: 8.0
+    max_return_3d: 12.0
+    watchlist_margin: 10

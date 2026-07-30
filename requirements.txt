@@ -6,3 +6,5 @@ sqlalchemy
 python-dotenv
 ta
 vnstock
+PyYAML
+pytest
