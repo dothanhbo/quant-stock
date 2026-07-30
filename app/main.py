@@ -55,3 +55,7 @@ def main() -> int:
         print("⚠️ Các bước phụ bị lỗi: " + ", ".join(optional_failures))
     print("✅ Quant Bot đã chạy hoàn tất.")
     return 0
+
+
+if __name__ == "__main__":
+    raise SystemExit(main())

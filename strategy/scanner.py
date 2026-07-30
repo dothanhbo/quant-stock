@@ -49,30 +49,44 @@ def get_all_symbols():
 
     return [row[0] for row in rows]
 
-
 # ==========================================
 # CHẤM ĐIỂM
 # ==========================================
 
 def calculate_score(latest):
+    close = float(latest["close"])
+    ema20 = float(latest["EMA20"])
+    volume_ratio = float(latest["Vol_Ratio"])
+    adx = float(latest["ADX14"])
+
+    # ==========================================
+    # HARD FILTER
+    # ==========================================
+    if adx < 15:
+        return None
+
+    if volume_ratio < 0.8:
+        return None
+
+    if close < ema20:
+        return None
+
     score = 0
 
     # Trend: tối đa 30 điểm
-    if latest["close"] > latest["EMA10"]:
+    if close > float(latest["EMA10"]):
         score += 10
 
-    if latest["EMA10"] > latest["EMA20"]:
+    if float(latest["EMA10"]) > ema20:
         score += 10
 
-    if latest["EMA20"] > latest["EMA50"]:
+    if ema20 > float(latest["EMA50"]):
         score += 5
 
     if bool(latest["EMA20_Rising"]):
         score += 5
 
     # Volume: tối đa 20 điểm
-    volume_ratio = float(latest["Vol_Ratio"])
-
     if volume_ratio >= 2.0:
         score += 20
     elif volume_ratio >= 1.5:
@@ -84,15 +98,13 @@ def calculate_score(latest):
     rsi = float(latest["RSI"])
 
     if 52 <= rsi <= 65:
-    	score += 15
+        score += 15
     elif 48 <= rsi <= 72:
-    	score += 10
+        score += 10
     elif 45 <= rsi < 48:
-    	score += 5
+        score += 5
 
     # ADX: tối đa 10 điểm
-    adx = float(latest["ADX14"])
-
     if adx >= 30:
         score += 10
     elif adx >= 25:
@@ -118,7 +130,6 @@ def calculate_score(latest):
         score += 3
 
     return min(score, 100)
-
 
 # ==========================================
 # TÍNH STOP LOSS VÀ TAKE PROFIT
@@ -353,6 +364,9 @@ def check_signal(
     # Các điều kiện còn lại được dùng để chấm điểm,
     # không bắt buộc phải đồng thời đạt.
     score = calculate_score(latest)
+
+    if score is None:
+        return None
 
     # Chỉ lấy mã đạt từ 55 điểm trở lên
     if score < 55:
