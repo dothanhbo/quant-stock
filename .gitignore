@@ -24,3 +24,15 @@ venv/
 logs/
 backtest_results*/
 *.pkl
+
+# Local databases
+market.db
+market-backup.db
+*.db-journal
+*.db-wal
+*.db-shm
+
+# Generated files
+signal_cache.pkl
+__pycache__/
+logs/
