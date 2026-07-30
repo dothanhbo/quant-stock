@@ -1,26 +1,3 @@
-"""
-Backtest Engine V4.2
-- Giữ nguyên logic tín hiệu trong scanner.check_signal()
-- Vào lệnh tại giá OPEN của phiên kế tiếp
-- Cho phép truyền động Stop Loss, Take Profit, Max Holding và Min ADX
-- Nếu cùng một phiên chạm cả SL và TP: giả định SL xảy ra trước
-- Không cho phép chồng lệnh trên cùng một mã
-- Có thể import hàm run_backtest() từ optimize_exit.py
-
-Yêu cầu:
-    pandas
-
-Cấu trúc database mặc định:
-    market.db
-    prices(symbol, time, open, high, low, close, volume)
-
-Chạy thử:
-    py backtest_engine_optimized.py --symbol HPG --min-adx 30 --sl 5 --tp 10 --hold 20
-
-Chạy toàn bộ:
-    py backtest_engine_optimized.py --all --min-adx 30 --sl 5 --tp 10 --hold 20
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -29,6 +6,8 @@ import sqlite3
 from dataclasses import dataclass, asdict
 from pathlib import Path
 from typing import Any, Iterable
+from backtesting.exit import ExitResult
+from backtesting.trade import ExitExecution, ExitReason, Trade
 
 import pandas as pd
 
@@ -177,6 +156,7 @@ def _simulate_exit(
 ) -> dict[str, Any]:
     entry_row = price_df.iloc[entry_index]
     entry_price = float(entry_row["open"])
+    entry_date = pd.Timestamp(entry_row["time"])
 
     stop_price = entry_price * (1 - config.stop_loss_pct / 100)
     target_price = entry_price * (1 + config.take_profit_pct / 100)
@@ -188,7 +168,8 @@ def _simulate_exit(
 
     exit_index = final_index
     exit_price = float(price_df.iloc[final_index]["close"])
-    exit_reason = "TIME_EXIT"
+    exit_reason = ExitReason.TIME_EXIT
+    execution = ExitExecution.NORMAL
 
     for current_index in range(entry_index, final_index + 1):
         row = price_df.iloc[current_index]
@@ -201,14 +182,16 @@ def _simulate_exit(
         if day_open <= stop_price:
             exit_index = current_index
             exit_price = day_open
-            exit_reason = "STOP_GAP"
+            exit_reason = ExitReason.STOP_LOSS
+            execution = ExitExecution.STOP_GAP
             break
 
         # Gap tăng xuyên target: khớp tại giá mở cửa.
         if day_open >= target_price:
             exit_index = current_index
             exit_price = day_open
-            exit_reason = "TARGET_GAP"
+            exit_reason = ExitReason.TAKE_PROFIT
+            execution = ExitExecution.TARGET_GAP
             break
 
         hit_stop = day_low <= stop_price
@@ -218,38 +201,39 @@ def _simulate_exit(
         if hit_stop and hit_target:
             exit_index = current_index
             exit_price = stop_price
-            exit_reason = "SL_AND_TP_SAME_DAY_ASSUMED_SL"
+            exit_reason = ExitReason.STOP_LOSS
+            execution = ExitExecution.SAME_DAY_SL_FIRST
             break
 
         if hit_stop:
             exit_index = current_index
             exit_price = stop_price
-            exit_reason = "STOP_LOSS"
+            exit_reason = ExitReason.STOP_LOSS
+            execution = ExitExecution.NORMAL
             break
 
         if hit_target:
             exit_index = current_index
             exit_price = target_price
-            exit_reason = "TAKE_PROFIT"
+            exit_reason = ExitReason.TAKE_PROFIT
+            execution = ExitExecution.NORMAL
             break
 
     exit_row = price_df.iloc[exit_index]
     return_pct = (exit_price / entry_price - 1) * 100
 
-    return {
-        "entry_index": entry_index,
-        "exit_index": exit_index,
-        "entry_date": pd.Timestamp(entry_row["time"]),
-        "exit_date": pd.Timestamp(exit_row["time"]),
-        "entry_price": entry_price,
-        "exit_price": exit_price,
-        "stop_price": stop_price,
-        "target_price": target_price,
-        "exit_reason": exit_reason,
-        "holding_days": exit_index - entry_index + 1,
-        "return_pct": return_pct,
-    }
-
+    return ExitResult(
+    entry_index=entry_index,
+    exit_index=exit_index,
+    entry_date=pd.Timestamp(price_df.iloc[entry_index]["time"]),
+    exit_date=pd.Timestamp(price_df.iloc[exit_index]["time"]),
+    entry_price=entry_price,
+    exit_price=exit_price,
+    stop_price=stop_price,
+    target_price=target_price,
+    exit_reason=exit_reason,
+    execution=execution,
+    )
 
 def backtest_symbol(
     symbol: str,
@@ -257,7 +241,7 @@ def backtest_symbol(
     db_path: str = DEFAULT_DB_PATH,
     warmup_bars: int = 60,
     verbose: bool = False,
-) -> pd.DataFrame:
+) -> list[Trade]:
     """
     Backtest một mã.
 
@@ -270,80 +254,87 @@ def backtest_symbol(
     symbol = symbol.upper().strip()
 
     price_df = load_price_data(symbol, db_path)
-    if len(price_df) <= warmup_bars + 1:
-        return pd.DataFrame()
 
-    trades: list[dict[str, Any]] = []
+    if len(price_df) <= warmup_bars + 1:
+        return []
+
+    trades: list[Trade] = []
     next_allowed_signal_index = warmup_bars
 
     for signal_index in range(warmup_bars, len(price_df) - 1):
         if signal_index < next_allowed_signal_index:
             continue
 
-        signal_date = pd.Timestamp(price_df.iloc[signal_index]["time"])
+        signal_date = pd.Timestamp(
+            price_df.iloc[signal_index]["time"]
+        )
 
         try:
             signal = _call_check_signal(symbol, signal_date)
         except Exception as error:
             if verbose:
-                print(f"⚠️ {symbol} {signal_date.date()}: lỗi tín hiệu: {error}")
+                print(
+                    f"⚠️ {symbol} {signal_date.date()}: "
+                    f"lỗi tín hiệu: {error}"
+                )
             continue
 
         if not signal:
             continue
 
         adx = _get_signal_adx(signal)
+
         if not math.isfinite(adx) or adx < config.min_adx:
             continue
 
         entry_index = signal_index + 1
-        exit_info = _simulate_exit(price_df, entry_index, config)
 
-        trade = {
-            "symbol": symbol,
-            "signal_date": signal_date,
-            "entry_date": exit_info["entry_date"],
-            "exit_date": exit_info["exit_date"],
-            "score": _safe_float(signal.get("score")),
-            "adx": adx,
-            "rsi": _safe_float(signal.get("rsi")),
-            "volume_ratio": _safe_float(signal.get("volume_ratio")),
-            "distance_ema20": _safe_float(signal.get("distance_ema20")),
-            "atr_percent": _safe_float(signal.get("atr_percent")),
-            "return_3d": _safe_float(signal.get("return_3d")),
-            "entry_price": exit_info["entry_price"],
-            "exit_price": exit_info["exit_price"],
-            "stop_price": exit_info["stop_price"],
-            "target_price": exit_info["target_price"],
-            "stop_loss_pct": config.stop_loss_pct,
-            "take_profit_pct": config.take_profit_pct,
-            "max_holding_days": config.max_holding_days,
-            "min_adx": config.min_adx,
-            "holding_days": exit_info["holding_days"],
-            "exit_reason": exit_info["exit_reason"],
-            "return_pct": exit_info["return_pct"],
-        }
+        exit_info = _simulate_exit(
+            price_df=price_df,
+            entry_index=entry_index,
+            config=config,
+        )
+
+        trade = Trade(
+            symbol=symbol,
+            entry_date=exit_info.entry_date,
+            entry_price=exit_info.entry_price,
+            quantity=1,
+        )
+
+        trade.close(
+            exit_date=exit_info.exit_date,
+            exit_price=exit_info.exit_price,
+            reason=exit_info.exit_reason,
+            execution=exit_info.execution,
+        )
+
         trades.append(trade)
 
-        # Không chồng lệnh trên cùng mã.
-        next_allowed_signal_index = int(exit_info["exit_index"]) + 1
+        # Không chồng lệnh trên cùng một mã.
+        next_allowed_signal_index = exit_info.exit_index + 1
 
         if verbose:
             print(
-                f"✅ {symbol} | Signal {signal_date.date()} | "
-                f"Entry {trade['entry_date'].date()} @ {trade['entry_price']:.2f} | "
-                f"Exit {trade['exit_date'].date()} @ {trade['exit_price']:.2f} | "
-                f"{trade['exit_reason']} | {trade['return_pct']:+.2f}%"
+                f"✅ {symbol} | "
+                f"Signal {signal_date.date()} | "
+                f"Entry {trade.entry_date.date()} "
+                f"@ {trade.entry_price:.2f} | "
+                f"Exit {trade.exit_date.date()} "
+                f"@ {trade.exit_price:.2f} | "
+                f"{trade.exit_reason.value} | "
+                f"{trade.return_pct:+.2f}%"
             )
 
-    return pd.DataFrame(trades)
+    return trades
 
 
 def calculate_metrics(
-    trades: pd.DataFrame,
+    trades:  list[Trade],
     config: BacktestConfig,
 ) -> dict[str, Any]:
-    if trades.empty:
+
+    if not trades:
         return {
             **asdict(config),
             "total_trades": 0,
@@ -362,7 +353,16 @@ def calculate_metrics(
             "average_holding_days": 0.0,
         }
 
-    returns = pd.to_numeric(trades["return_pct"], errors="coerce").dropna()
+    returns = pd.Series(
+        [trade.return_pct for trade in trades],
+        dtype=float,
+    )
+
+    holding_days = pd.Series(
+        [trade.holding_days for trade in trades],
+        dtype=float,
+    )
+
     winners = returns[returns > 0]
     losers = returns[returns < 0]
     breakeven = returns[returns == 0]
@@ -399,12 +399,17 @@ def calculate_metrics(
         "expectancy_pct": float(returns.mean()),
         "best_trade_pct": float(returns.max()),
         "worst_trade_pct": float(returns.min()),
-        "average_holding_days": float(trades["holding_days"].mean()),
+        "average_holding_days": float(
+            pd.Series(
+                [trade.holding_days for trade in trades],
+                dtype=float,
+            ).mean()
+        ),
     }
 
 
 def build_equity_curve(
-    trades: pd.DataFrame,
+    trades: list[Trade],
     config: BacktestConfig,
 ) -> pd.DataFrame:
     """
@@ -413,39 +418,55 @@ def build_equity_curve(
     Lưu ý: khi chạy nhiều mã, các giao dịch có thể trùng thời gian.
     Equity curve này dùng cho so sánh tương đối, chưa phải portfolio simulator.
     """
-    if trades.empty:
+    if not trades:
         return pd.DataFrame(
-            [{"trade_number": 0, "equity": config.initial_capital}]
+            [{
+                "trade_number": 0,
+                "equity": config.initial_capital,
+            }]
         )
 
-    ordered = trades.sort_values(
-        ["exit_date", "symbol", "entry_date"]
-    ).reset_index(drop=True)
+    ordered = sorted(
+        trades,
+        key=lambda trade: (
+            trade.exit_date,
+            trade.symbol,
+            trade.entry_date,
+        ),
+    )
 
     capital = config.initial_capital
-    rows = [{"trade_number": 0, "equity": capital}]
+    rows = [
+        {
+            "trade_number": 0,
+            "equity": capital,
+        }
+    ]
 
-    for index, trade in ordered.iterrows():
+    for index, trade in enumerate(ordered, start=1):
         allocated = capital * config.position_size_pct / 100
-        pnl = allocated * float(trade["return_pct"]) / 100
+        pnl = allocated * trade.return_pct / 100
         capital += pnl
 
         rows.append(
             {
-                "trade_number": index + 1,
-                "symbol": trade["symbol"],
-                "exit_date": trade["exit_date"],
-                "return_pct": trade["return_pct"],
+                "trade_number": index,
+                "symbol": trade.symbol,
+                "exit_date": trade.exit_date,
+                "return_pct": trade.return_pct,
                 "pnl": pnl,
                 "equity": capital,
             }
         )
 
     curve = pd.DataFrame(rows)
+
     curve["equity_peak"] = curve["equity"].cummax()
+
     curve["drawdown_pct"] = (
         curve["equity"] / curve["equity_peak"] - 1
     ) * 100
+
     return curve
 
 
@@ -461,7 +482,7 @@ def run_backtest(
     position_size_pct: float = 100.0,
     warmup_bars: int = 60,
     verbose: bool = False,
-) -> tuple[pd.DataFrame, dict[str, Any], pd.DataFrame]:
+) -> tuple[list[Trade], dict[str, Any], pd.DataFrame]:
     """
     Hàm chính để optimize_exit.py import.
 
@@ -490,7 +511,7 @@ def run_backtest(
         else sorted({str(symbol).upper().strip() for symbol in symbols})
     )
 
-    all_trades: list[pd.DataFrame] = []
+    all_trades: list[Trade] = []
 
     for index, symbol in enumerate(selected_symbols, start=1):
         if verbose:
@@ -504,19 +525,17 @@ def run_backtest(
             verbose=verbose,
         )
 
-        if not symbol_trades.empty:
-            all_trades.append(symbol_trades)
+        if symbol_trades:
+           all_trades.extend(symbol_trades)
 
-    trades = (
-        pd.concat(all_trades, ignore_index=True)
-        if all_trades
-        else pd.DataFrame()
+    trades = sorted(
+        all_trades,
+        key=lambda trade: (
+            trade.exit_date,
+            trade.symbol,
+            trade.entry_date,
+        ),
     )
-
-    if not trades.empty:
-        trades = trades.sort_values(
-            ["signal_date", "symbol"]
-        ).reset_index(drop=True)
 
     metrics = calculate_metrics(trades, config)
     equity = build_equity_curve(trades, config)
@@ -532,7 +551,7 @@ def run_backtest(
 
 
 def save_results(
-    trades: pd.DataFrame,
+    trades: list[Trade],
     metrics: dict[str, Any],
     equity: pd.DataFrame,
     output_dir: str,
@@ -545,7 +564,11 @@ def save_results(
     metrics_path = output_path / f"{file_prefix}_metrics.csv"
     equity_path = output_path / f"{file_prefix}_equity_curve.csv"
 
-    trades.to_csv(trades_path, index=False, encoding="utf-8-sig")
+    trades_df = pd.DataFrame(
+        [trade.to_dict() for trade in trades]
+    )
+
+    trades_df.to_csv(trades_path, index=False, encoding="utf-8-sig")
     pd.DataFrame([metrics]).to_csv(
         metrics_path,
         index=False,

@@ -306,8 +306,8 @@ def replay_symbol(
             {
                 "symbol": symbol,
                 "signal_date": candidate["signal_date"],
-                "entry_date": exit_info["entry_date"],
-                "exit_date": exit_info["exit_date"],
+                "entry_date": exit_info.entry_date,
+                "exit_date": exit_info.exit_date,
                 "score": candidate.get("score"),
                 "adx": adx,
                 "rsi": candidate.get("rsi"),
@@ -321,25 +321,25 @@ def replay_symbol(
                     "atr_percent"
                 ),
                 "return_3d": candidate.get("return_3d"),
-                "entry_price": exit_info["entry_price"],
-                "exit_price": exit_info["exit_price"],
-                "stop_price": exit_info["stop_price"],
-                "target_price": exit_info["target_price"],
+                "entry_price": exit_info.entry_price,
+                "exit_price": exit_info.exit_price,
+                "stop_price": exit_info.stop_price,
+                "target_price": exit_info.target_price,
                 "stop_loss_pct": config.stop_loss_pct,
                 "take_profit_pct": config.take_profit_pct,
                 "max_holding_days": (
                     config.max_holding_days
                 ),
                 "min_adx": config.min_adx,
-                "holding_days": exit_info["holding_days"],
-                "exit_reason": exit_info["exit_reason"],
-                "return_pct": exit_info["return_pct"],
+                "holding_days": exit_info.holding_days,
+                "exit_reason": exit_info.exit_reason,
+                "return_pct": exit_info.return_pct
             }
         )
 
         # Không chồng lệnh trên cùng mã.
         next_allowed_signal_index = (
-            int(exit_info["exit_index"]) + 1
+            int(exit_info.exit_index) + 1
         )
 
     return pd.DataFrame(trades)

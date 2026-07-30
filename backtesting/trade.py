@@ -1,0 +1,123 @@
+from __future__ import annotations
+
+from dataclasses import dataclass
+from datetime import datetime
+from enum import Enum
+
+
+class ExitReason(Enum):
+    TAKE_PROFIT = "Take Profit"
+    STOP_LOSS = "Stop Loss"
+    TIME_EXIT = "Time Exit"
+    SIGNAL_EXIT = "Signal Exit"
+    MANUAL = "Manual"
+
+
+class ExitExecution(Enum):
+    NORMAL = "Normal"
+    STOP_GAP = "Stop Gap"
+    TARGET_GAP = "Target Gap"
+    SAME_DAY_SL_FIRST = "Same Day SL First"
+
+
+@dataclass(slots=True)
+class Trade:
+    symbol: str
+    entry_date: datetime
+    entry_price: float
+    quantity: int
+
+    exit_date: datetime | None = None
+    exit_price: float | None = None
+    exit_reason: ExitReason | None = None
+    execution: ExitExecution = ExitExecution.NORMAL
+
+    def close(
+        self,
+        exit_date: datetime,
+        exit_price: float,
+        reason: ExitReason,
+        execution: ExitExecution = ExitExecution.NORMAL,
+    ) -> None:
+        self.exit_date = exit_date
+        self.exit_price = exit_price
+        self.exit_reason = reason
+        self.execution = execution
+
+    @property
+    def is_closed(self) -> bool:
+        return self.exit_date is not None and self.exit_price is not None
+
+    @property
+    def pnl(self) -> float:
+        if not self.is_closed:
+            return 0.0
+
+        return (self.exit_price - self.entry_price) * self.quantity
+
+    @property
+    def return_pct(self) -> float:
+        if not self.is_closed or self.entry_price == 0:
+            return 0.0
+
+        return ((self.exit_price - self.entry_price) / self.entry_price) * 100
+
+    @property
+    def holding_days(self) -> int:
+        if not self.is_closed:
+            return 0
+
+        return (self.exit_date - self.entry_date).days
+
+    @property
+    def is_win(self) -> bool:
+        return self.is_closed and self.pnl > 0
+
+
+    @property
+    def cost(self) -> float:
+        return self.entry_price * self.quantity
+
+
+    @property
+    def market_value(self) -> float:
+        if not self.is_closed:
+            return self.cost
+
+        return self.exit_price * self.quantity
+
+    def to_dict(self) -> dict:
+        return {
+            "symbol": self.symbol,
+            "entry_date": self.entry_date,
+            "entry_price": self.entry_price,
+            "quantity": self.quantity,
+            "exit_date": self.exit_date,
+            "exit_price": self.exit_price,
+            "exit_reason": (
+                self.exit_reason.value
+                if self.exit_reason is not None
+                else None
+            ),
+            "execution": self.execution.value,
+            "is_closed": self.is_closed,
+            "is_win": self.is_win,
+            "pnl": self.pnl,
+            "return_pct": self.return_pct,
+            "holding_days": self.holding_days,
+            "cost": self.cost,
+            "market_value": self.market_value,
+        }
+
+    def __repr__(self) -> str:
+        status = "CLOSED" if self.is_closed else "OPEN"
+
+        return (
+            f"Trade("
+            f"symbol={self.symbol!r}, "
+            f"status={status}, "
+            f"entry_price={self.entry_price:.2f}, "
+            f"exit_price={self.exit_price}, "
+            f"pnl={self.pnl:.2f}"
+            f")"
+        )
