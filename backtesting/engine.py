@@ -19,6 +19,7 @@ from backtesting.portfolio_metrics import (
     calculate_portfolio_metrics,
 )
 from collections import Counter
+from scripts.update_data import get_vn100_symbols
 
 import pandas as pd
 from strategy.scanner import evaluate_symbol	
@@ -479,18 +480,6 @@ def run_backtest(
     warmup_bars: int = 60,
     verbose: bool = False,
 ) -> tuple[list[Trade], dict[str, Any], pd.DataFrame]:
-    """
-    Hàm chính để optimize_exit.py import.
-
-    Ví dụ:
-        trades, metrics, equity = run_backtest(
-            symbols=None,
-            stop_loss_pct=4,
-            take_profit_pct=8,
-            max_holding_days=15,
-            min_adx=30,
-        )
-    """
     config = BacktestConfig(
         stop_loss_pct=stop_loss_pct,
         take_profit_pct=take_profit_pct,
@@ -500,6 +489,11 @@ def run_backtest(
         position_size_pct=position_size_pct,
     )
     config.validate()
+
+    if symbols is None:
+        symbols = get_vn100_symbols()
+
+    symbols = list(symbols)
 
     selected_symbols = (
         get_symbol_list(db_path)
@@ -756,6 +750,8 @@ def main() -> None:
     args = parse_args()
     symbols = None if args.all else args.symbol
 
+    symbols = list(get_vn100_symbols())
+
     trades, metrics, equity = run_backtest(
         symbols=symbols,
         stop_loss_pct=args.sl,
@@ -774,6 +770,12 @@ def main() -> None:
         if symbols is None
         else "_".join(str(item).upper() for item in symbols)
     )
+
+    if args.all:
+        symbol_label = "VN100"
+    else:
+        symbol_label = "_".join(symbols)
+
     prefix = (
         f"{target_name}"
         f"_ADX{args.min_adx:g}"
