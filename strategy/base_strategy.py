@@ -1,19 +1,16 @@
 from abc import ABC, abstractmethod
 
+import pandas as pd
+
 
 class BaseStrategy(ABC):
 
     @abstractmethod
-    def check_signal(
+    def evaluate(
         self,
-        symbol,
-        reference_date=None,
-        end_date=None,
-    ):
-        """
-        Trả về:
-
-        None
-        hoặc dict signal
-        """
-        pass
+        latest: pd.Series,
+        relative_strength: float,
+        market_config: dict,
+    ) -> dict:
+        """Đánh giá dữ liệu đã được chuẩn bị đầy đủ."""
+        raise NotImplementedError

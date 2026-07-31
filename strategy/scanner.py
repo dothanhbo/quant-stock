@@ -1,13 +1,3 @@
-"""VN100 scanner orchestration.
-
-Business rules live in dedicated modules:
-- strategy.filters
-- strategy.scoring
-- strategy.watchlist
-- risk.levels
-- reporting.dashboard
-"""
-
 from __future__ import annotations
 
 from collections import Counter
@@ -20,19 +10,19 @@ from config.strategy_loader import COMMON_CONFIG
 from core.database import engine, get_reference_market_date, get_symbol_latest_dates, load_price_data
 from core.signal_database import save_signal
 from reporting.dashboard import print_end_of_day_dashboard, print_scan_results
-from risk.levels import calculate_risk_levels
 from services.telegram import build_scan_message, send_telegram
 from strategy.cache import get_indicators_cached
-from strategy.filters import REQUIRED_INDICATORS, evaluate_conditions, trend_passes
+from strategy.filters import REQUIRED_INDICATORS, trend_passes
 from strategy.market_regime import get_market_regime
 from strategy.relative_strength import calculate_relative_strength
-from strategy.scoring import calculate_score
-from strategy.watchlist import classify
+from strategy.trend_strategy_v1 import TrendStrategyV1
 
 MIN_DATA_ROWS = int(COMMON_CONFIG["min_data_rows"])
 TOP_RESULTS = int(COMMON_CONFIG["top_results"])
 TOP_WATCHLIST = int(COMMON_CONFIG["top_watchlist"])
 RS_PERIOD = int(COMMON_CONFIG.get("rs_period", 20))
+
+strategy = TrendStrategyV1()
 
 # Backward-compatible aliases for earlier imports.
 _trend_passes = trend_passes
@@ -68,49 +58,86 @@ def evaluate_symbol(
     end_date=None,
     market_config: Optional[dict] = None,
 ) -> dict:
-    """Evaluate one symbol and always return a structured status/result."""
+    """Chuẩn bị dữ liệu và đánh giá một mã cổ phiếu."""
     market_config = market_config or get_market_regime(end_date=end_date)
-    base = {"symbol": symbol, "status": "REJECTED", "reason": "other"}
 
-    df = _prepare_price_data(symbol, end_date=end_date)
+    base = {
+        "symbol": symbol,
+        "status": "REJECTED",
+        "reason": "other",
+    }
+
+    df = _prepare_price_data(
+        symbol=symbol,
+        end_date=end_date,
+    )
+
     if df.empty:
         return base
-    if len(df) < MIN_DATA_ROWS:
-        return {**base, "reason": "insufficient_data"}
 
-    data = get_indicators_cached(symbol, df, end_date=end_date)
+    if len(df) < MIN_DATA_ROWS:
+        return {
+            **base,
+            "reason": "insufficient_data",
+        }
+
+    data = get_indicators_cached(
+        symbol,
+        df,
+        end_date=end_date,
+    )
+
     if data.empty:
         return base
 
     latest = data.iloc[-1]
-    latest_date = pd.to_datetime(latest["time"], errors="coerce")
+
+    latest_date = pd.to_datetime(
+        latest["time"],
+        errors="coerce",
+    )
+
     if pd.isna(latest_date):
         return base
-    date_text = latest_date.strftime("%Y-%m-%d")
-    if reference_date is not None and date_text != reference_date:
-        return {**base, "reason": "stale_data"}
-    if latest[REQUIRED_INDICATORS].isna().any():
-        return {**base, "reason": "indicator_nan"}
 
-    rs = calculate_relative_strength(symbol, period=RS_PERIOD, end_date=end_date)
+    date_text = latest_date.strftime("%Y-%m-%d")
+
+    if reference_date is not None and date_text != reference_date:
+        return {
+            **base,
+            "reason": "stale_data",
+        }
+
+    if latest[REQUIRED_INDICATORS].isna().any():
+        return {
+            **base,
+            "reason": "indicator_nan",
+        }
+
+    rs = calculate_relative_strength(
+        symbol,
+        period=RS_PERIOD,
+        end_date=end_date,
+    )
+
     if not rs["available"]:
-        return {**base, "reason": "relative_strength_data"}
+        return {
+            **base,
+            "reason": "relative_strength_data",
+        }
+
     relative_strength = float(rs["relative_strength"])
 
-    conditions = evaluate_conditions(latest, relative_strength, market_config)
-    score, reasons = calculate_score(latest, relative_strength)
-    status, reason, missing = classify(score, conditions, market_config)
-    risk = calculate_risk_levels(latest, market_config)
+    decision = strategy.evaluate(
+        latest=latest,
+        relative_strength=relative_strength,
+        market_config=market_config,
+    )
 
     result = {
         **base,
-        "status": status,
-        "reason": reason,
+        **decision,
         "date": date_text,
-        "score": score,
-        "min_score": int(market_config["min_score"]),
-        "regime": market_config["regime"],
-        **risk,
         "ema10": round(float(latest["EMA10"]), 2),
         "ema20": round(float(latest["EMA20"]), 2),
         "ema50": round(float(latest["EMA50"]), 2),
@@ -119,26 +146,43 @@ def evaluate_symbol(
         "atr": round(float(latest["ATR14"]), 2),
         "atr_percent": round(float(latest["ATR_Percent"]), 2),
         "volume_ratio": round(float(latest["Vol_Ratio"]), 2),
-        "distance_ema20": round(float(latest["Distance_EMA20_Pct"]), 2),
-        "return_3d": round(float(latest["Return_3D_Pct"]), 2),
+        "distance_ema20": round(
+            float(latest["Distance_EMA20_Pct"]),
+            2,
+        ),
+        "return_3d": round(
+            float(latest["Return_3D_Pct"]),
+            2,
+        ),
         "breakout_20d": bool(latest["Breakout_20D"]),
-        "volume_breakout_5d": bool(latest["Volume_Breakout_5D"]),
+        "volume_breakout_5d": bool(
+            latest["Volume_Breakout_5D"]
+        ),
         "stock_return_20d": rs["stock_return"],
         "index_return_20d": rs["index_return"],
         "relative_strength_20d": rs["relative_strength"],
-        "conditions": conditions,
-        "failed_conditions": [name for name, passed in conditions.items() if not passed],
-        "reasons": reasons,
     }
-    if status == "WATCHLIST":
-        result["missing"] = missing
+
     return result
 
+def check_signal(
+    symbol,
+    reference_date=None,
+    end_date=None,
+    market_config=None,
+):
+    """Backtest-compatible API."""
+    evaluation = evaluate_symbol(
+        symbol=symbol,
+        reference_date=reference_date,
+        end_date=end_date,
+        market_config=market_config,
+    )
 
-def check_signal(symbol, reference_date=None, end_date=None, market_config=None):
-    """Backtest-compatible API: return a passed signal or ``None``."""
-    evaluation = evaluate_symbol(symbol, reference_date, end_date, market_config)
-    return evaluation if evaluation["status"] == "PASSED" else None
+    if evaluation["status"] == "PASSED":
+        return evaluation
+
+    return None
 
 
 def scan_all_symbols(market_config=None):
