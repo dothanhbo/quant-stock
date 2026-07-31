@@ -141,16 +141,71 @@ quant-stock/
 └── README.md
 ```
 
-## 9. Backtest – Phase 2
+## 9. Backtesting Framework (Version 5.0)
 
-Các lệnh hiện có để nghiên cứu tiếp:
+Framework backtest đã được refactor thành kiến trúc module với mô phỏng danh mục (portfolio-level).
+
+### Tính năng
+
+- Portfolio simulation với quản lý tiền mặt.
+- Position sizing theo % vốn.
+- Lot size mặc định 100 cổ phiếu.
+- Giới hạn số lượng vị thế mở.
+- Chống mở trùng một mã.
+- Equity Curve.
+- Portfolio Metrics:
+  - Total Return
+  - Max Drawdown
+  - CAGR
+  - Annualized Volatility
+  - Sharpe Ratio
+  - Sortino Ratio
+  - Calmar Ratio
+- Portfolio Summary.
+- Thống kê Rejected Trades và Reject Reasons.
+
+### Chạy Backtest
 
 ```powershell
-py -m backtesting.engine
+py -m backtesting.engine --symbol HPG
+```
+
+```powershell
 py -m backtesting.multi_symbol
 ```
 
-Trước khi dùng kết quả để giao dịch thật, cần backtest, kiểm tra phí giao dịch, trượt giá, thanh khoản và out-of-sample. Scanner là công cụ hỗ trợ nghiên cứu, không phải cam kết lợi nhuận.
+```powershell
+py -m backtesting.optimize_exit
+```
+
+Portfolio Summary hiển thị:
+- Initial Capital
+- Final Equity
+- Total Return
+- Max Drawdown
+- CAGR
+- Sharpe / Sortino / Calmar
+- Executed Trades
+- Rejected Trades
+- Final Cash
+- Market Value
+- Open Positions
+
+### Backtesting Architecture
+
+```text
+backtesting/
+├── engine.py
+├── portfolio.py
+├── portfolio_simulator.py
+├── portfolio_metrics.py
+├── exit_models.py
+├── exit.py
+├── trade.py
+├── multi_symbol.py
+├── optimize_exit.py
+└── optimize_exit_fast.py
+```
 
 ## Kiến trúc sau refactor
 
@@ -188,6 +243,15 @@ quant-stock/
 pip install -r requirements.txt
 pytest -q
 py -m strategy.scanner
+py -m backtesting.engine --symbol HPG
 ```
 
-Bộ test refactor hiện có 12 test cho ATR, cache, scoring, market config, filter, watchlist và risk.
+Hiện bộ test gồm **40 test**, bao phủ:
+
+- Strategy
+- Indicators
+- Cache
+- Portfolio
+- Portfolio Simulator
+- Trade
+- Exit Models

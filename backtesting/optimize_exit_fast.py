@@ -1,29 +1,3 @@
-"""
-Fast Exit Optimizer V2.0
-========================
-
-Mục tiêu:
-- Quét tín hiệu lịch sử của 100 mã đúng 1 lần.
-- Lưu cache tín hiệu.
-- Replay nhiều bộ SL/TP/Hold rất nhanh.
-- Vẫn giữ quy tắc không chồng lệnh trên cùng một mã.
-
-Đặt cùng thư mục với:
-    backtest_engine.py
-    scanner.py
-    market.db
-
-Chạy:
-    py -m backtesting.optimize_exit_fast
-
-Kết quả:
-    backtest_results_optimized/
-    └── exit_optimization_fast/
-        ├── signal_cache.pkl
-        ├── exit_grid_results.csv
-        └── top_exit_configs.csv
-"""
-
 from __future__ import annotations
 
 import argparse
@@ -39,7 +13,6 @@ import pandas as pd
 from strategy.scanner import check_signal
 from backtesting.engine import (
     BacktestConfig,
-    build_equity_curve,
     calculate_metrics,
     get_symbol_list,
     load_price_data,
@@ -344,6 +317,71 @@ def replay_symbol(
 
     return pd.DataFrame(trades)
 
+def build_fast_equity_curve(
+    trades: pd.DataFrame,
+    config: BacktestConfig,
+) -> pd.DataFrame:
+    """
+    Equity curve đơn giản dùng cho optimizer.
+    Không mô phỏng portfolio thực tế.
+    """
+    if trades.empty:
+        return pd.DataFrame(
+            [{
+                "trade_number": 0,
+                "equity": config.initial_capital,
+            }]
+        )
+
+    ordered = trades.sort_values(
+        ["exit_date", "symbol", "entry_date"]
+    ).reset_index(drop=True)
+
+    capital = config.initial_capital
+
+    rows = [{
+        "trade_number": 0,
+        "equity": capital,
+    }]
+
+    for index, row in enumerate(
+        ordered.itertuples(index=False),
+        start=1,
+    ):
+        allocated = (
+            capital
+            * config.position_size_pct
+            / 100
+        )
+
+        pnl = allocated * row.return_pct / 100
+
+        capital += pnl
+
+        rows.append(
+            {
+                "trade_number": index,
+                "symbol": row.symbol,
+                "exit_date": row.exit_date,
+                "return_pct": row.return_pct,
+                "pnl": pnl,
+                "equity": capital,
+            }
+        )
+
+    curve = pd.DataFrame(rows)
+
+    curve["equity_peak"] = (
+        curve["equity"].cummax()
+    )
+
+    curve["drawdown_pct"] = (
+        curve["equity"]
+        / curve["equity_peak"]
+        - 1
+    ) * 100
+
+    return curve
 
 def replay_config(
     cache: dict[str, dict[str, Any]],
@@ -374,7 +412,10 @@ def replay_config(
         ).reset_index(drop=True)
 
     metrics = calculate_metrics(trades, config)
-    equity = build_equity_curve(trades, config)
+    equity = build_fast_equity_curve(
+        trades,
+        config,
+    )
 
     if (
         not equity.empty

@@ -8,16 +8,20 @@ from pathlib import Path
 from typing import Any, Iterable
 from backtesting.exit import ExitResult
 from backtesting.trade import ExitExecution, ExitReason, Trade
+from backtesting.exit_models import (
+    BaseExitModel,
+    DEFAULT_EXIT_MODEL,
+)
+from strategy.indicators import add_indicators
+from backtesting.portfolio import Portfolio
+from backtesting.portfolio_simulator import PortfolioSimulator
+from backtesting.portfolio_metrics import (
+    calculate_portfolio_metrics,
+)
+from collections import Counter
 
 import pandas as pd
-
-try:
-    from strategy.scanner import check_signal
-except ImportError as exc:
-    raise ImportError(
-        "Không import được scanner.check_signal. "
-        "Hãy đặt file này cùng thư mục với scanner.py."
-    ) from exc
+from strategy.scanner import evaluate_symbol	
 
 
 DEFAULT_DB_PATH = "market.db"
@@ -120,46 +124,51 @@ def _safe_float(value: Any, default: float = math.nan) -> float:
 def _get_signal_adx(signal: dict[str, Any]) -> float:
     for key in ("adx", "ADX", "ADX14", "adx14"):
         if key in signal:
-            return _safe_float(signal[key])
+            return _safe_float(evaluation[key])
 
     return math.nan
 
 
-def _call_check_signal(
-    symbol: str,
-    signal_date: pd.Timestamp
-) -> dict[str, Any] | None:
-    signal_date_text = signal_date.strftime("%Y-%m-%d")
-
-    result = check_signal(
-        symbol,
-        reference_date=signal_date_text,
-        end_date=signal_date_text
-    )
-
-    if result is None:
-        return None
-
-    if not isinstance(result, dict):
-        raise TypeError(
-            f"check_signal({symbol}) phải trả về dict hoặc None, "
-            f"nhưng nhận được {type(result).__name__}."
+def _evaluate_entry(
+    symbol,
+    signal_date,
+    verbose=False,
+):
+    try:
+        return evaluate_symbol(
+            symbol=symbol,
+            reference_date=signal_date,
+            end_date=signal_date,
         )
+    except Exception as exc:
+        if verbose:
+            print(
+                f"❌ {symbol} {signal_date.date()}: "
+                f"entry evaluation error: {exc}"
+            )
 
-    return result
+        return {
+            "status": "ERROR",
+            "reason": str(exc),
+            "failed_conditions": [],
+        }
 
 
 def _simulate_exit(
     price_df: pd.DataFrame,
     entry_index: int,
     config: BacktestConfig,
-) -> dict[str, Any]:
+    exit_model: BaseExitModel = DEFAULT_EXIT_MODEL,
+) -> ExitResult:
     entry_row = price_df.iloc[entry_index]
     entry_price = float(entry_row["open"])
     entry_date = pd.Timestamp(entry_row["time"])
 
-    stop_price = entry_price * (1 - config.stop_loss_pct / 100)
-    target_price = entry_price * (1 + config.take_profit_pct / 100)
+    stop_price, target_price = exit_model.calculate_levels(
+        entry_price=entry_price,
+        entry_row=entry_row,
+        config=config,
+    )
 
     final_index = min(
         entry_index + config.max_holding_days - 1,
@@ -235,21 +244,15 @@ def _simulate_exit(
     execution=execution,
     )
 
-def backtest_symbol(
+def generate_candidate_trades(
     symbol: str,
     config: BacktestConfig,
     db_path: str = DEFAULT_DB_PATH,
     warmup_bars: int = 60,
     verbose: bool = False,
+    exit_model: BaseExitModel = DEFAULT_EXIT_MODEL,
 ) -> list[Trade]:
-    """
-    Backtest một mã.
 
-    Quy tắc:
-    - Tín hiệu được xác nhận sau khi phiên signal_date kết thúc.
-    - Entry tại OPEN phiên kế tiếp.
-    - Không mở lệnh mới khi lệnh cũ chưa thoát.
-    """
     config.validate()
     symbol = symbol.upper().strip()
 
@@ -258,7 +261,23 @@ def backtest_symbol(
     if len(price_df) <= warmup_bars + 1:
         return []
 
+    price_df = add_indicators(price_df)
+
+    if price_df.empty:
+        return []
+   
+    required_columns = {"ATR14", "ADX14"}
+
+    missing_columns = required_columns.difference(price_df.columns)
+
+    if missing_columns:
+        raise ValueError(
+            "Dữ liệu backtest thiếu indicator: "
+            + ", ".join(sorted(missing_columns))
+        )
+
     trades: list[Trade] = []
+
     next_allowed_signal_index = warmup_bars
 
     for signal_index in range(warmup_bars, len(price_df) - 1):
@@ -269,22 +288,41 @@ def backtest_symbol(
             price_df.iloc[signal_index]["time"]
         )
 
-        try:
-            signal = _call_check_signal(symbol, signal_date)
-        except Exception as error:
+        evaluation = _evaluate_entry(
+            symbol=symbol,
+            signal_date=signal_date,
+            verbose=verbose,
+        )
+
+        status = evaluation.get("status", "UNKNOWN")
+
+        if status != "PASSED":
+            if verbose:
+                score = evaluation.get("score")
+                failed = evaluation.get("failed_conditions", [])
+
+                print(
+                    f"⏭️ {symbol} {signal_date.date()}: "
+                    f"status={status}, "
+                    f"reason={evaluation.get('reason')}, "
+                    f"score={evaluation.get('score')}, "
+                    f"min_score={evaluation.get('min_score')}, "
+                    f"regime={evaluation.get('regime')}, "
+                    f"failed={evaluation.get('failed_conditions', [])}"
+                )
+
+            continue
+
+        adx = evaluation.get("adx")
+
+        if adx is None:
             if verbose:
                 print(
-                    f"⚠️ {symbol} {signal_date.date()}: "
-                    f"lỗi tín hiệu: {error}"
+                   f"✅ {symbol} {signal_date.date()}: "
+                   f"strategy PASSED, "
+                   f"score={evaluation.get('score')}, "
+                   f"adx={evaluation.get('adx')}"
                 )
-            continue
-
-        if not signal:
-            continue
-
-        adx = _get_signal_adx(signal)
-
-        if not math.isfinite(adx) or adx < config.min_adx:
             continue
 
         entry_index = signal_index + 1
@@ -293,6 +331,7 @@ def backtest_symbol(
             price_df=price_df,
             entry_index=entry_index,
             config=config,
+            exit_model=exit_model,
         )
 
         trade = Trade(
@@ -310,7 +349,7 @@ def backtest_symbol(
         )
 
         trades.append(trade)
-
+        
         # Không chồng lệnh trên cùng một mã.
         next_allowed_signal_index = exit_info.exit_index + 1
 
@@ -327,6 +366,26 @@ def backtest_symbol(
             )
 
     return trades
+
+def backtest_symbol(
+    symbol: str,
+    config: BacktestConfig,
+    db_path: str = DEFAULT_DB_PATH,
+    warmup_bars: int = 60,
+    verbose: bool = False,
+    exit_model: BaseExitModel = DEFAULT_EXIT_MODEL,
+) -> list[Trade]:
+    """
+    Wrapper tương thích với code cũ.
+    """
+    return generate_candidate_trades(
+        symbol=symbol,
+        config=config,
+        db_path=db_path,
+        warmup_bars=warmup_bars,
+        verbose=verbose,
+        exit_model=exit_model,
+    )
 
 
 def calculate_metrics(
@@ -407,69 +466,6 @@ def calculate_metrics(
         ),
     }
 
-
-def build_equity_curve(
-    trades: list[Trade],
-    config: BacktestConfig,
-) -> pd.DataFrame:
-    """
-    Equity curve đơn giản theo thứ tự exit_date.
-
-    Lưu ý: khi chạy nhiều mã, các giao dịch có thể trùng thời gian.
-    Equity curve này dùng cho so sánh tương đối, chưa phải portfolio simulator.
-    """
-    if not trades:
-        return pd.DataFrame(
-            [{
-                "trade_number": 0,
-                "equity": config.initial_capital,
-            }]
-        )
-
-    ordered = sorted(
-        trades,
-        key=lambda trade: (
-            trade.exit_date,
-            trade.symbol,
-            trade.entry_date,
-        ),
-    )
-
-    capital = config.initial_capital
-    rows = [
-        {
-            "trade_number": 0,
-            "equity": capital,
-        }
-    ]
-
-    for index, trade in enumerate(ordered, start=1):
-        allocated = capital * config.position_size_pct / 100
-        pnl = allocated * trade.return_pct / 100
-        capital += pnl
-
-        rows.append(
-            {
-                "trade_number": index,
-                "symbol": trade.symbol,
-                "exit_date": trade.exit_date,
-                "return_pct": trade.return_pct,
-                "pnl": pnl,
-                "equity": capital,
-            }
-        )
-
-    curve = pd.DataFrame(rows)
-
-    curve["equity_peak"] = curve["equity"].cummax()
-
-    curve["drawdown_pct"] = (
-        curve["equity"] / curve["equity_peak"] - 1
-    ) * 100
-
-    return curve
-
-
 def run_backtest(
     symbols: Iterable[str] | None = None,
     *,
@@ -517,7 +513,7 @@ def run_backtest(
         if verbose:
             print(f"[{index}/{len(selected_symbols)}] Backtest {symbol}")
 
-        symbol_trades = backtest_symbol(
+        symbol_trades = generate_candidate_trades(
             symbol=symbol,
             config=config,
             db_path=db_path,
@@ -528,24 +524,49 @@ def run_backtest(
         if symbol_trades:
            all_trades.extend(symbol_trades)
 
-    trades = sorted(
-        all_trades,
-        key=lambda trade: (
-            trade.exit_date,
-            trade.symbol,
-            trade.entry_date,
-        ),
+    simulator = PortfolioSimulator(
+        initial_cash=config.initial_capital,
+        position_size_pct=config.position_size_pct,
     )
 
-    metrics = calculate_metrics(trades, config)
-    equity = build_equity_curve(trades, config)
+    result = simulator.simulate(all_trades)
 
-    if not equity.empty and "drawdown_pct" in equity.columns:
-        metrics["max_drawdown_pct"] = float(equity["drawdown_pct"].min())
-        metrics["final_equity"] = float(equity["equity"].iloc[-1])
-    else:
-        metrics["max_drawdown_pct"] = 0.0
-        metrics["final_equity"] = config.initial_capital
+    trades = result.executed_trades
+
+    metrics = calculate_metrics(
+        trades,
+        config,
+    )
+
+    equity = result.equity_curve
+
+    portfolio_metrics = calculate_portfolio_metrics(
+        equity,
+        final_equity=result.final_equity,
+    )
+
+    metrics.update(portfolio_metrics)
+
+    rejected_reason_counts = Counter(
+        rejected.reason
+        for rejected in result.rejected_trades
+    )
+
+    metrics["rejected_trades"] = len(
+        result.rejected_trades
+    )
+
+    metrics["rejected_trade_reasons"] = dict(
+        rejected_reason_counts
+    )
+
+    metrics["final_cash"] = result.final_cash
+    metrics["final_market_value"] = (
+        result.final_market_value
+    )
+    metrics["final_open_positions"] = (
+        result.final_open_positions
+    )
 
     return trades, metrics, equity
 
@@ -583,26 +604,8 @@ def save_results(
 
 
 def print_summary(metrics: dict[str, Any]) -> None:
-    print("\n" + "=" * 76)
-    print("KẾT QUẢ BACKTEST ENGINE V4.2")
-    print("=" * 76)
-    print(
-        f"Cấu hình: ADX >= {metrics['min_adx']:.0f} | "
-        f"SL {metrics['stop_loss_pct']:.1f}% | "
-        f"TP {metrics['take_profit_pct']:.1f}% | "
-        f"Hold {metrics['max_holding_days']} phiên"
-    )
-    print("-" * 76)
-    print(f"Tổng giao dịch: {metrics['total_trades']}")
-    print(f"Lệnh thắng: {metrics['wins']}")
-    print(f"Lệnh thua: {metrics['losses']}")
-    print(f"Win rate: {metrics['win_rate_pct']:.2f}%")
-    print(f"Return trung bình/lệnh: {metrics['average_return_pct']:+.2f}%")
-    print(f"Profit Factor: {metrics['profit_factor']:.2f}")
-    print(f"Payoff Ratio: {metrics['payoff_ratio']:.2f}")
-    print(f"Max Drawdown tham khảo: {metrics['max_drawdown_pct']:.2f}%")
-    print(f"Vốn cuối tham khảo: {metrics['final_equity']:,.0f} VND")
-
+    print("KẾT QUẢ BACKTEST ENGINE V5.0")
+    print_portfolio_summary(metrics)
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
@@ -638,6 +641,115 @@ def parse_args() -> argparse.Namespace:
     )
 
     return parser.parse_args()
+
+def print_portfolio_summary(
+    metrics: dict[str, Any],
+) -> None:
+    print("\n" + "=" * 60)
+    print("PORTFOLIO SUMMARY")
+    print("=" * 60)
+
+    print(
+        f"Initial Capital : "
+        f"{metrics['initial_capital']:,.0f} VND"
+    )
+
+    print(
+        f"Final Equity    : "
+        f"{metrics['final_equity']:,.0f} VND"
+    )
+
+    print(
+        f"Total Return    : "
+        f"{metrics['total_return_pct']:+.2f}%"
+    )
+
+    print()
+
+    print(
+        f"Max Drawdown    : "
+        f"{metrics['max_drawdown_pct']:.2f}%"
+    )
+
+    print(
+        f"CAGR            : "
+        f"{metrics['cagr_pct']:.2f}%"
+    )
+
+    print(
+        f"Sharpe Ratio    : "
+        f"{metrics['sharpe_ratio']:.2f}"
+    )
+
+    print(
+        f"Sortino Ratio   : "
+        f"{metrics['sortino_ratio']:.2f}"
+    )
+
+    print(
+        f"Calmar Ratio    : "
+        f"{metrics['calmar_ratio']:.2f}"
+    )
+
+    print()
+
+    print(
+        f"Executed Trades : "
+        f"{metrics['total_trades']}"
+    )
+ 
+    print(
+        f"Rejected Trades : "
+        f"{metrics.get('rejected_trades', 0)}"
+    )
+
+    print(
+        f"Final Cash      : "
+        f"{metrics.get('final_cash', 0):,.0f} VND"
+    )
+
+    print(
+        f"Market Value    : "
+        f"{metrics.get('final_market_value', 0):,.0f} VND"
+    )
+
+    print(
+        f"Open Positions  : "
+        f"{metrics.get('final_open_positions', 0)}"
+    	)
+
+    print(
+        f"Win Rate        : "
+        f"{metrics['win_rate_pct']:.2f}%"
+    )
+
+    print(
+        f"Profit Factor   : "
+        f"{metrics['profit_factor']:.2f}"
+    )
+
+    print(
+        f"Payoff Ratio    : "
+        f"{metrics['payoff_ratio']:.2f}"
+    )
+
+    reject_reasons = metrics.get(
+        "rejected_trade_reasons",
+        {},
+    )
+
+    if reject_reasons:
+        print()
+        print("Reject Reasons")
+
+        for reason, count in sorted(
+            reject_reasons.items()
+        ):
+            print(
+                f"- {reason:<18}: {count}"
+            )
+
+    print("=" * 60)
 
 
 def main() -> None:

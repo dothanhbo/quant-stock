@@ -1,6 +1,6 @@
 import pandas as pd
 
-from strategy.scanner import calculate_score
+from strategy.scoring import calculate_score
 
 
 def _latest(**overrides):

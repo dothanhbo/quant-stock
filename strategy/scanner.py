@@ -102,11 +102,29 @@ def evaluate_symbol(
 
     date_text = latest_date.strftime("%Y-%m-%d")
 
-    if reference_date is not None and date_text != reference_date:
-        return {
-            **base,
-            "reason": "stale_data",
-        }
+    if reference_date is not None:
+        reference_date_parsed = pd.to_datetime(
+            reference_date,
+            errors="coerce",
+        )
+
+        if pd.isna(reference_date_parsed):
+            return {
+                **base,
+                "reason": "invalid_reference_date",
+            }
+
+        reference_date_text = reference_date_parsed.strftime(
+            "%Y-%m-%d"
+        )
+
+        if date_text != reference_date_text:
+            return {
+                **base,
+                "reason": "stale_data",
+                "latest_date": date_text,
+                "reference_date": reference_date_text,
+            }
 
     if latest[REQUIRED_INDICATORS].isna().any():
         return {
