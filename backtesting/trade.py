@@ -32,6 +32,10 @@ class Trade:
     exit_reason: ExitReason | None = None
     execution: ExitExecution = ExitExecution.NORMAL
 
+    buy_commission: float = 0.0
+    sell_commission: float = 0.0
+    sell_tax: float = 0.0
+
     def close(
         self,
         exit_date: datetime,
@@ -50,17 +54,11 @@ class Trade:
 
     @property
     def pnl(self) -> float:
-        if not self.is_closed:
-            return 0.0
-
-        return (self.exit_price - self.entry_price) * self.quantity
+        return self.net_pnl
 
     @property
     def return_pct(self) -> float:
-        if not self.is_closed or self.entry_price == 0:
-            return 0.0
-
-        return ((self.exit_price - self.entry_price) / self.entry_price) * 100
+        return self.net_return_pct
 
     @property
     def holding_days(self) -> int:
@@ -77,6 +75,51 @@ class Trade:
     @property
     def cost(self) -> float:
         return self.entry_price * self.quantity
+
+    @property
+    def gross_proceeds(self) -> float:
+        if not self.is_closed:
+            return 0.0
+
+        return self.exit_price * self.quantity
+
+
+    @property
+    def total_transaction_cost(self) -> float:
+        return (
+            self.buy_commission
+            + self.sell_commission
+            + self.sell_tax
+        )
+
+
+    @property
+    def gross_pnl(self) -> float:
+        if not self.is_closed:
+            return 0.0
+
+        return (
+            self.exit_price - self.entry_price
+        ) * self.quantity
+
+
+    @property
+    def net_pnl(self) -> float:
+        return (
+            self.gross_pnl
+            - self.total_transaction_cost
+        )
+
+
+    @property
+    def net_return_pct(self) -> float:
+        if self.cost == 0:
+            return 0.0
+
+        return (
+            self.net_pnl
+            / self.cost
+        ) * 100
 
 
     @property
@@ -107,6 +150,13 @@ class Trade:
             "holding_days": self.holding_days,
             "cost": self.cost,
             "market_value": self.market_value,
+            "gross_pnl": self.gross_pnl,
+            "net_pnl": self.net_pnl,
+            "buy_commission": self.buy_commission,
+            "sell_commission": self.sell_commission,
+            "sell_tax": self.sell_tax,
+            "transaction_cost": self.total_transaction_cost,
+            "net_return_pct": self.net_return_pct,
         }
 
     def __repr__(self) -> str:

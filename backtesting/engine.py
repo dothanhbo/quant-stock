@@ -20,6 +20,7 @@ from backtesting.portfolio_metrics import (
 )
 from collections import Counter
 from scripts.update_data import get_vn100_symbols
+from backtesting.transaction_cost import TransactionCostConfig
 
 import pandas as pd
 from strategy.scanner import evaluate_symbol	
@@ -27,7 +28,7 @@ from strategy.scanner import evaluate_symbol
 
 DEFAULT_DB_PATH = "market.db"
 DEFAULT_OUTPUT_DIR = "backtest_results_optimized"
-DEFAULT_INITIAL_CAPITAL = 100_000_000.0
+DEFAULT_INITIAL_CAPITAL = 1_000_000_000.0
 
 
 @dataclass(frozen=True)
@@ -37,7 +38,12 @@ class BacktestConfig:
     max_holding_days: int = 20
     min_adx: float = 30.0
     initial_capital: float = DEFAULT_INITIAL_CAPITAL
-    position_size_pct: float = 100.0
+    position_size_pct: float = 20.0
+    buy_slippage_pct: float = 0.05
+    sell_slippage_pct: float = 0.05
+    buy_commission_pct: float = 0.15
+    sell_commission_pct: float = 0.15
+    sell_tax_pct: float = 0.10
 
     def validate(self) -> None:
         if self.stop_loss_pct <= 0:
@@ -52,6 +58,20 @@ class BacktestConfig:
             raise ValueError("initial_capital phải lớn hơn 0.")
         if not 0 < self.position_size_pct <= 100:
             raise ValueError("position_size_pct phải nằm trong khoảng (0, 100].")
+        if self.buy_commission_pct < 0:
+            raise ValueError(
+                "buy_commission_pct must be greater than or equal to 0"
+            )
+
+        if self.sell_commission_pct < 0:
+            raise ValueError(
+                "sell_commission_pct must be greater than or equal to 0"
+            )
+
+        if self.sell_tax_pct < 0:
+            raise ValueError(
+                "sell_tax_pct must be greater than or equal to 0"
+            )
 
 
 def _connect(db_path: str) -> sqlite3.Connection:
@@ -479,6 +499,9 @@ def run_backtest(
     position_size_pct: float = 100.0,
     warmup_bars: int = 60,
     verbose: bool = False,
+    buy_commission_pct: float = 0.15,
+    sell_commission_pct: float = 0.15,
+    sell_tax_pct: float = 0.10,
 ) -> tuple[list[Trade], dict[str, Any], pd.DataFrame]:
     config = BacktestConfig(
         stop_loss_pct=stop_loss_pct,
@@ -487,6 +510,11 @@ def run_backtest(
         min_adx=min_adx,
         initial_capital=initial_capital,
         position_size_pct=position_size_pct,
+        buy_commission_pct=buy_commission_pct,
+        sell_commission_pct=sell_commission_pct,
+        sell_tax_pct=sell_tax_pct,
+        buy_slippage_pct=buy_slippage_pct,
+        sell_slippage_pct=sell_slippage_pct,
     )
     config.validate()
 
@@ -518,9 +546,18 @@ def run_backtest(
         if symbol_trades:
            all_trades.extend(symbol_trades)
 
+    transaction_cost_config = TransactionCostConfig(
+        buy_commission_pct=config.buy_commission_pct,
+        sell_commission_pct=config.sell_commission_pct,
+        sell_tax_pct=config.sell_tax_pct,
+        buy_slippage_pct=config.buy_slippage_pct,
+        sell_slippage_pct=config.sell_slippage_pct,
+    )
+
     simulator = PortfolioSimulator(
         initial_cash=config.initial_capital,
         position_size_pct=config.position_size_pct,
+        transaction_cost_config=transaction_cost_config,
     )
 
     result = simulator.simulate(all_trades)
@@ -530,6 +567,86 @@ def run_backtest(
     metrics = calculate_metrics(
         trades,
         config,
+    ) 
+
+    gross_profits = [
+        trade.net_pnl
+        for trade in trades
+        if trade.net_pnl > 0
+    ]
+
+    gross_losses = [
+        trade.net_pnl
+        for trade in trades
+        if trade.net_pnl < 0
+    ]
+
+    gross_profit_amount = float(
+        sum(gross_profits)
+    )
+
+    gross_loss_amount = float(
+        abs(sum(gross_losses))
+    )
+
+    profit_factor_amount = (
+        gross_profit_amount / gross_loss_amount
+        if gross_loss_amount > 0
+        else 0.0
+    )
+
+    total_buy_commission = sum(
+        trade.buy_commission
+        for trade in trades
+    )
+
+    total_sell_commission = sum(
+        trade.sell_commission
+        for trade in trades
+    )
+
+    total_sell_tax = sum(
+        trade.sell_tax
+        for trade in trades
+    )
+
+    total_transaction_cost = sum(
+        trade.total_transaction_cost
+        for trade in trades
+    )
+
+    gross_trading_pnl = sum(
+        trade.gross_pnl
+        for trade in trades
+    )
+
+    net_trading_pnl = sum(
+        trade.net_pnl
+        for trade in trades
+    )
+
+    metrics.update(
+        {
+            "gross_profit": float(sum(gross_profits)),
+            "gross_loss": float(abs(sum(gross_losses))),
+            "profit_factor": float(
+                profit_factor_amount
+            ),
+            "gross_trading_pnl": float(gross_trading_pnl),
+            "net_trading_pnl": float(net_trading_pnl),
+            "total_buy_commission": float(
+                total_buy_commission
+            ),
+            "total_sell_commission": float(
+                total_sell_commission
+            ),
+            "total_sell_tax": float(
+                total_sell_tax
+            ),
+            "total_transaction_cost": float(
+                total_transaction_cost
+            ),
+        }
     )
 
     equity = result.equity_curve
@@ -561,6 +678,10 @@ def run_backtest(
     metrics["final_open_positions"] = (
         result.final_open_positions
     )
+
+    metrics["total_return_pct"] = (
+        result.final_equity / config.initial_capital - 1
+    ) * 100
 
     return trades, metrics, equity
 
@@ -623,6 +744,11 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tp", type=float, default=10.0)
     parser.add_argument("--hold", type=int, default=20)
     parser.add_argument("--min-adx", type=float, default=30.0)
+    parser.add_argument("--buy-fee",type=float,default=0.15,help="Phí mua theo phần trăm, mặc định 0.15.",)
+    parser.add_argument("--sell-fee",type=float,default=0.15,help="Phí bán theo phần trăm, mặc định 0.15.",)
+    parser.add_argument("--sell-tax",type=float,default=0.10,help="Thuế bán theo phần trăm, mặc định 0.10.",)
+    parser.add_argument("--buy-slippage",type=float,default=0.05,help="Slippage khi mua (%). Mặc định 0.05.",)
+    parser.add_argument("--sell-slippage",type=float,default=0.05,help="Slippage khi bán (%). Mặc định 0.05.",)
     parser.add_argument("--warmup", type=int, default=60)
     parser.add_argument(
         "--output",
@@ -722,6 +848,53 @@ def print_portfolio_summary(
         f"{metrics['profit_factor']:.2f}"
     )
 
+    print()
+
+    print("PROFIT & COST BREAKDOWN")
+    print("-" * 60)
+
+    print(
+        f"Gross Profit    : "
+        f"{metrics.get('gross_profit', 0):,.0f} VND"
+    )
+
+    print(
+        f"Gross Loss      : "
+        f"-{metrics.get('gross_loss', 0):,.0f} VND"
+    )
+
+    print(
+        f"Gross Trade PnL : "
+        f"{metrics.get('gross_trading_pnl', 0):+,.0f} VND"
+    )
+
+    print(
+        f"Net Trade PnL   : "
+        f"{metrics.get('net_trading_pnl', 0):+,.0f} VND"
+    )
+
+    print()
+
+    print(
+        f"Buy Commission  : "
+        f"{metrics.get('total_buy_commission', 0):,.0f} VND"
+    )
+
+    print(
+        f"Sell Commission : "
+        f"{metrics.get('total_sell_commission', 0):,.0f} VND"
+    )
+
+    print(
+        f"Sell Tax        : "
+        f"{metrics.get('total_sell_tax', 0):,.0f} VND"
+    )
+
+    print(
+        f"Total Cost      : "
+        f"{metrics.get('total_transaction_cost', 0):,.0f} VND"
+    )
+
     print(
         f"Payoff Ratio    : "
         f"{metrics['payoff_ratio']:.2f}"
@@ -748,9 +921,14 @@ def print_portfolio_summary(
 
 def main() -> None:
     args = parse_args()
-    symbols = None if args.all else args.symbol
-
-    symbols = list(get_vn100_symbols())
+ 
+    if args.all:
+        symbols = list(get_vn100_symbols())
+    else:
+        symbols = [
+            symbol.upper().strip()
+            for symbol in args.symbol
+        ]
 
     trades, metrics, equity = run_backtest(
         symbols=symbols,
@@ -761,6 +939,16 @@ def main() -> None:
         db_path=args.db,
         warmup_bars=args.warmup,
         verbose=not args.quiet,
+        buy_slippage_pct=args.buy_slippage,
+        sell_slippage_pct=args.sell_slippage,
+        buy_commission_pct=args.buy_fee,
+        sell_commission_pct=args.sell_fee,
+        sell_tax_pct=args.sell_tax,
+    )
+    print(
+        f"Phí mua {metrics['buy_commission_pct']:.2f}% | "
+        f"Phí bán {metrics['sell_commission_pct']:.2f}% | "
+        f"Thuế bán {metrics['sell_tax_pct']:.2f}%"
     )
 
     print_summary(metrics)
@@ -776,11 +964,14 @@ def main() -> None:
     else:
         symbol_label = "_".join(symbols)
 
+    def fmt_filename_value(value) -> str:
+        return str(value).replace(".", "p")
+
     prefix = (
         f"{target_name}"
-        f"_ADX{args.min_adx:g}"
-        f"_SL{args.sl:g}"
-        f"_TP{args.tp:g}"
+        f"_ADX{fmt_filename_value(args.min_adx)}"
+        f"_SL{fmt_filename_value(args.sl)}"
+        f"_TP{fmt_filename_value(args.tp)}"
         f"_H{args.hold}"
     ).replace(".", "p")
 

@@ -9,6 +9,7 @@ from backtesting.portfolio import (
     PositionNotFoundError,
 )
 from backtesting.trade import ExitReason
+from backtesting.transaction_cost import TransactionCostConfig
 
 def test_open_position_reduces_cash():
     portfolio = Portfolio(initial_cash=100_000)
@@ -160,3 +161,37 @@ def test_summary():
     assert summary["equity"] == 101_000
     assert summary["unrealized_pnl"] == 1_000
     assert summary["open_positions"] == 1
+
+def test_portfolio_applies_transaction_costs():
+    portfolio = Portfolio(
+        initial_cash=10_000_000,
+        transaction_cost_config=TransactionCostConfig(
+            buy_commission_pct=0.15,
+            sell_commission_pct=0.15,
+            sell_tax_pct=0.10,
+            buy_slippage_pct=0.0,
+            sell_slippage_pct=0.0,
+        ),
+    )
+
+    trade = portfolio.open_position(
+        symbol="HPG",
+        entry_date=datetime(2026, 1, 2),
+        entry_price=20_000,
+        quantity=100,
+    )
+
+    assert trade.buy_commission == 3_000
+    assert portfolio.cash == 7_997_000
+
+    closed = portfolio.close_position(
+        symbol="HPG",
+        exit_date=datetime(2026, 1, 10),
+        exit_price=22_000,
+        reason=ExitReason.TAKE_PROFIT,
+    )
+
+    assert closed.sell_commission == 3_300
+    assert closed.sell_tax == 2_200
+    assert closed.net_pnl == 191_500
+    assert portfolio.cash == 10_191_500

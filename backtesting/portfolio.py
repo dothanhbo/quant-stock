@@ -3,11 +3,16 @@ from __future__ import annotations
 from datetime import datetime
 
 from backtesting.trade import ExitExecution, ExitReason, Trade
-
+from backtesting.transaction_cost import (
+    TransactionCostConfig,
+    apply_buy_slippage,
+    apply_sell_slippage,
+    calculate_buy_cost,
+    calculate_sell_cost,
+)
 
 class PortfolioError(Exception):
     """Base exception for portfolio operations."""
-
 
 class InsufficientCashError(PortfolioError):
     """Raised when portfolio cash is insufficient to open a position."""
@@ -26,6 +31,7 @@ class Portfolio:
         self,
         initial_cash: float = 1_000_000_000,
         allow_duplicate_symbols: bool = False,
+        transaction_cost_config: TransactionCostConfig | None = None,
     ) -> None:
         if initial_cash <= 0:
             raise ValueError("initial_cash must be greater than 0")
@@ -36,6 +42,15 @@ class Portfolio:
 
         self.open_positions: list[Trade] = []
         self.closed_positions: list[Trade] = []
+
+        self.transaction_cost_config = (
+            transaction_cost_config
+            or TransactionCostConfig(
+                buy_commission_pct=0.0,
+                sell_commission_pct=0.0,
+                sell_tax_pct=0.0,
+            )
+        )
 
     def open_position(
         self,
@@ -63,7 +78,18 @@ class Portfolio:
                 f"An open position already exists for {symbol}"
             )
 
-        position_cost = entry_price * quantity
+        effective_entry_price = apply_buy_slippage(
+            price=entry_price,
+            config=self.transaction_cost_config,
+        )
+
+        buy_cost = calculate_buy_cost(
+            price=effective_entry_price,
+            quantity=quantity,
+            config=self.transaction_cost_config,
+        )
+
+        position_cost = buy_cost.net_value
 
         if position_cost > self.cash:
             raise InsufficientCashError(
@@ -74,8 +100,9 @@ class Portfolio:
         trade = Trade(
             symbol=symbol,
             entry_date=entry_date,
-            entry_price=float(entry_price),
+            entry_price=float(effective_entry_price),
             quantity=quantity,
+            buy_commission=buy_cost.commission,
         )
 
         self.cash -= position_cost
@@ -102,15 +129,28 @@ class Portfolio:
                 f"No open position found for {symbol}"
             )
 
+        effective_exit_price = apply_sell_slippage(
+            price=exit_price,
+            config=self.transaction_cost_config,
+        )
+
         trade.close(
             exit_date=exit_date,
-            exit_price=float(exit_price),
+            exit_price=float(effective_exit_price),
             reason=reason,
             execution=execution,
         )
 
-        sale_value = exit_price * trade.quantity
-        self.cash += sale_value
+        sell_cost = calculate_sell_cost(
+            price=effective_exit_price,
+            quantity=trade.quantity,
+            config=self.transaction_cost_config,
+        ) 
+
+        trade.sell_commission = sell_cost.commission
+        trade.sell_tax = sell_cost.tax
+
+        self.cash += sell_cost.net_value
 
         self.open_positions.remove(trade)
         self.closed_positions.append(trade)

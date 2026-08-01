@@ -1,4 +1,5 @@
 from datetime import datetime
+import pytest
 
 from backtesting.trade import ExitReason, Trade
 
@@ -130,3 +131,66 @@ def test_trade_to_dict():
     assert result["pnl"] == 200.0
     assert result["return_pct"] == 8.0
     assert result["is_win"] is True
+
+def test_trade_calculates_net_pnl_after_costs():
+    trade = Trade(
+        symbol="HPG",
+        entry_date=datetime(2026, 1, 2),
+        entry_price=20_000,
+        quantity=100,
+        buy_commission=3_000,
+        sell_commission=3_300,
+        sell_tax=2_200,
+    )
+
+    trade.close(
+        exit_date=datetime(2026, 1, 10),
+        exit_price=22_000,
+        reason=ExitReason.TAKE_PROFIT,
+    )
+
+    assert trade.gross_pnl == 200_000
+    assert trade.total_transaction_cost == 8_500
+    assert trade.net_pnl == 191_500
+    assert trade.pnl == 191_500
+
+
+def test_trade_calculates_net_return_after_costs():
+    trade = Trade(
+        symbol="HPG",
+        entry_date=datetime(2026, 1, 2),
+        entry_price=20_000,
+        quantity=100,
+        buy_commission=3_000,
+        sell_commission=3_300,
+        sell_tax=2_200,
+    )
+
+    trade.close(
+        exit_date=datetime(2026, 1, 10),
+        exit_price=22_000,
+        reason=ExitReason.TAKE_PROFIT,
+    )
+
+    assert trade.net_return_pct == pytest.approx(9.575)
+    assert trade.return_pct == pytest.approx(9.575)
+
+
+def test_trade_without_costs_preserves_old_behavior():
+    trade = Trade(
+        symbol="HPG",
+        entry_date=datetime(2026, 1, 2),
+        entry_price=20_000,
+        quantity=100,
+    )
+
+    trade.close(
+        exit_date=datetime(2026, 1, 10),
+        exit_price=22_000,
+        reason=ExitReason.TAKE_PROFIT,
+    )
+
+    assert trade.gross_pnl == 200_000
+    assert trade.net_pnl == 200_000
+    assert trade.pnl == 200_000
+    assert trade.return_pct == pytest.approx(10.0)

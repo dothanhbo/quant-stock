@@ -4,15 +4,12 @@ import time
 import pandas as pd
 
 from vnstock.api.quote import Quote
+from core.universe import get_vn100_symbols
 
 from core.database import (
     get_latest_price_date,
     save_price_data
 )
-from vnstock import Vnstock
-
-stock_api = Vnstock()
-
 
 # ==========================================
 # CẤU HÌNH
@@ -25,58 +22,6 @@ INITIAL_HISTORY_DAYS = 500
 REFRESH_OVERLAP_DAYS = 7
 
 REQUEST_DELAY_SECONDS = 1.1
-
-def get_vn100_symbols():
-
-    try:
-
-        result = (
-            stock_api
-            .stock(
-                symbol="ACB",
-                source="VCI"
-            )
-            .listing
-            .symbols_by_group("VN100")
-        )
-
-
-        print("\nDEBUG VN100 TYPE:")
-        print(type(result))
-
-
-        # Trường hợp trả về DataFrame
-        if hasattr(result, "columns"):
-
-            if "ticker" in result.columns:
-                return result["ticker"].tolist()
-
-
-            if "symbol" in result.columns:
-                return result["symbol"].tolist()
-
-
-
-        # Trường hợp trả về Series/list
-        if hasattr(result, "tolist"):
-
-            return result.tolist()
-
-
-
-        return list(result)
-
-
-
-    except Exception as e:
-
-        print(
-            "❌ Không lấy được VN100:",
-            e
-        )
-
-        return []
-
 
 def calculate_start_date(symbol):
     """
@@ -150,6 +95,10 @@ def update_symbol(symbol):
         )
 
         return True
+
+    except KeyboardInterrupt:
+        print("\n⛔ Người dùng dừng cập nhật.")
+        raise
 
     except Exception as error:
         print(

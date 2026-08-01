@@ -1,8 +1,11 @@
 from datetime import datetime
 
+import pytest
+
+from backtesting.portfolio import Portfolio
 from backtesting.portfolio_simulator import PortfolioSimulator
 from backtesting.trade import ExitReason, Trade
-
+from backtesting.transaction_cost import TransactionCostConfig
 
 def create_closed_trade(
     symbol: str,
@@ -139,3 +142,122 @@ def test_simulator_builds_equity_curve():
     assert "cash" in result.equity_curve.columns
     assert "equity" in result.equity_curve.columns
     assert "drawdown_pct" in result.equity_curve.columns
+
+def test_same_day_trade_is_closed():
+    simulator = PortfolioSimulator(
+        initial_cash=100_000,
+        position_size_pct=20,
+        max_positions=5,
+        lot_size=100,
+    )
+
+    trade = create_closed_trade(
+        symbol="HPG",
+        entry_date=datetime(2026, 1, 2),
+        exit_date=datetime(2026, 1, 2),
+        entry_price=20,
+        exit_price=21,
+    )
+
+    result = simulator.simulate([trade])
+
+    assert len(result.executed_trades) == 1
+    assert result.final_open_positions == 0
+    assert result.final_market_value == 0
+
+
+def test_simulator_applies_transaction_costs():
+    simulator = PortfolioSimulator(
+        initial_cash=10_000_000,
+        position_size_pct=20,
+        max_positions=5,
+        lot_size=100,
+        transaction_cost_config=TransactionCostConfig(
+            buy_commission_pct=0.15,
+            sell_commission_pct=0.15,
+            sell_tax_pct=0.10,
+        ),
+    )
+
+    trade = create_closed_trade(
+        symbol="HPG",
+        entry_date=datetime(2026, 1, 2),
+        exit_date=datetime(2026, 1, 10),
+        entry_price=20_000,
+        exit_price=22_000,
+    )
+
+    result = simulator.simulate([trade])
+
+    assert len(result.executed_trades) == 1
+
+    executed = result.executed_trades[0]
+
+    assert executed.buy_commission == 3_000
+    assert executed.sell_commission == 3_300
+    assert executed.sell_tax == 2_200
+    assert executed.net_pnl == 191_500
+    assert result.final_cash == 10_191_500
+
+def test_simulator_applies_transaction_costs():
+    simulator = PortfolioSimulator(
+        initial_cash=10_000_000,
+        position_size_pct=25,
+        max_positions=5,
+        lot_size=100,
+        transaction_cost_config=TransactionCostConfig(
+            buy_commission_pct=0.15,
+            sell_commission_pct=0.15,
+            sell_tax_pct=0.10,
+        ),
+    )
+
+    trade = create_closed_trade(
+        symbol="HPG",
+        entry_date=datetime(2026, 1, 2),
+        exit_date=datetime(2026, 1, 10),
+        entry_price=20_000,
+        exit_price=22_000,
+    )
+
+    result = simulator.simulate([trade])
+    print(result.rejected_trades)
+    assert len(result.executed_trades) == 1
+
+    executed = result.executed_trades[0]
+
+    assert executed.buy_commission == 3_000
+    assert executed.sell_commission == 3_300
+    assert executed.sell_tax == 2_200
+    assert executed.net_pnl == 191_500
+    assert result.final_cash == 10_191_500
+
+def test_portfolio_applies_slippage():
+    portfolio = Portfolio(
+        initial_cash=10_000_000,
+        transaction_cost_config=TransactionCostConfig(
+            buy_commission_pct=0.0,
+            sell_commission_pct=0.0,
+            sell_tax_pct=0.0,
+            buy_slippage_pct=0.05,
+            sell_slippage_pct=0.05,
+        ),
+    )
+
+    trade = portfolio.open_position(
+        symbol="HPG",
+        entry_date=datetime(2026, 1, 2),
+        entry_price=20_000,
+        quantity=100,
+    )
+
+    assert trade.entry_price == pytest.approx(20_010)
+
+    closed = portfolio.close_position(
+        symbol="HPG",
+        exit_date=datetime(2026, 1, 10),
+        exit_price=22_000,
+        reason=ExitReason.TAKE_PROFIT,
+    )
+
+    assert closed.exit_price == pytest.approx(21_989)

@@ -5,8 +5,12 @@ from datetime import datetime
 
 import pandas as pd
 
-from backtesting.portfolio import Portfolio
 from backtesting.trade import Trade
+from backtesting.transaction_cost import TransactionCostConfig
+from backtesting.portfolio import (
+    InsufficientCashError,
+    Portfolio,
+)
 
 @dataclass(slots=True)
 class RejectedTrade:
@@ -31,6 +35,7 @@ class PortfolioSimulator:
         position_size_pct: float = 20.0,
         max_positions: int = 5,
         lot_size: int = 100,
+        transaction_cost_config: TransactionCostConfig | None = None,
     ) -> None:
         if initial_cash <= 0:
             raise ValueError("initial_cash must be greater than 0")
@@ -46,9 +51,19 @@ class PortfolioSimulator:
         if lot_size < 1:
             raise ValueError("lot_size must be at least 1")
 
+        self.transaction_cost_config = (
+            transaction_cost_config
+            or TransactionCostConfig(
+                buy_commission_pct=0.0,
+                sell_commission_pct=0.0,
+                sell_tax_pct=0.0,
+            )
+        )
+
         self.portfolio = Portfolio(
             initial_cash=initial_cash,
             allow_duplicate_symbols=False,
+            transaction_cost_config= self.transaction_cost_config,
         )
 
         self.position_size_pct = position_size_pct
@@ -67,7 +82,33 @@ class PortfolioSimulator:
             self.portfolio.cash,
         )
 
-        raw_quantity = int(usable_cash / entry_price)
+        buy_fee_rate = (
+            self.transaction_cost_config.buy_commission_pct
+            / 100
+        )
+
+        effective_entry_price = (
+            entry_price
+            * (
+                1
+                + self.transaction_cost_config.buy_slippage_pct
+                / 100
+            )
+        )
+
+        buy_fee_rate = (
+            self.transaction_cost_config.buy_commission_pct
+            / 100
+        )
+
+        total_price_per_share = (
+            effective_entry_price
+            * (1 + buy_fee_rate)
+        )
+
+        raw_quantity = int(
+            usable_cash / total_price_per_share
+        )
 
         return (
             raw_quantity // self.lot_size
@@ -87,9 +128,12 @@ class PortfolioSimulator:
             if not trade.is_closed:
                 continue
 
-            # Exit chạy trước entry nếu cùng ngày để giải phóng tiền.
-            events.append((trade.exit_date, 0, trade))
-            events.append((trade.entry_date, 1, trade))
+            if trade.entry_date == trade.exit_date:
+                events.append((trade.entry_date, 1, trade))
+                events.append((trade.exit_date, 2, trade))
+            else:
+                events.append((trade.exit_date, 0, trade))
+                events.append((trade.entry_date, 1, trade))
 
         events.sort(
             key=lambda item: (
@@ -105,7 +149,7 @@ class PortfolioSimulator:
             candidate_id = id(candidate)
 
             # EXIT
-            if event_type == 0:
+            if event_type in (0, 2):
                 active_trade = active_trades.get(candidate_id)
 
                 if active_trade is None:
@@ -122,8 +166,8 @@ class PortfolioSimulator:
                 executed_trades.append(closed_trade)
                 del active_trades[candidate_id]
 
-            # ENTRY
-            else:
+
+            elif event_type == 1:
                 if len(self.portfolio.open_positions) >= self.max_positions:
                     rejected_trades.append(
                         RejectedTrade(
@@ -155,12 +199,21 @@ class PortfolioSimulator:
                     )
                     continue
 
-                opened_trade = self.portfolio.open_position(
-                    symbol=candidate.symbol,
-                    entry_date=candidate.entry_date,
-                    entry_price=candidate.entry_price,
-                    quantity=quantity,
-                )
+                try:
+                    opened_trade = self.portfolio.open_position(
+                        symbol=candidate.symbol,
+                        entry_date=candidate.entry_date,
+                        entry_price=candidate.entry_price,
+                        quantity=quantity,
+                    )
+                except InsufficientCashError:
+                    rejected_trades.append(
+                        RejectedTrade(
+                            trade=candidate,
+                            reason="insufficient_cash",
+                        )
+                    )
+                    continue
 
                 active_trades[candidate_id] = opened_trade
 
@@ -178,6 +231,11 @@ class PortfolioSimulator:
                     ),
                 }
             )
+
+        if active_trades:
+            raise RuntimeError(
+                f"{len(active_trades)} vị thế mở. "
+            	)
 
         equity_curve = pd.DataFrame(equity_rows)
 
