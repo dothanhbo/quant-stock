@@ -24,6 +24,12 @@ from backtesting.transaction_cost import TransactionCostConfig
 from backtesting.trade_analytics import (
     calculate_trade_analytics,
 )
+from backtesting.trade_distribution import (
+    calculate_trade_distribution,
+)
+from backtesting.benchmark import (
+    calculate_buy_and_hold_benchmark,
+)
 
 import pandas as pd
 from strategy.scanner import evaluate_symbol	
@@ -560,6 +566,21 @@ def run_backtest(
         else sorted({str(symbol).upper().strip() for symbol in symbols})
     )
 
+    benchmark_metrics: dict[str, Any] = {
+        "benchmark_symbol": None,
+        "benchmark_start_date": None,
+        "benchmark_end_date": None,
+        "benchmark_start_price": 0.0,
+        "benchmark_end_price": 0.0,
+        "benchmark_return_pct": 0.0,
+        "benchmark_final_equity": (
+            config.initial_capital
+        ),
+        "benchmark_cagr_pct": 0.0,
+        "strategy_vs_benchmark_pct": 0.0,
+        "strategy_vs_benchmark_cagr_pct": 0.0,
+    }
+
     all_trades: list[Trade] = []
 
     for index, symbol in enumerate(selected_symbols, start=1):
@@ -600,7 +621,15 @@ def run_backtest(
     metrics = calculate_metrics(
         trades,
         config,
-    ) 
+    )
+
+    trade_distribution = calculate_trade_distribution(
+        result.executed_trades
+    )
+
+    metrics.update(
+        trade_distribution
+    )
 
     gross_profits = [
         trade.net_pnl
@@ -723,6 +752,57 @@ def run_backtest(
     metrics["total_return_pct"] = (
         result.final_equity / config.initial_capital - 1
     ) * 100
+
+    if len(selected_symbols) == 1:
+        benchmark_symbol = selected_symbols[0]
+
+        benchmark_price_df = load_price_data(
+            benchmark_symbol,
+            db_path,
+        )
+
+        if start_date is not None:
+            benchmark_price_df = benchmark_price_df[
+                benchmark_price_df["time"]
+                >= pd.Timestamp(start_date)
+            ]
+
+        if end_date is not None:
+            benchmark_price_df = benchmark_price_df[
+                benchmark_price_df["time"]
+                <= pd.Timestamp(end_date)
+            ]
+
+        benchmark_metrics = (
+            calculate_buy_and_hold_benchmark(
+                benchmark_price_df,
+                initial_capital=config.initial_capital,
+            )
+        )
+
+        benchmark_metrics["benchmark_symbol"] = (
+            benchmark_symbol
+        )
+
+        benchmark_metrics[
+            "strategy_vs_benchmark_pct"
+        ] = (
+            metrics["total_return_pct"]
+            - benchmark_metrics[
+                "benchmark_return_pct"
+            ]
+        )
+
+        benchmark_metrics[
+            "strategy_vs_benchmark_cagr_pct"
+        ] = (
+            metrics["cagr_pct"]
+            - benchmark_metrics[
+                "benchmark_cagr_pct"
+            ]
+        )
+
+    metrics.update(benchmark_metrics)
 
     return trades, metrics, equity
 
