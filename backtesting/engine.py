@@ -30,6 +30,7 @@ from backtesting.trade_distribution import (
 from backtesting.benchmark import (
     calculate_buy_and_hold_benchmark,
 )
+from backtesting.report import print_backtest_report
 
 import pandas as pd
 from strategy.scanner import evaluate_symbol	
@@ -838,11 +839,6 @@ def save_results(
     print(f"- {metrics_path}")
     print(f"- {equity_path}")
 
-
-def print_summary(metrics: dict[str, Any]) -> None:
-    print("KẾT QUẢ BACKTEST ENGINE V5.2")
-    print_portfolio_summary(metrics)
-
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description="Backtest Engine V4.2 cho Quant Bot."
@@ -885,224 +881,6 @@ def parse_args() -> argparse.Namespace:
 
     return parser.parse_args()
 
-def print_portfolio_summary(
-    metrics: dict[str, Any],
-) -> None:
-    print("\n" + "=" * 60)
-    print("PORTFOLIO SUMMARY")
-    print("=" * 60)
-
-    print(
-        f"Initial Capital : "
-        f"{metrics['initial_capital']:,.0f} VND"
-    )
-
-    print(
-        f"Final Equity    : "
-        f"{metrics['final_equity']:,.0f} VND"
-    )
-
-    print(
-        f"Total Return    : "
-        f"{metrics['total_return_pct']:+.2f}%"
-    )
-
-    print()
-
-    print(
-        f"Max Drawdown    : "
-        f"{metrics['max_drawdown_pct']:.2f}%"
-    )
-
-    print(
-        f"CAGR            : "
-        f"{metrics['cagr_pct']:.2f}%"
-    )
-
-    print(
-        f"Sharpe Ratio    : "
-        f"{metrics['sharpe_ratio']:.2f}"
-    )
-
-    print(
-        f"Sortino Ratio   : "
-        f"{metrics['sortino_ratio']:.2f}"
-    )
-
-    print(
-        f"Calmar Ratio    : "
-        f"{metrics['calmar_ratio']:.2f}"
-    )
-
-    print()
-
-    print(
-        f"Executed Trades : "
-        f"{metrics['total_trades']}"
-    )
- 
-    print(
-        f"Rejected Trades : "
-        f"{metrics.get('rejected_trades', 0)}"
-    )
-
-    print(
-        f"Final Cash      : "
-        f"{metrics.get('final_cash', 0):,.0f} VND"
-    )
-
-    print(
-        f"Market Value    : "
-        f"{metrics.get('final_market_value', 0):,.0f} VND"
-    )
-
-    print(
-        f"Open Positions  : "
-        f"{metrics.get('final_open_positions', 0)}"
-    	)
-
-    print(
-        f"Win Rate        : "
-        f"{metrics['win_rate_pct']:.2f}%"
-    )
-
-    print(
-        f"Profit Factor   : "
-        f"{metrics['profit_factor']:.2f}"
-    )
-
-    print()
-
-    print("PROFIT & COST BREAKDOWN")
-    print("-" * 60)
-
-    print(
-        f"Gross Profit    : "
-        f"{metrics.get('gross_profit', 0):,.0f} VND"
-    )
-
-    print(
-        f"Gross Loss      : "
-        f"-{metrics.get('gross_loss', 0):,.0f} VND"
-    )
-
-    print(
-        f"Gross Trade PnL : "
-        f"{metrics.get('gross_trading_pnl', 0):+,.0f} VND"
-    )
-
-    print(
-        f"Net Trade PnL   : "
-        f"{metrics.get('net_trading_pnl', 0):+,.0f} VND"
-    )
-
-    print()
-
-    print(
-        f"Buy Commission  : "
-        f"{metrics.get('total_buy_commission', 0):,.0f} VND"
-    )
-
-    print(
-        f"Sell Commission : "
-        f"{metrics.get('total_sell_commission', 0):,.0f} VND"
-    )
-
-    print(
-        f"Sell Tax        : "
-        f"{metrics.get('total_sell_tax', 0):,.0f} VND"
-    )
-
-    print(
-        f"Total Cost      : "
-        f"{metrics.get('total_transaction_cost', 0):,.0f} VND"
-    )
-
-    print(
-        f"Payoff Ratio    : "
-        f"{metrics['payoff_ratio']:.2f}"
-    )
-
-    print()
-    print("TRADE ANALYTICS")
-    print("-" * 60)
-
-    print(
-        f"Expectancy      : "
-        f"{metrics.get('expectancy_amount', 0):+,.0f} "
-        f"VND/trade"
-    )
-
-    print(
-        f"Expectancy (%)  : "
-        f"{metrics.get('expectancy_pct', 0):+.2f}%"
-    )
-
-    print()
-
-    print(
-        f"Average Win     : "
-        f"{metrics.get('average_win_pct', 0):+.2f}%"
-    )
-
-    print(
-        f"Average Loss    : "
-        f"{metrics.get('average_loss_pct', 0):+.2f}%"
-    )
-
-    print(
-        f"Average Win PnL : "
-        f"{metrics.get('average_win_amount', 0):+,.0f} VND"
-    )
-
-    print(
-        f"Average Loss PnL: "
-        f"{metrics.get('average_loss_amount', 0):+,.0f} VND"
-    )
-
-    print()
-
-    print("Holding Days")
-
-    print(
-        f"  Average       : "
-        f"{metrics.get('average_holding_days', 0):.1f}"
-    )
-
-    print(
-        f"  Median        : "
-        f"{metrics.get('median_holding_days', 0):.1f}"
-    )
-
-    print(
-        f"  Minimum       : "
-        f"{metrics.get('min_holding_days', 0)}"
-    )
-
-    print(
-        f"  Maximum       : "
-        f"{metrics.get('max_holding_days', 0)}"
-    )   
-
-    reject_reasons = metrics.get(
-        "rejected_trade_reasons",
-        {},
-    )
-
-    if reject_reasons:
-        print()
-        print("Reject Reasons")
-
-        for reason, count in sorted(
-            reject_reasons.items()
-        ):
-            print(
-                f"- {reason:<18}: {count}"
-            )
-
-    print("=" * 60)
-
-
 def main() -> None:
     args = parse_args()
  
@@ -1137,7 +915,7 @@ def main() -> None:
         f"Thuế bán {metrics['sell_tax_pct']:.2f}%"
     )
 
-    print_summary(metrics)
+    print_backtest_report(metrics)
 
     target_name = (
         "ALL"

@@ -2,53 +2,47 @@
 
 ## Completed
 
-### v5.0 — Portfolio Backtesting Framework
-- Multi-symbol candidate generation
-- Shared cash balance
+### v5.0 — Portfolio Backtesting
+- Multi-symbol backtesting
+- Shared cash
 - Position sizing
-- Maximum positions
-- Lot-size handling
-- Portfolio Simulator
-- Portfolio Summary
-- Rejected-trade reporting
-- Portfolio performance metrics
+- Portfolio metrics
 
-### v5.1 — Realistic Execution Simulation
-- Buy commission
-- Sell commission
+### v5.1 — Realistic Execution
+- Commission
 - Sell tax
-- Fixed buy slippage
-- Fixed sell slippage
-- Slippage-aware position sizing
-- Gross and Net Trade PnL
+- Slippage
+- Net PnL
 - Transaction Cost Breakdown
-- Monetary Profit Factor
-- Accurate Total Return
-- 53 passing tests
+
+### v5.2 — Analytics and Reporting
+- Trade Analytics
+- Trade Distributions
+- Buy & Hold Benchmark
+- Excess Return and CAGR
+- Modular reporting
+- Executive Summary
 
 ## Next
 
-### v5.2 — Portfolio Analytics
-- Daily mark-to-market equity curve
-- VNINDEX benchmark
-- Strategy-versus-benchmark comparison
-- Monthly and yearly returns
-- Drawdown duration
-- Equity and drawdown charts
-- Trade-return distribution
-- Sector performance
-
 ### v5.3 — Strategy Validation
+- Grid search
+- Parameter sensitivity
 - Walk-forward analysis
 - Out-of-sample testing
-- Parameter sensitivity
-- Rolling optimization
 - Overfitting checks
+
+### v5.4 — Portfolio Analytics
+- Monthly and yearly returns
+- Drawdown duration
+- Rolling Sharpe
+- Strategy versus VNINDEX charts
+- Alpha and Beta
 
 ## Future
 - Monte Carlo simulation
 - Factor attribution
 - Portfolio optimization
-- Liquidity-aware slippage
 - Paper trading
+- Broker integration
 - Live trading

@@ -1,99 +1,85 @@
 # Quant Stock
 
 ![Python](https://img.shields.io/badge/Python-3.14-blue)
-![Version](https://img.shields.io/badge/version-v5.1.0-success)
-![Tests](https://img.shields.io/badge/tests-53%20passing-brightgreen)
+![Version](https://img.shields.io/badge/version-v5.2-success)
+![Tests](https://img.shields.io/badge/tests-passing-brightgreen)
 ![License](https://img.shields.io/badge/license-MIT-green)
 
-> Quantitative trading research framework for the Vietnam stock market.
+> Quantitative research and backtesting framework for the Vietnam stock market.
 
 ## Overview
 
-Quant Stock combines market-data processing, signal scanning, portfolio backtesting, execution-cost simulation, and performance analytics in a modular Python project.
+Quant Stock combines market-data processing, signal scanning, portfolio simulation, execution-cost modeling, trade analytics, and benchmark comparison.
 
 ## Features
 
 ### Market Data
 - VN100 historical database
+- VNINDEX benchmark data
 - Incremental updates
-- VNINDEX support
-- Shared universe provider
-
-### Signal Scanner
-- Multi-factor scoring
-- Market-regime filter
-- Watchlist generation
-- Telegram notifications
+- Long-history backfill
+- Configurable backtest dates
 
 ### Portfolio Backtesting
 - Multi-symbol simulation
-- Shared cash management
+- Shared cash
 - Position sizing
-- Maximum positions
-- Lot-size support
-- Duplicate-symbol protection
-- End-of-backtest position handling
+- Maximum-position control
 - Rejected-trade tracking
 
-### Trading Cost Simulation
-- Buy commission
-- Sell commission
+### Execution Simulation
+- Buy and sell commission
 - Sell tax
-- Buy slippage
-- Sell slippage
+- Buy and sell slippage
 - Slippage-aware position sizing
-- Configurable CLI parameters
 
-### Performance Analytics
-- Total Return
-- CAGR
-- Max Drawdown
-- Annualized Volatility
-- Sharpe Ratio
-- Sortino Ratio
-- Calmar Ratio
-- Win Rate
-- Profit Factor
-- Payoff Ratio
-- Gross Trade PnL
-- Net Trade PnL
-- Transaction Cost Breakdown
+### Analytics
+- Total Return, CAGR, Max Drawdown
+- Sharpe, Sortino, Calmar
+- Win Rate, Profit Factor, Payoff Ratio
+- Expectancy
+- Average Win and Average Loss
+- Holding-period statistics
+- Profit distribution
+- Holding distribution
+- Exit-reason distribution
 
-### Testing
-- **53 passing unit tests**
+### Benchmark
+- Buy & Hold Return
+- Buy & Hold CAGR
+- Strategy Excess Return
+- Strategy Excess CAGR
 
-## Run Backtests
+## Commands
 
 ```powershell
-py -m backtesting.engine --symbol HPG FPT MBB MWG ACB --quiet
+py -m backtesting.engine --symbol ACB --start 2015-07-16 --end 2026-07-31 --quiet
 ```
-
-```powershell
-py -m backtesting.engine --all --quiet
-```
-
-Run without trading costs:
-
-```powershell
-py -m backtesting.engine --symbol HPG FPT MBB MWG ACB --buy-fee 0 --sell-fee 0 --sell-tax 0 --buy-slippage 0 --sell-slippage 0 --quiet
-```
-
-Run tests:
 
 ```powershell
 py -m pytest
 ```
 
+## Report Sections
+
+```text
+PORTFOLIO SUMMARY
+PROFIT & COST BREAKDOWN
+TRADE ANALYTICS
+TRADE DISTRIBUTIONS
+BUY & HOLD BENCHMARK
+EXECUTIVE SUMMARY
+```
+
 ## Roadmap
 
-- ✅ v5.0 — Portfolio Backtesting Framework
-- ✅ v5.1 — Transaction Costs, Sell Tax, Slippage, and Cost Breakdown
-- 🚧 v5.2 — Daily Equity Curve, VNINDEX Benchmark, and Monthly Returns
-- 📅 v5.3 — Walk-forward Analysis, Monte Carlo Simulation and Parameter Sensitivity
-- 📈 v6.0 — Paper Trading and Live Trading
+- ✅ v5.0 Portfolio Backtesting
+- ✅ v5.1 Transaction Costs and Slippage
+- ✅ v5.2 Analytics, Benchmark, and Reporting
+- 🚧 v5.3 Strategy Validation
 
 See [ROADMAP.md](ROADMAP.md).
 
 ## Disclaimer
 
-This project is intended for research and educational purposes. It does not provide investment advice or guaranteed results.
+For research and educational purposes only. This project does not provide investment advice.
