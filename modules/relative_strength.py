@@ -8,16 +8,8 @@ def calculate_relative_strength(
     symbol: str,
     benchmark: str = "VNINDEX",
     period: int = 20
+    as_of_date: str | pd.Timestamp | None = None,
 ) -> dict:
-    """
-    So sánh hiệu suất của cổ phiếu với VNINDEX.
-
-    Ví dụ:
-    - Cổ phiếu tăng 8% trong 20 phiên
-    - VNINDEX tăng 3%
-    - Relative Strength = 5%
-    """
-
     stock_df = load_price_data(symbol)
     index_df = load_price_data(benchmark)
 
@@ -75,6 +67,17 @@ def calculate_relative_strength(
         .drop_duplicates("time", keep="last")
         .sort_values("time")
     )
+
+    if as_of_date is not None:
+        as_of_ts = pd.Timestamp(as_of_date)
+
+        stock = stock[
+            stock["time"] <= as_of_ts
+        ]
+
+        index = index[
+            index["time"] <= as_of_ts
+        ]
 
     merged = stock.merge(
         index,

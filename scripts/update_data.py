@@ -4,18 +4,23 @@ import time
 import pandas as pd
 
 from vnstock.api.quote import Quote
-from core.universe import get_vn100_symbols
 
 from core.database import (
     get_latest_price_date,
     save_price_data
 )
 
+from core.universe import (
+    BENCHMARK_SYMBOLS,
+    get_all_symbols,
+)
+
 # ==========================================
 # CẤU HÌNH
 # ==========================================
 
-INITIAL_HISTORY_DAYS = 500
+DEFAULT_HISTORY_DAYS = 500
+BENCHMARK_HISTORY_DAYS = 5_000
 
 # Lấy lùi lại vài ngày để cập nhật lại phiên gần nhất,
 # phòng trường hợp dữ liệu cuối ngày bị điều chỉnh.
@@ -24,20 +29,18 @@ REFRESH_OVERLAP_DAYS = 7
 REQUEST_DELAY_SECONDS = 1.1
 
 def calculate_start_date(symbol):
-    """
-    Nếu chưa có dữ liệu:
-        tải khoảng 500 ngày.
-
-    Nếu đã có dữ liệu:
-        tải lại từ 7 ngày trước ngày mới nhất.
-    """
-
     latest_date = get_latest_price_date(symbol)
 
     if latest_date is None or pd.isna(latest_date):
+        history_days = (
+            BENCHMARK_HISTORY_DAYS
+            if symbol in BENCHMARK_SYMBOLS
+            else DEFAULT_HISTORY_DAYS
+        )
+
         return (
             datetime.now()
-            - timedelta(days=INITIAL_HISTORY_DAYS)
+            - timedelta(days=history_days)
         )
 
     return (
@@ -46,8 +49,13 @@ def calculate_start_date(symbol):
     )
 
 
-def update_symbol(symbol):
-    start_date = calculate_start_date(symbol)
+def update_symbol(symbol, force_start_date: datetime | None = None,):
+
+    start_date = (
+        force_start_date
+        if force_start_date is not None
+        else calculate_start_date(symbol)
+    )
     end_date = datetime.now()
 
     print(
@@ -147,11 +155,11 @@ def update_all_symbols(symbols):
 
 
 if __name__ == "__main__":
-    symbols = get_vn100_symbols()
+    symbols = get_all_symbols()
 
-    if len(symbols) < 90:
+    if len(symbols) < 100:
         raise RuntimeError(
-            f"Danh sách VN100 không hợp lệ: chỉ có {len(symbols)} mã"
+            f"Danh sách universe không hợp lệ: chỉ có {len(symbols)} mã"
         )
 
     update_all_symbols(symbols)

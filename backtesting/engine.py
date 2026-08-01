@@ -1,5 +1,5 @@
 from __future__ import annotations
-
+import traceback
 import argparse
 import math
 import sqlite3
@@ -19,8 +19,11 @@ from backtesting.portfolio_metrics import (
     calculate_portfolio_metrics,
 )
 from collections import Counter
-from scripts.update_data import get_vn100_symbols
+from core.universe import get_vn100_symbols
 from backtesting.transaction_cost import TransactionCostConfig
+from backtesting.trade_analytics import (
+    calculate_trade_analytics,
+)
 
 import pandas as pd
 from strategy.scanner import evaluate_symbol	
@@ -161,7 +164,10 @@ def _evaluate_entry(
             reference_date=signal_date,
             end_date=signal_date,
         )
-    except Exception as exc:
+    except Exception:
+        traceback.print_exc()
+        raise
+   
         if verbose:
             print(
                 f"❌ {symbol} {signal_date.date()}: "
@@ -272,12 +278,33 @@ def generate_candidate_trades(
     warmup_bars: int = 60,
     verbose: bool = False,
     exit_model: BaseExitModel = DEFAULT_EXIT_MODEL,
+    start_date: str | None = None,
+    end_date: str | None = None,
 ) -> list[Trade]:
 
     config.validate()
     symbol = symbol.upper().strip()
 
     price_df = load_price_data(symbol, db_path)
+
+    price_df["time"] = pd.to_datetime(
+        price_df["time"],
+        errors="coerce",
+    )
+
+    if start_date is not None:
+        start_ts = pd.Timestamp(start_date)
+        price_df = price_df[
+            price_df["time"] >= start_ts
+        ]
+  
+    if end_date is not None:
+        end_ts = pd.Timestamp(end_date)
+        price_df = price_df[
+            price_df["time"] <= end_ts
+        ]
+
+    price_df = price_df.reset_index(drop=True)
 
     if len(price_df) <= warmup_bars + 1:
         return []
@@ -499,9 +526,13 @@ def run_backtest(
     position_size_pct: float = 100.0,
     warmup_bars: int = 60,
     verbose: bool = False,
+    start_date: str | None = None,
+    end_date: str | None = None,
     buy_commission_pct: float = 0.15,
     sell_commission_pct: float = 0.15,
     sell_tax_pct: float = 0.10,
+    buy_slippage_pct: float = 0.05,
+    sell_slippage_pct: float = 0.05,
 ) -> tuple[list[Trade], dict[str, Any], pd.DataFrame]:
     config = BacktestConfig(
         stop_loss_pct=stop_loss_pct,
@@ -541,6 +572,8 @@ def run_backtest(
             db_path=db_path,
             warmup_bars=warmup_bars,
             verbose=verbose,
+            start_date=start_date,
+            end_date=end_date,
         )
 
         if symbol_trades:
@@ -658,6 +691,14 @@ def run_backtest(
 
     metrics.update(portfolio_metrics)
 
+    trade_analytics = calculate_trade_analytics(
+        result.executed_trades
+    )
+
+    metrics.update(
+        trade_analytics
+    )
+
     rejected_reason_counts = Counter(
         rejected.reason
         for rejected in result.rejected_trades
@@ -719,7 +760,7 @@ def save_results(
 
 
 def print_summary(metrics: dict[str, Any]) -> None:
-    print("KẾT QUẢ BACKTEST ENGINE V5.0")
+    print("KẾT QUẢ BACKTEST ENGINE V5.2")
     print_portfolio_summary(metrics)
 
 def parse_args() -> argparse.Namespace:
@@ -740,6 +781,8 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument("--db", default=DEFAULT_DB_PATH)
+    parser.add_argument("--start",type=str,default=None,help="Ngày bắt đầu backtest, định dạng YYYY-MM-DD.",)
+    parser.add_argument("--end",type=str,default=None,help="Ngày kết thúc backtest, định dạng YYYY-MM-DD.",)
     parser.add_argument("--sl", type=float, default=5.0)
     parser.add_argument("--tp", type=float, default=10.0)
     parser.add_argument("--hold", type=int, default=20)
@@ -747,8 +790,8 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--buy-fee",type=float,default=0.15,help="Phí mua theo phần trăm, mặc định 0.15.",)
     parser.add_argument("--sell-fee",type=float,default=0.15,help="Phí bán theo phần trăm, mặc định 0.15.",)
     parser.add_argument("--sell-tax",type=float,default=0.10,help="Thuế bán theo phần trăm, mặc định 0.10.",)
-    parser.add_argument("--buy-slippage",type=float,default=0.05,help="Slippage khi mua (%). Mặc định 0.05.",)
-    parser.add_argument("--sell-slippage",type=float,default=0.05,help="Slippage khi bán (%). Mặc định 0.05.",)
+    parser.add_argument("--buy-slippage",type=float,default=0.05,help="Slippage khi mua (%%). Mặc định 0.05.",)
+    parser.add_argument("--sell-slippage",type=float,default=0.05,help="Slippage khi bán (%%). Mặc định 0.05.",)
     parser.add_argument("--warmup", type=int, default=60)
     parser.add_argument(
         "--output",
@@ -900,6 +943,67 @@ def print_portfolio_summary(
         f"{metrics['payoff_ratio']:.2f}"
     )
 
+    print()
+    print("TRADE ANALYTICS")
+    print("-" * 60)
+
+    print(
+        f"Expectancy      : "
+        f"{metrics.get('expectancy_amount', 0):+,.0f} "
+        f"VND/trade"
+    )
+
+    print(
+        f"Expectancy (%)  : "
+        f"{metrics.get('expectancy_pct', 0):+.2f}%"
+    )
+
+    print()
+
+    print(
+        f"Average Win     : "
+        f"{metrics.get('average_win_pct', 0):+.2f}%"
+    )
+
+    print(
+        f"Average Loss    : "
+        f"{metrics.get('average_loss_pct', 0):+.2f}%"
+    )
+
+    print(
+        f"Average Win PnL : "
+        f"{metrics.get('average_win_amount', 0):+,.0f} VND"
+    )
+
+    print(
+        f"Average Loss PnL: "
+        f"{metrics.get('average_loss_amount', 0):+,.0f} VND"
+    )
+
+    print()
+
+    print("Holding Days")
+
+    print(
+        f"  Average       : "
+        f"{metrics.get('average_holding_days', 0):.1f}"
+    )
+
+    print(
+        f"  Median        : "
+        f"{metrics.get('median_holding_days', 0):.1f}"
+    )
+
+    print(
+        f"  Minimum       : "
+        f"{metrics.get('min_holding_days', 0)}"
+    )
+
+    print(
+        f"  Maximum       : "
+        f"{metrics.get('max_holding_days', 0)}"
+    )   
+
     reject_reasons = metrics.get(
         "rejected_trade_reasons",
         {},
@@ -939,6 +1043,8 @@ def main() -> None:
         db_path=args.db,
         warmup_bars=args.warmup,
         verbose=not args.quiet,
+        start_date=args.start,
+        end_date=args.end,
         buy_slippage_pct=args.buy_slippage,
         sell_slippage_pct=args.sell_slippage,
         buy_commission_pct=args.buy_fee,

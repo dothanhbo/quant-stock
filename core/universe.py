@@ -2,6 +2,9 @@ from vnstock import Vnstock
 
 stock_api = Vnstock()
 
+BENCHMARK_SYMBOLS = [
+    "VNINDEX",
+]
 
 def get_vn100_symbols():
     try:
@@ -35,3 +38,14 @@ def get_vn100_symbols():
         )
 
         return []
+
+def get_all_symbols() -> list[str]:
+    vn100_symbols = get_vn100_symbols()
+
+    combined = (
+        BENCHMARK_SYMBOLS
+        + list(vn100_symbols)
+    )
+
+    # Loại trùng nhưng vẫn giữ thứ tự.
+    return list(dict.fromkeys(combined))

@@ -1,5 +1,3 @@
-"""Relative Strength của cổ phiếu so với VNINDEX."""
-
 from __future__ import annotations
 
 import numpy as np
@@ -12,7 +10,7 @@ def calculate_relative_strength(
     symbol: str,
     benchmark: str = "VNINDEX",
     period: int = 20,
-    end_date=None,
+    as_of_date: str | pd.Timestamp | None = None,
 ) -> dict:
     stock_df = load_price_data(symbol)
     index_df = load_price_data(benchmark)
@@ -24,10 +22,12 @@ def calculate_relative_strength(
         data["time"] = pd.to_datetime(data["time"], errors="coerce")
         data[name] = pd.to_numeric(data["close"], errors="coerce")
         data = data[["time", name]].dropna().drop_duplicates("time", keep="last")
-        if end_date is not None:
-            cutoff = pd.to_datetime(end_date, errors="coerce")
+        if as_of_date is not None:
+            cutoff = pd.to_datetime(as_of_date, errors="coerce")
             if pd.isna(cutoff):
-                raise ValueError(f"end_date không hợp lệ: {end_date}")
+                raise ValueError(
+                    f"as_of_date không hợp lệ: {as_of_date}"
+                )
             data = data[data["time"] <= cutoff]
         return data.sort_values("time")
 

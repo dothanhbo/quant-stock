@@ -134,8 +134,9 @@ def evaluate_symbol(
 
     rs = calculate_relative_strength(
         symbol,
+        benchmark="VNINDEX",
         period=RS_PERIOD,
-        end_date=end_date,
+        as_of_date=latest["time"],
     )
 
     if not rs["available"]:
