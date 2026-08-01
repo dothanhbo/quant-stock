@@ -89,7 +89,8 @@ py -m pytest
 - ✅ v5.0 — Portfolio Backtesting Framework
 - ✅ v5.1 — Transaction Costs, Sell Tax, Slippage, and Cost Breakdown
 - 🚧 v5.2 — Daily Equity Curve, VNINDEX Benchmark, and Monthly Returns
-- 📅 v5.3 — Walk-forward Analysis and Parameter Sensitivity
+- 📅 v5.3 — Walk-forward Analysis, Monte Carlo Simulation and Parameter Sensitivity
+- 📈 v6.0 — Paper Trading and Live Trading
 
 See [ROADMAP.md](ROADMAP.md).
 
