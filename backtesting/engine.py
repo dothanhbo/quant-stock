@@ -218,6 +218,8 @@ def _simulate_exit(
         config=config,
     )
 
+    highest_price = entry_price
+
     final_index = min(
         entry_index + config.max_holding_days - 1,
         len(price_df) - 1,
@@ -234,6 +236,32 @@ def _simulate_exit(
         day_open = float(row["open"])
         day_high = float(row["high"])
         day_low = float(row["low"])
+
+        highest_price = max(
+            highest_price,
+            day_high,
+        )
+
+        stop_price, target_price = (
+            exit_model.update_levels(
+                entry_price=entry_price,
+                current_row=row,
+                current_stop=stop_price,
+                current_target=target_price,
+                highest_price=highest_price,
+                config=config,
+            )
+        )
+
+        if stop_price <= 0:
+            raise ValueError(
+                f"stop_price không hợp lệ: {stop_price:.2f}"
+            )
+
+        if target_price <= stop_price:
+            raise ValueError(
+                "target_price phải lớn hơn stop_price"
+            )
 
         # Gap giảm xuyên stop: khớp tại giá mở cửa, không giả định được khớp ở stop.
         if day_open <= stop_price:

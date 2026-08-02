@@ -6,6 +6,7 @@ import pytest
 from backtesting.engine import _simulate_exit
 from backtesting.exit_models import (
     ATRExitModel,
+    BaseExitModel,
     FixedExitModel,
 )
 from backtesting.exit import ExitReason
@@ -166,3 +167,84 @@ def test_atr_exit_model_keeps_levels_unchanged():
 
     assert stop == 96.0
     assert target == 108.0
+
+class UpdatingExitModel(BaseExitModel):
+
+    def __init__(self):
+        self.update_calls = 0
+
+    def calculate_levels(
+        self,
+        entry_price,
+        entry_row,
+        config,
+    ):
+        return (
+            entry_price * 0.95,
+            entry_price * 1.10,
+        )
+
+    def update_levels(
+        self,
+        *,
+        entry_price,
+        current_row,
+        current_stop,
+        current_target,
+        highest_price,
+        config,
+    ):
+        self.update_calls += 1
+
+        return (
+            current_stop,
+            current_target,
+        )
+
+def test_simulate_exit_calls_update_levels():
+    model = UpdatingExitModel()
+
+    price_df = pd.DataFrame(
+        [
+            {
+                "time": "2026-01-02",
+                "open": 100.0,
+                "high": 101.0,
+                "low": 99.0,
+                "close": 100.0,
+                "ATR14": 2.0,
+            },
+            {
+                "time": "2026-01-05",
+                "open": 101.0,
+                "high": 102.0,
+                "low": 100.0,
+                "close": 101.0,
+                "ATR14": 2.0,
+            },
+            {
+                "time": "2026-01-06",
+                "open": 102.0,
+                "high": 103.0,
+                "low": 101.0,
+                "close": 102.0,
+                "ATR14": 2.0,
+            },
+        ]
+    )
+
+    config = SimpleNamespace(
+        max_holding_days=2,
+        stop_loss_pct=5.0,
+        take_profit_pct=10.0,
+    )
+
+    result = _simulate_exit(
+        price_df=price_df,
+        entry_index=0,
+        config=config,
+        exit_model=model,
+    )
+
+    assert model.update_calls >= 1
+    assert result is not None
