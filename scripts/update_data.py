@@ -19,24 +19,25 @@ from core.universe import (
 # CẤU HÌNH
 # ==========================================
 
-DEFAULT_HISTORY_DAYS = 500
+BACKFILL_START_DATE = (
+    datetime.now()
+    - timedelta(days=365 * 8)
+)
+
+DEFAULT_HISTORY_DAYS = 5_000
 BENCHMARK_HISTORY_DAYS = 5_000
 
 # Lấy lùi lại vài ngày để cập nhật lại phiên gần nhất,
 # phòng trường hợp dữ liệu cuối ngày bị điều chỉnh.
 REFRESH_OVERLAP_DAYS = 7
 
-REQUEST_DELAY_SECONDS = 1.1
+REQUEST_DELAY_SECONDS = 3.0
 
 def calculate_start_date(symbol):
     latest_date = get_latest_price_date(symbol)
 
     if latest_date is None or pd.isna(latest_date):
-        history_days = (
-            BENCHMARK_HISTORY_DAYS
-            if symbol in BENCHMARK_SYMBOLS
-            else DEFAULT_HISTORY_DAYS
-        )
+        return BACKFILL_START_DATE	
 
         return (
             datetime.now()
@@ -116,7 +117,7 @@ def update_symbol(symbol, force_start_date: datetime | None = None,):
         return False
 
 
-def update_all_symbols(symbols):
+def update_all_symbols(symbols, force_start_date: datetime | None = None,):
     success_count = 0
     failed_symbols = []
 
@@ -132,7 +133,10 @@ def update_all_symbols(symbols):
             f"\n[{index}/{len(symbols)}]"
         )
 
-        if update_symbol(symbol):
+        if update_symbol(
+            symbol,
+            force_start_date=force_start_date,
+        ):
             success_count += 1
         else:
             failed_symbols.append(symbol)
@@ -153,13 +157,19 @@ def update_all_symbols(symbols):
             + ", ".join(failed_symbols)
         )
 
-
 if __name__ == "__main__":
     symbols = get_all_symbols()
 
     if len(symbols) < 100:
         raise RuntimeError(
-            f"Danh sách universe không hợp lệ: chỉ có {len(symbols)} mã"
+            f"Danh sách universe không hợp lệ: "
+            f"chỉ có {len(symbols)} mã"
         )
 
-    update_all_symbols(symbols)
+    update_all_symbols(
+        symbols,
+        force_start_date=BACKFILL_START_DATE,
+    )
+
+
+
