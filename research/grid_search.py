@@ -4,6 +4,7 @@ import argparse
 from pathlib import Path
 from typing import Any
 from time import perf_counter
+from itertools import product
 
 import pandas as pd
 
@@ -13,6 +14,9 @@ from backtesting.engine import (
 )
 from research.parameter_space import (
     DEFAULT_PARAMETER_SPACE,
+    TRAILING_ATR_STOP_VALUES,
+    TRAILING_ATR_TARGET_VALUES,
+    TRAILING_ATR_VALUES,
 )
 from concurrent.futures import (
     ProcessPoolExecutor,
@@ -40,6 +44,20 @@ def run_single_parameter_set(
     trailing_atr_multiplier = payload[
         "trailing_atr_multiplier"
     ]
+    atr_stop_multiplier = parameters.get(
+        "atr_stop_multiplier",
+        atr_stop_multiplier,
+    )
+
+    atr_target_multiplier = parameters.get(
+        "atr_target_multiplier",
+        atr_target_multiplier,
+    )
+
+    trailing_atr_multiplier = parameters.get(
+        "trailing_atr_multiplier",
+        trailing_atr_multiplier,
+    )
 
     trigger = parameters.get(
         "break_even_trigger",
@@ -181,11 +199,34 @@ def run_grid_search(
     atr_target_multiplier: float = 4.0,
     trailing_atr_multiplier: float = 2.0,
 ) -> pd.DataFrame:
-    parameter_sets = list(
-        generate_parameter_sets(
-            DEFAULT_PARAMETER_SPACE
+
+    if exit_model_name == "trailing_atr":
+        parameter_sets = [
+            {
+                "stop_loss_pct": 3.0,
+                "take_profit_pct": 8.0,
+                "max_holding_days": 10,
+                "min_adx": 20.0,
+                "atr_stop_multiplier": atr_stop,
+                "atr_target_multiplier": atr_target,
+                "trailing_atr_multiplier": trailing_atr,
+            }
+            for (
+                atr_stop,
+                atr_target,
+                trailing_atr,
+            ) in product(
+                TRAILING_ATR_STOP_VALUES,
+                TRAILING_ATR_TARGET_VALUES,
+                TRAILING_ATR_VALUES,
+            )
+        ]
+    else:
+        parameter_sets = list(
+            generate_parameter_sets(
+                DEFAULT_PARAMETER_SPACE
+            )
         )
-    )
 
     if limit is not None:
         parameter_sets = parameter_sets[:limit]
@@ -249,6 +290,9 @@ def run_grid_search(
                 f"TP={row['take_profit_pct']} "
                 f"H={row['max_holding_days']} "
                 f"ADX={row['min_adx']} | "
+                f"ATR-S={row['atr_stop_multiplier']} "
+                f"ATR-T={row['atr_target_multiplier']} "
+                f"Trail={row['trailing_atr_multiplier']} | "
                 f"{row['elapsed_seconds']:.2f}s | "
                 f"Return "
                 f"{row['total_return_pct']:+.2f}% | "
@@ -292,6 +336,9 @@ def run_grid_search(
                     f"TP={row['take_profit_pct']} "
                     f"H={row['max_holding_days']} "
                     f"ADX={row['min_adx']} | "
+                    f"ATR-S={row['atr_stop_multiplier']} "
+                    f"ATR-T={row['atr_target_multiplier']} "
+                    f"Trail={row['trailing_atr_multiplier']} | "
                     f"{row['elapsed_seconds']:.2f}s | "
                     f"Return "
                     f"{row['total_return_pct']:+.2f}% | "
@@ -402,7 +449,7 @@ def parse_args() -> argparse.Namespace:
         "--trailing-atr-multiplier",
         type=float,
         default=2.0,
-    )
+    	)
 
     return parser.parse_args()
 

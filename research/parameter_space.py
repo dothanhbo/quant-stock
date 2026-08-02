@@ -46,3 +46,22 @@ DEFAULT_PARAMETER_SPACE = ParameterSpace(
         15.0,
     ),
 )
+
+TRAILING_ATR_STOP_VALUES = (
+    1.5,
+    2.0,
+    2.5,
+)
+
+TRAILING_ATR_TARGET_VALUES = (
+    3.0,
+    4.0,
+    5.0,
+)
+
+TRAILING_ATR_VALUES = (
+    1.5,
+    2.0,
+    2.5,
+    3.0,
+)
