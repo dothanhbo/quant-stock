@@ -36,9 +36,14 @@ def run_single_parameter_set(
     exit_model_name = payload["exit_model_name"]
     break_even_trigger = payload["break_even_trigger"]
 
+    trigger = parameters.get(
+        "break_even_trigger",
+        break_even_trigger,
+    )
+
     exit_model = build_exit_model(
         name=exit_model_name,
-        break_even_trigger=break_even_trigger,
+        break_even_trigger=trigger,
     )
 
     started_at = perf_counter()
@@ -73,7 +78,7 @@ def run_single_parameter_set(
         **parameters,
         "symbols": ",".join(symbols),
         "exit_model": exit_model_name,
-        "break_even_trigger": break_even_trigger,
+        "break_even_trigger": trigger,
         "elapsed_seconds": round(
             elapsed_seconds,
             2,
