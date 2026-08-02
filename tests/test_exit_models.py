@@ -9,6 +9,7 @@ from backtesting.exit_models import (
     BaseExitModel,
     BreakEvenExitModel,
     FixedExitModel,
+    TrailingATRExitModel,
 )
 from backtesting.exit import ExitReason
 
@@ -372,3 +373,68 @@ def test_simulate_exit_with_break_even_model():
     assert result.exit_reason == (
         ExitReason.STOP_LOSS
     )
+
+def test_trailing_atr_exit_calculates_initial_levels():
+    model = TrailingATRExitModel(
+        stop_atr_multiplier=2.0,
+        target_atr_multiplier=4.0,
+        trailing_atr_multiplier=2.0,
+    )
+
+    stop, target = model.calculate_levels(
+        entry_price=100.0,
+        entry_row=pd.Series(
+            {"ATR14": 2.0}
+        ),
+        config=SimpleNamespace(),
+    )
+
+    assert stop == pytest.approx(96.0)
+    assert target == pytest.approx(108.0)
+
+
+def test_trailing_atr_exit_moves_stop_up():
+    model = TrailingATRExitModel(
+        trailing_atr_multiplier=2.0,
+    )
+
+    stop, target = model.update_levels(
+        entry_price=100.0,
+        current_row={
+            "ATR14": 2.0,
+        },
+        current_stop=96.0,
+        current_target=110.0,
+        highest_price=108.0,
+        config=None,
+    )
+
+    assert stop == pytest.approx(104.0)
+    assert target == pytest.approx(110.0)
+
+
+def test_trailing_atr_exit_never_lowers_stop():
+    model = TrailingATRExitModel(
+        trailing_atr_multiplier=2.0,
+    )
+
+    stop, target = model.update_levels(
+        entry_price=100.0,
+        current_row={
+            "ATR14": 3.0,
+        },
+        current_stop=105.0,
+        current_target=115.0,
+        highest_price=108.0,
+        config=None,
+    )
+
+    assert stop == pytest.approx(105.0)
+    assert target == pytest.approx(115.0)
+
+
+def test_trailing_atr_exit_rejects_invalid_multiplier():
+    with pytest.raises(ValueError):
+        TrailingATRExitModel(
+            trailing_atr_multiplier=0,
+        )

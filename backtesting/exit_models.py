@@ -181,4 +181,79 @@ class BreakEvenExitModel(BaseExitModel):
             current_target,
         )
 
+class TrailingATRExitModel(BaseExitModel):
+    def __init__(
+        self,
+        *,
+        stop_atr_multiplier: float = 2.0,
+        target_atr_multiplier: float = 4.0,
+        trailing_atr_multiplier: float = 2.0,
+    ) -> None:
+        values = {
+            "stop_atr_multiplier": stop_atr_multiplier,
+            "target_atr_multiplier": target_atr_multiplier,
+            "trailing_atr_multiplier": trailing_atr_multiplier,
+        }
+
+        for name, value in values.items():
+            if value <= 0:
+                raise ValueError(
+                    f"{name} phải lớn hơn 0"
+                )
+
+        self.stop_atr_multiplier = stop_atr_multiplier
+        self.target_atr_multiplier = target_atr_multiplier
+        self.trailing_atr_multiplier = trailing_atr_multiplier
+
+    def calculate_levels(
+        self,
+        entry_price: float,
+        entry_row: Any,
+        config: Any,
+    ) -> tuple[float, float]:
+        atr = ATRExitModel._get_atr(
+            entry_row
+        )
+
+        stop_price = entry_price - (
+            self.stop_atr_multiplier * atr
+        )
+
+        target_price = entry_price + (
+            self.target_atr_multiplier * atr
+        )
+
+        if stop_price <= 0:
+            raise ValueError(
+                f"stop_price không hợp lệ: "
+                f"{stop_price:.2f}"
+            )
+
+        return stop_price, target_price
+
+    def update_levels(
+        self,
+        *,
+        entry_price: float,
+        current_row: Any,
+        current_stop: float,
+        current_target: float,
+        highest_price: float,
+        config: Any,
+    ) -> tuple[float, float]:
+        atr = ATRExitModel._get_atr(
+            current_row
+        )
+
+        trailing_stop = highest_price - (
+            self.trailing_atr_multiplier * atr
+        )
+
+        new_stop = max(
+            current_stop,
+            trailing_stop,
+        )
+
+        return new_stop, current_target
+
 DEFAULT_EXIT_MODEL = FixedExitModel()
