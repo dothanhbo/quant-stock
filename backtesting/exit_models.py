@@ -14,6 +14,18 @@ class BaseExitModel(ABC):
     ) -> tuple[float, float]:
         raise NotImplementedError
 
+    def update_levels(
+        self,
+        *,
+        entry_price: float,
+        current_row: Any,
+        current_stop: float,
+        current_target: float,
+        highest_price: float,
+        config: Any,
+    ) -> tuple[float, float]:
+        return current_stop, current_target
+
 
 class FixedExitModel(BaseExitModel):
     def calculate_levels(
@@ -38,15 +50,24 @@ class ATRExitModel(BaseExitModel):
         self,
         stop_atr_multiplier: float = 2.0,
         target_atr_multiplier: float = 4.0,
-    ):
+    ) -> None:
         if stop_atr_multiplier <= 0:
-            raise ValueError("stop_atr_multiplier phải lớn hơn 0")
+            raise ValueError(
+                "stop_atr_multiplier phải lớn hơn 0"
+            )
 
         if target_atr_multiplier <= 0:
-            raise ValueError("target_atr_multiplier phải lớn hơn 0")
+            raise ValueError(
+                "target_atr_multiplier phải lớn hơn 0"
+            )
 
-        self.stop_atr_multiplier = stop_atr_multiplier
-        self.target_atr_multiplier = target_atr_multiplier
+        self.stop_atr_multiplier = (
+            stop_atr_multiplier
+        )
+
+        self.target_atr_multiplier = (
+            target_atr_multiplier
+        )
 
     def calculate_levels(
         self,
@@ -66,19 +87,30 @@ class ATRExitModel(BaseExitModel):
 
         if stop_price <= 0:
             raise ValueError(
-                f"stop_price không hợp lệ: {stop_price:.2f}"
+                f"stop_price không hợp lệ: "
+                f"{stop_price:.2f}"
             )
 
         return stop_price, target_price
 
     @staticmethod
-    def _get_atr(entry_row: Any) -> float:
-        atr_columns = ("ATR14", "atr", "ATR")
+    def _get_atr(
+        entry_row: Any,
+    ) -> float:
+        atr_columns = (
+            "ATR14",
+            "atr",
+            "ATR",
+        )
 
         for column in atr_columns:
             try:
                 value = entry_row[column]
-            except (KeyError, TypeError, IndexError):
+            except (
+                KeyError,
+                TypeError,
+                IndexError,
+            ):
                 continue
 
             if value is None:
@@ -90,9 +122,10 @@ class ATRExitModel(BaseExitModel):
                 return atr
 
         raise ValueError(
-            "Không tìm thấy ATR hợp lệ trong entry_row. "
-            "Cần một trong các cột: ATR14, atr hoặc ATR."
+            "Không tìm thấy ATR hợp lệ trong "
+            "entry_row. Cần một trong các cột: "
+            "ATR14, atr hoặc ATR."
         )
 
 
-DEFAULT_EXIT_MODEL = FixedExitModel()	
+DEFAULT_EXIT_MODEL = FixedExitModel()

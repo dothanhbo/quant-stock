@@ -126,3 +126,43 @@ def test_simulate_exit_with_atr_model():
     assert result.target_price == pytest.approx(108.0)
     assert result.exit_price == pytest.approx(108.0)
     assert result.exit_reason == ExitReason.TAKE_PROFIT
+
+def test_fixed_exit_model_keeps_levels_unchanged():
+    model = FixedExitModel()
+
+    stop, target = model.update_levels(
+        entry_price=100.0,
+        current_row={
+            "high": 108.0,
+            "close": 107.0,
+        },
+        current_stop=95.0,
+        current_target=110.0,
+        highest_price=108.0,
+        config=None,
+    )
+
+    assert stop == 95.0
+    assert target == 110.0
+
+
+def test_atr_exit_model_keeps_levels_unchanged():
+    model = ATRExitModel(
+        stop_atr_multiplier=2.0,
+        target_atr_multiplier=4.0,
+    )
+
+    stop, target = model.update_levels(
+        entry_price=100.0,
+        current_row={
+            "ATR14": 2.0,
+            "high": 108.0,
+        },
+        current_stop=96.0,
+        current_target=108.0,
+        highest_price=108.0,
+        config=None,
+    )
+
+    assert stop == 96.0
+    assert target == 108.0
