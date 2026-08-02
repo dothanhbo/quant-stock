@@ -1,85 +1,44 @@
-# Quant Stock
+# Quant Stock Research Platform
 
-![Python](https://img.shields.io/badge/Python-3.14-blue)
-![Version](https://img.shields.io/badge/version-v5.2-success)
-![Tests](https://img.shields.io/badge/tests-passing-brightgreen)
-![License](https://img.shields.io/badge/license-MIT-green)
+Nền tảng nghiên cứu định lượng cho thị trường chứng khoán Việt Nam.
 
-> Quantitative research and backtesting framework for the Vietnam stock market.
+## Tính năng hiện có
 
-## Overview
+- SQLite historical database
+- Incremental data update và backfill khoảng 8 năm
+- Indicator engine và market regime
+- Backtesting engine
+- Portfolio simulation
+- Transaction costs, tax và slippage
+- Fixed, ATR, Break-even và Trailing ATR exits
+- Grid Search và multiprocessing
+- Exit-model benchmark
+- Symbol winner matrix
+- Walk-forward train selection
+- Out-of-sample walk-forward testing
+- CSV research reports
 
-Quant Stock combines market-data processing, signal scanning, portfolio simulation, execution-cost modeling, trade analytics, and benchmark comparison.
-
-## Features
-
-### Market Data
-- VN100 historical database
-- VNINDEX benchmark data
-- Incremental updates
-- Long-history backfill
-- Configurable backtest dates
-
-### Portfolio Backtesting
-- Multi-symbol simulation
-- Shared cash
-- Position sizing
-- Maximum-position control
-- Rejected-trade tracking
-
-### Execution Simulation
-- Buy and sell commission
-- Sell tax
-- Buy and sell slippage
-- Slippage-aware position sizing
-
-### Analytics
-- Total Return, CAGR, Max Drawdown
-- Sharpe, Sortino, Calmar
-- Win Rate, Profit Factor, Payoff Ratio
-- Expectancy
-- Average Win and Average Loss
-- Holding-period statistics
-- Profit distribution
-- Holding distribution
-- Exit-reason distribution
-
-### Benchmark
-- Buy & Hold Return
-- Buy & Hold CAGR
-- Strategy Excess Return
-- Strategy Excess CAGR
-
-## Commands
-
-```powershell
-py -m backtesting.engine --symbol ACB --start 2015-07-16 --end 2026-07-31 --quiet
-```
-
-```powershell
-py -m pytest
-```
-
-## Report Sections
+## Research workflow
 
 ```text
-PORTFOLIO SUMMARY
-PROFIT & COST BREAKDOWN
-TRADE ANALYTICS
-TRADE DISTRIBUTIONS
-BUY & HOLD BENCHMARK
-EXECUTIVE SUMMARY
+Data
+→ Indicators
+→ Entry Strategy
+→ Exit Model
+→ Backtest
+→ Benchmark
+→ Grid Search
+→ Walk-Forward Optimization
+→ Out-of-Sample Validation
 ```
 
-## Roadmap
+## Kết quả WFO gần nhất
 
-- ✅ v5.0 Portfolio Backtesting
-- ✅ v5.1 Transaction Costs and Slippage
-- ✅ v5.2 Analytics, Benchmark, and Reporting
-- 🚧 v5.3 Strategy Validation
+- Positive windows: 0/3
+- Average Return: -3.58%
+- Median Return: -4.46%
+- Average Sharpe: -2.18
+- Average Profit Factor: 0.85
+- Average Drawdown: -13.79%
 
-See [ROADMAP.md](ROADMAP.md).
-
-## Disclaimer
-
-For research and educational purposes only. This project does not provide investment advice.
+Kết luận hiện tại: ưu tiên Entry Framework và Entry Research.

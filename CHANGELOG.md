@@ -1,50 +1,34 @@
 # Changelog
 
-## [v5.2.0] - 2026-08-02
+## v0.9.0 — Walk-Forward Optimization
 
 ### Added
-- Trade expectancy in VND and percentage
-- Average Win and Average Loss
-- Holding-period statistics
-- Profit distribution
-- Holding distribution
-- Exit-reason distribution
-- Buy & Hold Return and CAGR
-- Excess Return and Excess CAGR
-- Modular console reporting
-- Executive Summary
 
-### Changed
-- Reporting moved out of `backtesting/engine.py`
-- Relative Strength supports historical `as_of_date`
-- VNINDEX history is maintained for long backtests
-- Backtests support `--start` and `--end`
+- Trailing ATR Exit Model
+- Exit-model factory support
+- ATR multiplier CLI arguments
+- Trailing ATR parameter grid
+- Cross-symbol exit validation
+- Exit-model benchmark framework
+- Symbol winner matrix
+- Walk-forward window generator
+- Train parameter selection
+- Selected-parameter out-of-sample testing
+- Walk-forward summary CSV
+- Database coverage checker
+- Eight-year historical backfill support
 
 ### Fixed
-- Relative Strength look-ahead bias
-- Missing VNINDEX history for historical backtests
-- Undefined date variables introduced during refactoring
-- Benchmark metrics missing from exported CSV
 
-### Testing
-- Added Trade Analytics tests
-- Added Trade Distribution tests
-- Added Buy & Hold Benchmark tests
+- Fixed intraday look-ahead bug in trailing-stop simulation
+- Applied updated trailing levels from the next session
+- Fixed missing ATRExitModel import
+- Fixed CLI support for trailing_atr
+- Fixed incomplete historical-data coverage
+- Fixed syntax and indentation issues in research scripts
 
-## [v5.1.0] - 2026-08-01
+### Research findings
 
-### Added
-- Commissions
-- Sell tax
-- Buy and sell slippage
-- Gross and Net Trade PnL
-- Profit and Cost Breakdown
-
-## [v5.0.0]
-
-### Added
-- Portfolio Simulator
-- Shared cash
-- Position sizing
-- Equity curve
-- Portfolio performance metrics
+- No exit model dominated all symbols.
+- In-sample Trailing ATR results did not hold out of sample.
+- Current priority is entry-strategy research.

@@ -1,48 +1,53 @@
 # Quant Stock Roadmap
 
-## Completed
+## Phase 1 — Data Foundation ✅
+- Historical OHLCV database
+- Incremental updater
+- Eight-year backfill
+- Coverage checker
+- Indicators
+- Market regime
 
-### v5.0 — Portfolio Backtesting
-- Multi-symbol backtesting
-- Shared cash
-- Position sizing
-- Portfolio metrics
+## Phase 2 — Backtesting Engine ✅
+- Entry evaluation
+- Exit simulation
+- Portfolio simulator
+- Transaction fees, tax and slippage
+- Equity curve, drawdown and benchmark metrics
 
-### v5.1 — Realistic Execution
-- Commission
-- Sell tax
-- Slippage
-- Net PnL
-- Transaction Cost Breakdown
+## Phase 3 — Exit Research ✅
+- Fixed Exit
+- ATR Exit
+- Break-even Exit
+- Trailing ATR Exit
+- Grid Search
+- Benchmark
+- Winner Matrix
+- Walk-Forward Optimization
 
-### v5.2 — Analytics and Reporting
-- Trade Analytics
-- Trade Distributions
-- Buy & Hold Benchmark
-- Excess Return and CAGR
-- Modular reporting
-- Executive Summary
+## Phase 4 — Entry Research 🔄
+- BaseEntryModel
+- EMA Pullback
+- EMA Breakout
+- Donchian Breakout
+- Momentum Entry
+- Volume Breakout
+- RSI Reversal
+- Mean Reversion
+- Entry benchmark
+- Entry Walk-Forward Optimization
 
-## Next
-
-### v5.3 — Strategy Validation
-- Grid search
-- Parameter sensitivity
-- Walk-forward analysis
-- Out-of-sample testing
-- Overfitting checks
-
-### v5.4 — Portfolio Analytics
-- Monthly and yearly returns
-- Drawdown duration
-- Rolling Sharpe
-- Strategy versus VNINDEX charts
-- Alpha and Beta
-
-## Future
+## Phase 5 — Advanced Research
+- Entry × Exit benchmark
 - Monte Carlo simulation
-- Factor attribution
+- Sensitivity analysis
+- Robustness testing
 - Portfolio optimization
+- Automated reports
+
+## Phase 6 — Production
+- Daily update
+- Daily signals
+- Dashboard
+- Notifications
 - Paper trading
-- Broker integration
-- Live trading
