@@ -7,7 +7,10 @@ from time import perf_counter
 
 import pandas as pd
 
-from backtesting.engine import run_backtest
+from backtesting.engine import (
+    build_exit_model,
+    run_backtest,
+)
 from research.parameter_space import (
     DEFAULT_PARAMETER_SPACE,
 )
@@ -30,6 +33,13 @@ def run_single_parameter_set(
     start_date = payload["start_date"]
     end_date = payload["end_date"]
     sequence = payload["sequence"]
+    exit_model_name = payload["exit_model_name"]
+    break_even_trigger = payload["break_even_trigger"]
+
+    exit_model = build_exit_model(
+        name=exit_model_name,
+        break_even_trigger=break_even_trigger,
+    )
 
     started_at = perf_counter()
 
@@ -41,6 +51,7 @@ def run_single_parameter_set(
         take_profit_pct=parameters[
             "take_profit_pct"
         ],
+        
         max_holding_days=parameters[
             "max_holding_days"
         ],
@@ -50,6 +61,7 @@ def run_single_parameter_set(
         start_date=start_date,
         end_date=end_date,
         verbose=False,
+        exit_model=exit_model,
     )
 
     elapsed_seconds = (
@@ -60,6 +72,8 @@ def run_single_parameter_set(
         "_sequence": sequence,
         **parameters,
         "symbols": ",".join(symbols),
+        "exit_model": exit_model_name,
+        "break_even_trigger": break_even_trigger,
         "elapsed_seconds": round(
             elapsed_seconds,
             2,
@@ -145,6 +159,8 @@ def run_grid_search(
     output_path: str = DEFAULT_OUTPUT,
     limit: int | None = None,
     workers: int = 1,
+    exit_model_name: str = "fixed",
+    break_even_trigger: float = 5.0,
 ) -> pd.DataFrame:
     parameter_sets = list(
         generate_parameter_sets(
@@ -162,6 +178,8 @@ def run_grid_search(
             "symbols": symbols,
             "start_date": start_date,
             "end_date": end_date,
+            "exit_model_name": exit_model_name,
+            "break_even_trigger": break_even_trigger,
         }
         for index, parameters in enumerate(
             parameter_sets,
@@ -329,6 +347,21 @@ def parse_args() -> argparse.Namespace:
             "Nên bắt đầu với 2 hoặc 4."
         ),
     )
+    parser.add_argument(
+        "--exit-model",
+        choices=[
+            "fixed",
+            "atr",
+            "break_even",
+        ],
+        default="fixed",
+    )
+
+    parser.add_argument(
+        "--break-even-trigger",
+        type=float,
+        default=5.0,
+    )
 
     return parser.parse_args()
 
@@ -348,6 +381,8 @@ def main() -> None:
         output_path=args.output,
         limit=args.limit,
         workers=args.workers,
+        exit_model_name= args.exit_model,
+        break_even_trigger=args.break_even_trigger,
     )
 
 

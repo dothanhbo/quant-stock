@@ -11,6 +11,9 @@ from backtesting.trade import ExitExecution, ExitReason, Trade
 from backtesting.exit_models import (
     BaseExitModel,
     DEFAULT_EXIT_MODEL,
+    ATRExitModel,
+    BreakEvenExitModel,
+    FixedExitModel,
 )
 from strategy.indicators import add_indicators
 from backtesting.portfolio import Portfolio
@@ -611,6 +614,7 @@ def run_backtest(
     sell_tax_pct: float = 0.10,
     buy_slippage_pct: float = 0.05,
     sell_slippage_pct: float = 0.05,
+    exit_model: BaseExitModel = DEFAULT_EXIT_MODEL,
 ) -> tuple[list[Trade], dict[str, Any], pd.DataFrame]:
     config = BacktestConfig(
         stop_loss_pct=stop_loss_pct,
@@ -667,6 +671,7 @@ def run_backtest(
             verbose=verbose,
             start_date=start_date,
             end_date=end_date,
+            exit_model=exit_model,
         )
 
         if symbol_trades:
@@ -934,6 +939,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--tp", type=float, default=10.0)
     parser.add_argument("--hold", type=int, default=20)
     parser.add_argument("--min-adx", type=float, default=30.0)
+    parser.add_argument(
+        "--exit-model",
+        choices=[
+            "fixed",
+            "atr",
+            "break_even",
+        ],
+        default="fixed",
+    )
+
+    parser.add_argument(
+        "--break-even-trigger",
+        type=float,
+        default=5.0,
+    )
     parser.add_argument("--buy-fee",type=float,default=0.15,help="Phí mua theo phần trăm, mặc định 0.15.",)
     parser.add_argument("--sell-fee",type=float,default=0.15,help="Phí bán theo phần trăm, mặc định 0.15.",)
     parser.add_argument("--sell-tax",type=float,default=0.10,help="Thuế bán theo phần trăm, mặc định 0.10.",)
@@ -952,9 +972,34 @@ def parse_args() -> argparse.Namespace:
 
     return parser.parse_args()
 
+def build_exit_model(
+    *,
+    name: str,
+    break_even_trigger: float,
+):
+    if name == "fixed":
+        return FixedExitModel()
+
+    if name == "atr":
+        return ATRExitModel()
+
+    if name == "break_even":
+        return BreakEvenExitModel(
+            trigger_pct=break_even_trigger,
+        )
+
+    raise ValueError(
+        f"Exit model không được hỗ trợ: {name}"
+    )
+
 def main() -> None:
     args = parse_args()
  
+    exit_model = build_exit_model(
+        name=args.exit_model,
+        break_even_trigger=args.break_even_trigger,
+    )
+
     if args.all:
         symbols = list(get_vn100_symbols())
     else:
@@ -979,6 +1024,7 @@ def main() -> None:
         buy_commission_pct=args.buy_fee,
         sell_commission_pct=args.sell_fee,
         sell_tax_pct=args.sell_tax,
+        exit_model=exit_model,
     )
     print(
         f"Phí mua {metrics['buy_commission_pct']:.2f}% | "
