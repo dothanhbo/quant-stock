@@ -51,6 +51,140 @@ def _prepare_price_data(symbol: str, end_date=None) -> pd.DataFrame:
         prepared = prepared[prepared["time"] <= cutoff].copy()
     return prepared
 
+def evaluate_prepared_row(
+    *,
+    symbol: str,
+    latest: pd.Series,
+    market_config: dict,
+) -> dict:
+    """
+    Đánh giá một dòng dữ liệu đã có sẵn indicator
+    và Relative Strength.
+
+    Hàm này không:
+    - đọc database
+    - tính lại indicator
+    - tính lại Relative Strength
+    """
+    base = {
+        "symbol": symbol,
+        "status": "REJECTED",
+        "reason": "other",
+    }
+
+    latest_date = pd.to_datetime(
+        latest.get("time"),
+        errors="coerce",
+    )
+
+    if pd.isna(latest_date):
+        return {
+            **base,
+            "reason": "invalid_date",
+        }
+
+    date_text = latest_date.strftime("%Y-%m-%d")
+
+    missing_indicators = [
+        column
+        for column in REQUIRED_INDICATORS
+        if (
+            column not in latest.index
+            or pd.isna(latest[column])
+        )
+    ]
+
+    if missing_indicators:
+        return {
+            **base,
+            "reason": "indicator_nan",
+            "missing_indicators": missing_indicators,
+            "date": date_text,
+        }
+
+    relative_strength = pd.to_numeric(
+        latest.get("Relative_Strength_20D"),
+        errors="coerce",
+    )
+
+    if pd.isna(relative_strength):
+        return {
+            **base,
+            "reason": "relative_strength_data",
+            "date": date_text,
+        }
+
+    decision = strategy.evaluate(
+        latest=latest,
+        relative_strength=float(
+            relative_strength
+        ),
+        market_config=market_config,
+    )
+
+    return {
+        **base,
+        **decision,
+        "date": date_text,
+        "ema10": round(
+            float(latest["EMA10"]),
+            2,
+        ),
+        "ema20": round(
+            float(latest["EMA20"]),
+            2,
+        ),
+        "ema50": round(
+            float(latest["EMA50"]),
+            2,
+        ),
+        "rsi": round(
+            float(latest["RSI"]),
+            2,
+        ),
+        "adx": round(
+            float(latest["ADX14"]),
+            2,
+        ),
+        "atr": round(
+            float(latest["ATR14"]),
+            2,
+        ),
+        "atr_percent": round(
+            float(latest["ATR_Percent"]),
+            2,
+        ),
+        "volume_ratio": round(
+            float(latest["Vol_Ratio"]),
+            2,
+        ),
+        "distance_ema20": round(
+            float(latest["Distance_EMA20_Pct"]),
+            2,
+        ),
+        "return_3d": round(
+            float(latest["Return_3D_Pct"]),
+            2,
+        ),
+        "breakout_20d": bool(
+            latest["Breakout_20D"]
+        ),
+        "volume_breakout_5d": bool(
+            latest["Volume_Breakout_5D"]
+        ),
+        "stock_return_20d": round(
+            float(latest["Stock_Return_20D"]),
+            2,
+        ),
+        "index_return_20d": round(
+            float(latest["Index_Return_20D"]),
+            2,
+        ),
+        "relative_strength_20d": round(
+            float(relative_strength),
+            2,
+        ),
+    }
 
 def evaluate_symbol(
     symbol: str,
@@ -126,12 +260,6 @@ def evaluate_symbol(
                 "reference_date": reference_date_text,
             }
 
-    if latest[REQUIRED_INDICATORS].isna().any():
-        return {
-            **base,
-            "reason": "indicator_nan",
-        }
-
     rs = calculate_relative_strength(
         symbol,
         benchmark="VNINDEX",
@@ -139,51 +267,25 @@ def evaluate_symbol(
         as_of_date=latest["time"],
     )
 
-    if not rs["available"]:
-        return {
-            **base,
-            "reason": "relative_strength_data",
-        }
+    prepared_latest = latest.copy()
 
-    relative_strength = float(rs["relative_strength"])
+    prepared_latest[
+        "Stock_Return_20D"
+    ] = rs["stock_return"]
 
-    decision = strategy.evaluate(
-        latest=latest,
-        relative_strength=relative_strength,
+    prepared_latest[
+        "Index_Return_20D"
+    ] = rs["index_return"]
+
+    prepared_latest[
+        "Relative_Strength_20D"
+    ] = rs["relative_strength"]
+
+    return evaluate_prepared_row(
+        symbol=symbol,
+        latest=prepared_latest,
         market_config=market_config,
     )
-
-    result = {
-        **base,
-        **decision,
-        "date": date_text,
-        "ema10": round(float(latest["EMA10"]), 2),
-        "ema20": round(float(latest["EMA20"]), 2),
-        "ema50": round(float(latest["EMA50"]), 2),
-        "rsi": round(float(latest["RSI"]), 2),
-        "adx": round(float(latest["ADX14"]), 2),
-        "atr": round(float(latest["ATR14"]), 2),
-        "atr_percent": round(float(latest["ATR_Percent"]), 2),
-        "volume_ratio": round(float(latest["Vol_Ratio"]), 2),
-        "distance_ema20": round(
-            float(latest["Distance_EMA20_Pct"]),
-            2,
-        ),
-        "return_3d": round(
-            float(latest["Return_3D_Pct"]),
-            2,
-        ),
-        "breakout_20d": bool(latest["Breakout_20D"]),
-        "volume_breakout_5d": bool(
-            latest["Volume_Breakout_5D"]
-        ),
-        "stock_return_20d": rs["stock_return"],
-        "index_return_20d": rs["index_return"],
-        "relative_strength_20d": rs["relative_strength"],
-    }
-
-    return result
-
 def check_signal(
     symbol,
     reference_date=None,
