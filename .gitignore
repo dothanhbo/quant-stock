@@ -40,3 +40,5 @@ logs/
 __pycache__/
 .pytest_cache/
 *.pyc
+research_results/
+*.prof
