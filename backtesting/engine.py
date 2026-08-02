@@ -34,6 +34,9 @@ from backtesting.report import print_backtest_report
 from backtesting.prepared_data import (
     prepare_backtest_dataset,
 )
+from strategy.market_regime import (
+    build_market_config,
+)
 
 from strategy.market_regime import (
     get_market_regime,
@@ -375,8 +378,12 @@ def generate_candidate_trades(
             signal_index
         ]
 
-        market_config = get_market_regime(
-            end_date=signal_date,
+        regime = str(
+            latest["Market_Regime"]
+        )
+
+        market_config = build_market_config(
+            regime
         )
 
         evaluation = evaluate_prepared_row(

@@ -17,6 +17,134 @@ def _config(regime: str, **metrics) -> dict:
     result.update(metrics)
     return result
 
+def build_market_config(
+    regime: str,
+    **metrics,
+) -> dict:
+    if regime not in REGIME_CONFIGS:
+        regime = "UNKNOWN"
+
+    return _config(
+        regime,
+        **metrics,
+    )
+
+def prepare_market_regime_history(
+    benchmark_df: pd.DataFrame,
+) -> pd.DataFrame:
+    """
+    Chuẩn bị toàn bộ Market Regime theo lịch sử.
+
+    Tính một lần duy nhất.
+    """
+
+    required = {
+        "time",
+        "close",
+    }
+
+    if (
+        benchmark_df.empty
+        or not required.issubset(
+            benchmark_df.columns
+        )
+    ):
+        return pd.DataFrame()
+
+    df = benchmark_df.copy()
+
+    df["time"] = pd.to_datetime(
+        df["time"],
+        errors="coerce",
+    )
+
+    df["close"] = pd.to_numeric(
+        df["close"],
+        errors="coerce",
+    )
+
+    df = (
+        df
+        .dropna()
+        .drop_duplicates(
+            "time",
+            keep="last",
+        )
+        .sort_values("time")
+        .reset_index(drop=True)
+    )
+
+    close = df["close"]
+
+    df["EMA50"] = close.ewm(
+        span=50,
+        adjust=False,
+    ).mean()
+
+    df["EMA200"] = close.ewm(
+        span=200,
+        adjust=False,
+    ).mean()
+
+    df["EMA50_Slope_10D"] = (
+        df["EMA50"]
+        / df["EMA50"].shift(10)
+        - 1
+    ) * 100
+
+    df["Return_20D"] = (
+        close
+        / close.shift(20)
+        - 1
+    ) * 100
+
+    df["Distance_EMA200"] = (
+        close
+        / df["EMA200"]
+        - 1
+    ) * 100
+
+    regime = np.full(
+        len(df),
+        "UNKNOWN",
+        dtype=object,
+    )
+
+    enough_history = (
+        pd.Series(
+            np.arange(len(df)),
+            index=df.index,
+        ) >= 199
+    )
+
+    bull = (
+        enough_history
+        & (close > df["EMA50"])
+        & (df["EMA50"] > df["EMA200"])
+        & (df["EMA50_Slope_10D"] > 0)
+        & (df["Return_20D"] > -2)
+    )
+
+    bear = (
+        enough_history
+        & (close < df["EMA200"])
+        & (df["EMA50"] < df["EMA200"])
+        & (df["EMA50_Slope_10D"] < 0)
+    )
+
+    sideway = (
+        enough_history
+        & ~bull
+        & ~bear
+    )
+
+    regime[bull] = "BULL"
+    regime[bear] = "BEAR"
+    regime[sideway] = "SIDEWAY"
+
+    df["Market_Regime"] = regime
+
+    return df
 
 def get_market_regime(end_date=None) -> dict:
     """Phân loại BULL/SIDEWAY/BEAR từ VNINDEX, không nhìn vượt ``end_date``."""

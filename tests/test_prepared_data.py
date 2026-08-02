@@ -119,4 +119,4 @@ def test_relative_strength_rejects_invalid_period():
             pd.DataFrame(),
             pd.DataFrame(),
             period=0,
-        )
+        )	

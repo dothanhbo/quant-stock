@@ -4,7 +4,9 @@ import pandas as pd
 
 from core.database import load_price_data
 from strategy.cache import get_indicators_cached
-
+from strategy.market_regime import (
+    prepare_market_regime_history,
+)
 
 DEFAULT_BENCHMARK = "VNINDEX"
 DEFAULT_RS_PERIOD = 20
@@ -148,6 +150,11 @@ def prepare_backtest_dataset(
     benchmark_df = load_price_data(
         benchmark
     )
+    market_history = (
+        prepare_market_regime_history(
+            benchmark_df
+        )
+    )
 
     if end_date is not None:
         cutoff = pd.to_datetime(
@@ -184,6 +191,19 @@ def prepare_backtest_dataset(
         data,
         benchmark_df,
         period=rs_period,
+    )
+
+    market_columns = [
+    "time",
+    "Market_Regime",
+    ]
+
+    data = data.merge(
+        market_history[
+            market_columns
+        ],
+        on="time",
+        how="left",
     )
 
     return data
