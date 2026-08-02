@@ -31,6 +31,17 @@ from backtesting.benchmark import (
     calculate_buy_and_hold_benchmark,
 )
 from backtesting.report import print_backtest_report
+from backtesting.prepared_data import (
+    prepare_backtest_dataset,
+)
+
+from strategy.market_regime import (
+    get_market_regime,
+)
+
+from strategy.scanner import (
+    evaluate_prepared_row,
+)
 
 import pandas as pd
 from strategy.scanner import evaluate_symbol	
@@ -292,36 +303,53 @@ def generate_candidate_trades(
     config.validate()
     symbol = symbol.upper().strip()
 
-    price_df = load_price_data(symbol, db_path)
+    price_df = prepare_backtest_dataset(
+        symbol,
+        end_date=end_date,
+    )
+
+    if price_df.empty:
+        return []
 
     price_df["time"] = pd.to_datetime(
         price_df["time"],
         errors="coerce",
     )
 
+    price_df = (
+        price_df
+        .dropna(subset=["time"])
+        .sort_values("time")
+    )
+
     if start_date is not None:
         start_ts = pd.Timestamp(start_date)
+
         price_df = price_df[
             price_df["time"] >= start_ts
         ]
-  
+
     if end_date is not None:
         end_ts = pd.Timestamp(end_date)
+
         price_df = price_df[
             price_df["time"] <= end_ts
         ]
 
-    price_df = price_df.reset_index(drop=True)
+    price_df = price_df.reset_index(
+        drop=True
+    )
 
     if len(price_df) <= warmup_bars + 1:
         return []
 
-    price_df = add_indicators(price_df)
-
-    if price_df.empty:
-        return []
-   
-    required_columns = {"ATR14", "ADX14"}
+    required_columns = {
+        "ATR14",
+        "ADX14",
+        "Stock_Return_20D",
+        "Index_Return_20D",
+        "Relative_Strength_20D",
+    }
 
     missing_columns = required_columns.difference(price_df.columns)
 
@@ -343,10 +371,18 @@ def generate_candidate_trades(
             price_df.iloc[signal_index]["time"]
         )
 
-        evaluation = _evaluate_entry(
+        latest = price_df.iloc[
+            signal_index
+        ]
+
+        market_config = get_market_regime(
+            end_date=signal_date,
+        )
+
+        evaluation = evaluate_prepared_row(
             symbol=symbol,
-            signal_date=signal_date,
-            verbose=verbose,
+            latest=latest,
+            market_config=market_config,
         )
 
         status = evaluation.get("status", "UNKNOWN")

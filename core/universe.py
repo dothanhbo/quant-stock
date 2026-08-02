@@ -1,12 +1,13 @@
 from vnstock import Vnstock
 
-stock_api = Vnstock()
-
 BENCHMARK_SYMBOLS = [
     "VNINDEX",
 ]
 
 def get_vn100_symbols():
+    from vnstock import Vnstock
+    stock_api = Vnstock()
+
     try:
         result = (
             stock_api
