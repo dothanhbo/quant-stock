@@ -9,6 +9,7 @@ from typing import Any, Iterable
 from backtesting.exit import ExitResult
 from backtesting.trade import ExitExecution, ExitReason, Trade
 from backtesting.exit_models import (
+    ATRExitModel,
     BaseExitModel,
     DEFAULT_EXIT_MODEL,
     TrailingATRExitModel,
@@ -1016,7 +1017,10 @@ def build_exit_model(
         return FixedExitModel()
 
     if name == "atr":
-        return ATRExitModel()
+        return ATRExitModel(
+            stop_atr_multiplier=stop_atr_multiplier,
+            target_atr_multiplier=target_atr_multiplier,
+        )
 
     if name == "break_even":
         return BreakEvenExitModel(
