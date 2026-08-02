@@ -7,6 +7,7 @@ from backtesting.engine import _simulate_exit
 from backtesting.exit_models import (
     ATRExitModel,
     BaseExitModel,
+    BreakEvenExitModel,
     FixedExitModel,
 )
 from backtesting.exit import ExitReason
@@ -248,3 +249,126 @@ def test_simulate_exit_calls_update_levels():
 
     assert model.update_calls >= 1
     assert result is not None
+
+def test_break_even_exit_keeps_original_stop_before_trigger():
+    model = BreakEvenExitModel(
+        trigger_pct=5.0,
+    )
+
+    stop, target = model.update_levels(
+        entry_price=100.0,
+        current_row={
+            "high": 104.0,
+        },
+        current_stop=95.0,
+        current_target=110.0,
+        highest_price=104.0,
+        config=None,
+    )
+
+    assert stop == pytest.approx(95.0)
+    assert target == pytest.approx(110.0)
+
+
+def test_break_even_exit_moves_stop_to_entry_after_trigger():
+    model = BreakEvenExitModel(
+        trigger_pct=5.0,
+    )
+
+    stop, target = model.update_levels(
+        entry_price=100.0,
+        current_row={
+            "high": 106.0,
+        },
+        current_stop=95.0,
+        current_target=110.0,
+        highest_price=106.0,
+        config=None,
+    )
+
+    assert stop == pytest.approx(100.0)
+    assert target == pytest.approx(110.0)
+
+
+def test_break_even_exit_never_lowers_stop():
+    model = BreakEvenExitModel(
+        trigger_pct=5.0,
+    )
+
+    stop, target = model.update_levels(
+        entry_price=100.0,
+        current_row={
+            "high": 110.0,
+        },
+        current_stop=102.0,
+        current_target=115.0,
+        highest_price=110.0,
+        config=None,
+    )
+
+    assert stop == pytest.approx(102.0)
+    assert target == pytest.approx(115.0)
+
+
+def test_break_even_exit_rejects_invalid_trigger():
+    with pytest.raises(ValueError):
+        BreakEvenExitModel(
+            trigger_pct=0,
+        )
+
+def test_simulate_exit_with_break_even_model():
+    price_df = pd.DataFrame(
+        [
+            {
+                "time": "2026-01-02",
+                "open": 100.0,
+                "high": 101.0,
+                "low": 99.0,
+                "close": 100.0,
+                "ATR14": 2.0,
+            },
+            {
+                "time": "2026-01-05",
+                "open": 102.0,
+                "high": 106.0,
+                "low": 101.0,
+                "close": 105.0,
+                "ATR14": 2.0,
+            },
+            {
+                "time": "2026-01-06",
+                "open": 99.0,
+                "high": 101.0,
+                "low": 98.0,
+                "close": 99.0,
+                "ATR14": 2.0,
+            },
+        ]
+    )
+
+    config = SimpleNamespace(
+        max_holding_days=3,
+        stop_loss_pct=5.0,
+        take_profit_pct=15.0,
+    )
+
+    result = _simulate_exit(
+        price_df=price_df,
+        entry_index=0,
+        config=config,
+        exit_model=BreakEvenExitModel(
+            trigger_pct=5.0,
+        ),
+    )
+
+    assert result.stop_price == pytest.approx(
+        100.0
+    )
+
+    assert result.exit_price == pytest.approx(
+        99.0
+    )
+
+    assert result.exit_reason == (
+        ExitReason.STOP_LOSS
+    )

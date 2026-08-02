@@ -127,5 +127,58 @@ class ATRExitModel(BaseExitModel):
             "ATR14, atr hoặc ATR."
         )
 
+class BreakEvenExitModel(BaseExitModel):
+    def __init__(
+        self,
+        *,
+        trigger_pct: float = 5.0,
+    ) -> None:
+        if trigger_pct <= 0:
+            raise ValueError(
+                "trigger_pct phải lớn hơn 0"
+            )
+
+        self.trigger_pct = trigger_pct
+
+    def calculate_levels(
+        self,
+        entry_price: float,
+        entry_row: Any,
+        config: Any,
+    ) -> tuple[float, float]:
+        stop_price = entry_price * (
+            1 - config.stop_loss_pct / 100
+        )
+
+        target_price = entry_price * (
+            1 + config.take_profit_pct / 100
+        )
+
+        return stop_price, target_price
+
+    def update_levels(
+        self,
+        *,
+        entry_price: float,
+        current_row: Any,
+        current_stop: float,
+        current_target: float,
+        highest_price: float,
+        config: Any,
+    ) -> tuple[float, float]:
+        trigger_price = entry_price * (
+            1 + self.trigger_pct / 100
+        )
+
+        if highest_price >= trigger_price:
+            current_stop = max(
+                current_stop,
+                entry_price,
+            )
+
+        return (
+            current_stop,
+            current_target,
+        )
 
 DEFAULT_EXIT_MODEL = FixedExitModel()
