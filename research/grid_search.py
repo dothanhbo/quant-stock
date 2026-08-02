@@ -35,6 +35,11 @@ def run_single_parameter_set(
     sequence = payload["sequence"]
     exit_model_name = payload["exit_model_name"]
     break_even_trigger = payload["break_even_trigger"]
+    atr_stop_multiplier = payload["atr_stop_multiplier"]
+    atr_target_multiplier = payload["atr_target_multiplier"]
+    trailing_atr_multiplier = payload[
+        "trailing_atr_multiplier"
+    ]
 
     trigger = parameters.get(
         "break_even_trigger",
@@ -44,6 +49,9 @@ def run_single_parameter_set(
     exit_model = build_exit_model(
         name=exit_model_name,
         break_even_trigger=trigger,
+        stop_atr_multiplier=atr_stop_multiplier,
+        target_atr_multiplier=atr_target_multiplier,
+        trailing_atr_multiplier=trailing_atr_multiplier,
     )
 
     started_at = perf_counter()
@@ -79,6 +87,9 @@ def run_single_parameter_set(
         "symbols": ",".join(symbols),
         "exit_model": exit_model_name,
         "break_even_trigger": trigger,
+        "atr_stop_multiplier": atr_stop_multiplier,
+        "atr_target_multiplier": atr_target_multiplier,
+        "trailing_atr_multiplier": trailing_atr_multiplier,
         "elapsed_seconds": round(
             elapsed_seconds,
             2,
@@ -166,6 +177,9 @@ def run_grid_search(
     workers: int = 1,
     exit_model_name: str = "fixed",
     break_even_trigger: float = 5.0,
+    atr_stop_multiplier: float = 2.0,
+    atr_target_multiplier: float = 4.0,
+    trailing_atr_multiplier: float = 2.0,
 ) -> pd.DataFrame:
     parameter_sets = list(
         generate_parameter_sets(
@@ -185,6 +199,9 @@ def run_grid_search(
             "end_date": end_date,
             "exit_model_name": exit_model_name,
             "break_even_trigger": break_even_trigger,
+            "atr_stop_multiplier": atr_stop_multiplier,
+            "atr_target_multiplier": atr_target_multiplier,
+            "trailing_atr_multiplier": trailing_atr_multiplier,
         }
         for index, parameters in enumerate(
             parameter_sets,
@@ -358,6 +375,7 @@ def parse_args() -> argparse.Namespace:
             "fixed",
             "atr",
             "break_even",
+            "trailing_atr",
         ],
         default="fixed",
     )
@@ -366,6 +384,24 @@ def parse_args() -> argparse.Namespace:
         "--break-even-trigger",
         type=float,
         default=5.0,
+    )
+
+    parser.add_argument(
+        "--atr-stop-multiplier",
+        type=float,
+        default=2.0,
+    )
+
+    parser.add_argument(
+        "--atr-target-multiplier",
+        type=float,
+        default=4.0,
+    )
+
+    parser.add_argument(
+        "--trailing-atr-multiplier",
+        type=float,
+        default=2.0,
     )
 
     return parser.parse_args()
@@ -388,6 +424,9 @@ def main() -> None:
         workers=args.workers,
         exit_model_name= args.exit_model,
         break_even_trigger=args.break_even_trigger,
+        atr_stop_multiplier=args.atr_stop_multiplier,
+        atr_target_multiplier=args.atr_target_multiplier,
+        trailing_atr_multiplier=args.trailing_atr_multiplier,
     )
 
 

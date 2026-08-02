@@ -11,7 +11,7 @@ from backtesting.trade import ExitExecution, ExitReason, Trade
 from backtesting.exit_models import (
     BaseExitModel,
     DEFAULT_EXIT_MODEL,
-    ATRExitModel,
+    TrailingATRExitModel,
     BreakEvenExitModel,
     FixedExitModel,
 )
@@ -36,7 +36,7 @@ from backtesting.benchmark import (
 from backtesting.report import print_backtest_report
 from backtesting.prepared_data import (
     prepare_backtest_dataset,
-)
+)	
 from strategy.market_regime import (
     build_market_config,
 )
@@ -233,13 +233,56 @@ def _simulate_exit(
     exit_reason = ExitReason.TIME_EXIT
     execution = ExitExecution.NORMAL
 
-    for current_index in range(entry_index, final_index + 1):
+    for current_index in range(
+        entry_index,
+        final_index + 1,
+    ):
         row = price_df.iloc[current_index]
 
         day_open = float(row["open"])
         day_high = float(row["high"])
         day_low = float(row["low"])
 
+        # Kiểm tra gap bằng stop/target của phiên trước
+        if day_open <= stop_price:
+            exit_index = current_index
+            exit_price = day_open
+            exit_reason = ExitReason.STOP_LOSS
+            execution = ExitExecution.STOP_GAP
+            break
+
+        if day_open >= target_price:
+            exit_index = current_index
+            exit_price = day_open
+            exit_reason = ExitReason.TAKE_PROFIT
+            execution = ExitExecution.TARGET_GAP
+            break
+
+        hit_stop = day_low <= stop_price
+        hit_target = day_high >= target_price
+
+        if hit_stop and hit_target:
+            exit_index = current_index
+            exit_price = stop_price
+            exit_reason = ExitReason.STOP_LOSS
+            execution = ExitExecution.SAME_DAY_SL_FIRST
+            break
+
+        if hit_stop:
+            exit_index = current_index
+            exit_price = stop_price
+            exit_reason = ExitReason.STOP_LOSS
+            execution = ExitExecution.NORMAL
+            break
+
+        if hit_target:
+            exit_index = current_index
+            exit_price = target_price
+            exit_reason = ExitReason.TAKE_PROFIT
+            execution = ExitExecution.NORMAL
+            break
+
+        # Chỉ cập nhật trailing sau khi phiên hiện tại kết thúc
         highest_price = max(
             highest_price,
             day_high,
@@ -266,61 +309,24 @@ def _simulate_exit(
                 "target_price phải lớn hơn stop_price"
             )
 
-        # Gap giảm xuyên stop: khớp tại giá mở cửa, không giả định được khớp ở stop.
-        if day_open <= stop_price:
-            exit_index = current_index
-            exit_price = day_open
-            exit_reason = ExitReason.STOP_LOSS
-            execution = ExitExecution.STOP_GAP
-            break
-
-        # Gap tăng xuyên target: khớp tại giá mở cửa.
-        if day_open >= target_price:
-            exit_index = current_index
-            exit_price = day_open
-            exit_reason = ExitReason.TAKE_PROFIT
-            execution = ExitExecution.TARGET_GAP
-            break
-
-        hit_stop = day_low <= stop_price
-        hit_target = day_high >= target_price
-
-        # Không có dữ liệu intraday nên dùng giả định bảo thủ.
-        if hit_stop and hit_target:
-            exit_index = current_index
-            exit_price = stop_price
-            exit_reason = ExitReason.STOP_LOSS
-            execution = ExitExecution.SAME_DAY_SL_FIRST
-            break
-
-        if hit_stop:
-            exit_index = current_index
-            exit_price = stop_price
-            exit_reason = ExitReason.STOP_LOSS
-            execution = ExitExecution.NORMAL
-            break
-
-        if hit_target:
-            exit_index = current_index
-            exit_price = target_price
-            exit_reason = ExitReason.TAKE_PROFIT
-            execution = ExitExecution.NORMAL
-            break
-
     exit_row = price_df.iloc[exit_index]
     return_pct = (exit_price / entry_price - 1) * 100
 
     return ExitResult(
-    entry_index=entry_index,
-    exit_index=exit_index,
-    entry_date=pd.Timestamp(price_df.iloc[entry_index]["time"]),
-    exit_date=pd.Timestamp(price_df.iloc[exit_index]["time"]),
-    entry_price=entry_price,
-    exit_price=exit_price,
-    stop_price=stop_price,
-    target_price=target_price,
-    exit_reason=exit_reason,
-    execution=execution,
+        entry_index=entry_index,
+        exit_index=exit_index,
+        entry_date=pd.Timestamp(
+            price_df.iloc[entry_index]["time"]
+        ),
+        exit_date=pd.Timestamp(
+            price_df.iloc[exit_index]["time"]
+        ),
+        entry_price=entry_price,
+        exit_price=exit_price,
+        stop_price=stop_price,
+        target_price=target_price,
+        exit_reason=exit_reason,
+        execution=execution,
     )
 
 def generate_candidate_trades(
@@ -954,6 +960,24 @@ def parse_args() -> argparse.Namespace:
         type=float,
         default=5.0,
     )
+    parser.add_argument(
+        "--atr-stop-multiplier",
+        type=float,
+        default=2.0,
+    )
+
+    parser.add_argument(
+        "--atr-target-multiplier",
+        type=float,
+        default=4.0,
+    )
+
+    parser.add_argument(
+        "--trailing-atr-multiplier",
+        type=float,
+        default=2.0,
+    )
+
     parser.add_argument("--buy-fee",type=float,default=0.15,help="Phí mua theo phần trăm, mặc định 0.15.",)
     parser.add_argument("--sell-fee",type=float,default=0.15,help="Phí bán theo phần trăm, mặc định 0.15.",)
     parser.add_argument("--sell-tax",type=float,default=0.10,help="Thuế bán theo phần trăm, mặc định 0.10.",)
@@ -975,8 +999,19 @@ def parse_args() -> argparse.Namespace:
 def build_exit_model(
     *,
     name: str,
-    break_even_trigger: float,
+    break_even_trigger: float = 5.0,
+    stop_atr_multiplier: float = 2.0,
+    target_atr_multiplier: float = 4.0,
+    trailing_atr_multiplier: float = 2.0,
 ):
+
+    if name == "trailing_atr":
+        return TrailingATRExitModel(
+            stop_atr_multiplier=stop_atr_multiplier,
+            target_atr_multiplier=target_atr_multiplier,
+            trailing_atr_multiplier=trailing_atr_multiplier,
+        )
+
     if name == "fixed":
         return FixedExitModel()
 
