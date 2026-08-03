@@ -25,6 +25,8 @@ from backtesting.portfolio_metrics import (
 from collections import Counter
 from core.universe import get_vn100_symbols
 from backtesting.transaction_cost import TransactionCostConfig
+from strategy.base_strategy import BaseStrategy
+from strategy.trend_strategy_v1 import TrendStrategyV1
 from backtesting.trade_analytics import (
     calculate_trade_analytics,
 )
@@ -173,38 +175,9 @@ def _safe_float(value: Any, default: float = math.nan) -> float:
 def _get_signal_adx(signal: dict[str, Any]) -> float:
     for key in ("adx", "ADX", "ADX14", "adx14"):
         if key in signal:
-            return _safe_float(evaluation[key])
+            return _safe_float(signal[key])
 
     return math.nan
-
-
-def _evaluate_entry(
-    symbol,
-    signal_date,
-    verbose=False,
-):
-    try:
-        return evaluate_symbol(
-            symbol=symbol,
-            reference_date=signal_date,
-            end_date=signal_date,
-        )
-    except Exception:
-        traceback.print_exc()
-        raise
-   
-        if verbose:
-            print(
-                f"❌ {symbol} {signal_date.date()}: "
-                f"entry evaluation error: {exc}"
-            )
-
-        return {
-            "status": "ERROR",
-            "reason": str(exc),
-            "failed_conditions": [],
-        }
-
 
 def _simulate_exit(
     price_df: pd.DataFrame,
@@ -336,12 +309,17 @@ def generate_candidate_trades(
     db_path: str = DEFAULT_DB_PATH,
     warmup_bars: int = 60,
     verbose: bool = False,
+    entry_model: BaseStrategy | None = None,
     exit_model: BaseExitModel = DEFAULT_EXIT_MODEL,
     start_date: str | None = None,
     end_date: str | None = None,
 ) -> list[Trade]:
 
     config.validate()
+    entry_model = (
+        entry_model
+        or TrendStrategyV1()
+    )
     symbol = symbol.upper().strip()
 
     price_df = prepare_backtest_dataset(
@@ -428,6 +406,7 @@ def generate_candidate_trades(
             symbol=symbol,
             latest=latest,
             market_config=market_config,
+            entry_model=entry_model,
         )
 
         status = evaluation.get("status", "UNKNOWN")
@@ -509,6 +488,7 @@ def backtest_symbol(
     db_path: str = DEFAULT_DB_PATH,
     warmup_bars: int = 60,
     verbose: bool = False,
+    entry_model: BaseStrategy | None = None,
     exit_model: BaseExitModel = DEFAULT_EXIT_MODEL,
 ) -> list[Trade]:
     """
@@ -521,6 +501,7 @@ def backtest_symbol(
         warmup_bars=warmup_bars,
         verbose=verbose,
         exit_model=exit_model,
+        entry_model=entry_model,
     )
 
 
@@ -614,6 +595,7 @@ def run_backtest(
     position_size_pct: float = 100.0,
     warmup_bars: int = 60,
     verbose: bool = False,
+    entry_model: BaseStrategy | None = None,
     start_date: str | None = None,
     end_date: str | None = None,
     buy_commission_pct: float = 0.15,
@@ -678,6 +660,7 @@ def run_backtest(
             verbose=verbose,
             start_date=start_date,
             end_date=end_date,
+            entry_model=entry_model,
             exit_model=exit_model,
         )
 

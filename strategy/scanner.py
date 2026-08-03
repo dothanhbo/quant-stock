@@ -21,6 +21,7 @@ MIN_DATA_ROWS = int(COMMON_CONFIG["min_data_rows"])
 TOP_RESULTS = int(COMMON_CONFIG["top_results"])
 TOP_WATCHLIST = int(COMMON_CONFIG["top_watchlist"])
 RS_PERIOD = int(COMMON_CONFIG.get("rs_period", 20))
+from strategy.base_strategy import BaseStrategy
 
 strategy = TrendStrategyV1()
 
@@ -56,16 +57,12 @@ def evaluate_prepared_row(
     symbol: str,
     latest: pd.Series,
     market_config: dict,
+    entry_model: BaseStrategy | None = None,
 ) -> dict:
-    """
-    Đánh giá một dòng dữ liệu đã có sẵn indicator
-    và Relative Strength.
-
-    Hàm này không:
-    - đọc database
-    - tính lại indicator
-    - tính lại Relative Strength
-    """
+    entry_model = (
+        entry_model
+        or TrendStrategyV1()
+    )
     base = {
         "symbol": symbol,
         "status": "REJECTED",
@@ -114,7 +111,7 @@ def evaluate_prepared_row(
             "date": date_text,
         }
 
-    decision = strategy.evaluate(
+    decision = entry_model.evaluate(
         latest=latest,
         relative_strength=float(
             relative_strength
@@ -191,8 +188,12 @@ def evaluate_symbol(
     reference_date: Optional[str] = None,
     end_date=None,
     market_config: Optional[dict] = None,
+    entry_model: BaseStrategy | None = None,
 ) -> dict:
-    """Chuẩn bị dữ liệu và đánh giá một mã cổ phiếu."""
+    entry_model = (
+        entry_model
+        or TrendStrategyV1()
+    )
     market_config = market_config or get_market_regime(end_date=end_date)
 
     base = {
@@ -285,7 +286,9 @@ def evaluate_symbol(
         symbol=symbol,
         latest=prepared_latest,
         market_config=market_config,
+        entry_model=entry_model,
     )
+
 def check_signal(
     symbol,
     reference_date=None,
