@@ -191,6 +191,7 @@ def run_portfolio_benchmark(
     min_adx: float,
     atr_stop_multiplier: float,
     atr_target_multiplier: float,
+    ranking_method: str = "first_come",
     summary_output_path: str,
     equity_output_path: str,
     trades_output_path: str,
@@ -296,6 +297,7 @@ def run_portfolio_benchmark(
             entry_model=entry_model,
             exit_model=exit_model,
             verbose=False,
+            ranking_method=ranking_method,
         )
 
         final_equity = float(
@@ -657,6 +659,21 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--ranking",
+        type=str,
+        default="first_come",
+        choices=[
+            "first_come",
+            "signal_score",
+            "relative_strength",
+            "adx",
+            "volume_ratio",
+            "composite",
+        ],
+        help="Candidate ranking method.",
+    )
+
+    parser.add_argument(
         "--summary-output",
         default=(
             DEFAULT_SUMMARY_OUTPUT
@@ -710,6 +727,7 @@ def main() -> None:
         atr_target_multiplier=(
             args.atr_target_multiplier
         ),
+        ranking_method=args.ranking,
         summary_output_path=(
             args.summary_output
         ),

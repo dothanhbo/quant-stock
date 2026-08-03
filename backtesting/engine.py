@@ -74,6 +74,7 @@ class BacktestConfig:
     buy_commission_pct: float = 0.15
     sell_commission_pct: float = 0.15
     sell_tax_pct: float = 0.10
+    ranking_method: str = "first_come"
 
     def validate(self) -> None:
         if self.stop_loss_pct <= 0:
@@ -657,6 +658,7 @@ def run_backtest(
     sell_tax_pct: float = 0.10,
     buy_slippage_pct: float = 0.05,
     sell_slippage_pct: float = 0.05,
+    ranking_method: str = "first_come",
     exit_model: BaseExitModel = DEFAULT_EXIT_MODEL,
 ) -> tuple[list[Trade], dict[str, Any], pd.DataFrame]:
     config = BacktestConfig(
@@ -671,6 +673,7 @@ def run_backtest(
         sell_tax_pct=sell_tax_pct,
         buy_slippage_pct=buy_slippage_pct,
         sell_slippage_pct=sell_slippage_pct,
+        ranking_method=ranking_method,
     )
     config.validate()
 
@@ -732,6 +735,7 @@ def run_backtest(
     simulator = PortfolioSimulator(
         initial_cash=config.initial_capital,
         position_size_pct=config.position_size_pct,
+        ranking_method=config.ranking_method,
         transaction_cost_config=transaction_cost_config,
     )
 
@@ -1101,6 +1105,7 @@ def main() -> None:
         sell_commission_pct=args.sell_fee,
         sell_tax_pct=args.sell_tax,
         exit_model=exit_model,
+        ranking_method="signal_score",
     )
     print(
         f"Phí mua {metrics['buy_commission_pct']:.2f}% | "
