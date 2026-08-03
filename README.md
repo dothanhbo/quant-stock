@@ -1,44 +1,82 @@
-# Quant Stock Research Platform
+# Quant Stock Research Framework
 
-Nền tảng nghiên cứu định lượng cho thị trường chứng khoán Việt Nam.
+## Release Summary
 
-## Tính năng hiện có
+This release transforms the project from a single-strategy backtesting
+tool into a quantitative research framework capable of:
 
-- SQLite historical database
-- Incremental data update và backfill khoảng 8 năm
-- Indicator engine và market regime
-- Backtesting engine
-- Portfolio simulation
-- Transaction costs, tax và slippage
-- Fixed, ATR, Break-even và Trailing ATR exits
-- Grid Search và multiprocessing
-- Exit-model benchmark
-- Symbol winner matrix
-- Walk-forward train selection
-- Out-of-sample walk-forward testing
-- CSV research reports
+-   Historical data management with SQLite
+-   Indicator pipeline
+-   Modular Entry / Exit models
+-   Backtesting engine
+-   Exit model benchmarking
+-   Entry model benchmarking
+-   Entry × Exit strategy matrix
+-   Walk-Forward Optimization (WFO)
+-   Strategy diagnostics
+-   Strategy ablation studies (In-Sample & Out-of-Sample)
 
-## Research workflow
+## Current Architecture
 
-```text
-Data
-→ Indicators
-→ Entry Strategy
-→ Exit Model
-→ Backtest
-→ Benchmark
-→ Grid Search
-→ Walk-Forward Optimization
-→ Out-of-Sample Validation
-```
+    Historical Data
+          │
+    SQLite Database
+          │
+    Indicator Engine
+          │
+    Entry Models
+          │
+    Exit Models
+          │
+    Backtesting Engine
+          │
+    Benchmark Engine
+          │
+    Walk Forward Research
+          │
+    Research Reports
 
-## Kết quả WFO gần nhất
+## Major Findings
 
-- Positive windows: 0/3
-- Average Return: -3.58%
-- Median Return: -4.46%
-- Average Sharpe: -2.18
-- Average Profit Factor: 0.85
-- Average Drawdown: -13.79%
+### Exit Models
 
-Kết luận hiện tại: ưu tiên Entry Framework và Entry Research.
+-   ATR Exit consistently outperformed Fixed Exit in several scenarios.
+-   Trailing ATR improved trend capture but was less stable across
+    windows.
+
+### Entry Models
+
+-   Trend V1 remains a competitive baseline.
+-   Donchian Breakout is simpler but more robust.
+
+### Ablation Study
+
+In-sample: - `trend_v1__no_volume_no_rs` produced the highest average
+return.
+
+Out-of-sample: - `donchian_breakout_v1` won every WFO window.
+
+Conclusion:
+
+> Better in-sample performance does not imply better generalization.
+
+## Current Status
+
+Completed
+
+-   Data pipeline
+-   Research framework
+-   Backtesting engine
+-   Entry benchmark
+-   Exit benchmark
+-   Strategy matrix
+-   Walk-forward optimization
+-   OOS diagnostics
+-   Ablation framework
+
+Next Research
+
+-   Donchian feature engineering
+-   Monte Carlo simulation
+-   Parameter stability analysis
+-   Portfolio construction

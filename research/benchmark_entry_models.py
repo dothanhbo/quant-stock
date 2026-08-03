@@ -48,14 +48,68 @@ DEFAULT_WINNER_COUNT_OUTPUT = (
 
 def build_entry_model_registry(
 ) -> dict[str, BaseStrategy]:
-    return {
-        "trend_v1": (
-            TrendStrategyV1()
+    models: list[BaseStrategy] = [
+        TrendStrategyV1(),
+
+        TrendStrategyV1(
+            use_adx=False,
         ),
-        "donchian_breakout_v1": (
-            DonchianBreakoutEntryModel()
+
+        TrendStrategyV1(
+            use_volume=False,
         ),
-    }
+
+        TrendStrategyV1(
+            use_relative_strength=False,
+        ),
+
+        TrendStrategyV1(
+            use_trend_filter=False,
+        ),
+
+        TrendStrategyV1(
+            use_adx=False,
+            use_relative_strength=False,
+        ),
+
+        TrendStrategyV1(
+            use_volume=False,
+            use_relative_strength=False,
+        ),
+
+        TrendStrategyV1(
+            use_trend_filter=False,
+            use_adx=False,
+            use_volume=False,
+            use_relative_strength=False,
+        ),
+
+        DonchianBreakoutEntryModel(),
+    ]
+
+    registry: dict[
+        str,
+        BaseStrategy,
+    ] = {}
+
+    for model in models:
+        model_name = getattr(
+            model,
+            "name",
+            model.__class__.__name__,
+        )
+
+        if model_name in registry:
+            raise ValueError(
+                "Entry model bị trùng tên: "
+                f"{model_name}"
+            )
+
+        registry[
+            str(model_name)
+        ] = model
+
+    return registry
 
 
 def benchmark_entry_models(

@@ -1,34 +1,40 @@
-# Changelog
+# CHANGELOG
 
-## v0.9.0 — Walk-Forward Optimization
+## Current Release
 
 ### Added
 
-- Trailing ATR Exit Model
-- Exit-model factory support
-- ATR multiplier CLI arguments
-- Trailing ATR parameter grid
-- Cross-symbol exit validation
-- Exit-model benchmark framework
-- Symbol winner matrix
-- Walk-forward window generator
-- Train parameter selection
-- Selected-parameter out-of-sample testing
-- Walk-forward summary CSV
-- Database coverage checker
-- Eight-year historical backfill support
+-   Configurable TrendStrategyV1
+-   Entry model registry
+-   Exit model registry
+-   ATR / Break-even / Trailing ATR exits
+-   Entry benchmark
+-   Exit benchmark
+-   Entry × Exit benchmark
+-   Walk Forward Optimizer
+-   Strategy diagnostics
+-   Ablation benchmark
+-   Out-of-Sample diagnostics
+
+### Refactored
+
+-   Entry model architecture
+-   Benchmark framework
+-   Walk-forward workflow
+-   Research reporting
+-   Strategy naming system
 
 ### Fixed
 
-- Fixed intraday look-ahead bug in trailing-stop simulation
-- Applied updated trailing levels from the next session
-- Fixed missing ATRExitModel import
-- Fixed CLI support for trailing_atr
-- Fixed incomplete historical-data coverage
-- Fixed syntax and indentation issues in research scripts
+-   Entry model injection
+-   Scanner compatibility
+-   ATR exit integration
+-   Backtest consistency
+-   Metric consistency
+-   CSV export improvements
 
-### Research findings
+### Research Findings
 
-- No exit model dominated all symbols.
-- In-sample Trailing ATR results did not hold out of sample.
-- Current priority is entry-strategy research.
+-   Donchian Breakout generalized better than Trend V1.
+-   Removing filters improved IS performance but reduced OOS robustness.
+-   Walk Forward successfully detected overfitting.

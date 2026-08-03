@@ -9,18 +9,6 @@ from strategy.base_strategy import BaseStrategy
 class DonchianBreakoutEntryModel(
     BaseStrategy
 ):
-    """
-    Entry model dựa trên breakout đỉnh 20 phiên.
-
-    Model ưu tiên:
-    - Breakout 20 phiên.
-    - Volume xác nhận.
-    - ADX đủ mạnh.
-    - Relative Strength dương.
-    - Giá không quá xa EMA20.
-    - Không tăng quá nóng trong 3 phiên.
-    """
-
     def __init__(
         self,
         *,
@@ -73,6 +61,14 @@ class DonchianBreakoutEntryModel(
 
         self.require_volume_breakout = bool(
             require_volume_breakout
+        )
+
+    @property
+    def name(
+        self,
+    ) -> str:
+        return (
+            "donchian_breakout_v1"
         )
 
     def evaluate(

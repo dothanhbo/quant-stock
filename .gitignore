@@ -1,44 +1,118 @@
-venv/
-.venv/
-.env
-.env.*
+# ============================================
+# Python
+# ============================================
+
 __pycache__/
 *.py[cod]
+*.pyo
+*.pyd
+
+.venv/
+venv/
+env/
+
+.pytest_cache/
+.mypy_cache/
+
+# ============================================
+# IDE
+# ============================================
+
 .vscode/
 .idea/
-*.log
+
+# ============================================
+# OS
+# ============================================
+
 .DS_Store
 Thumbs.db
 
-# Python
-__pycache__/
-*.py[cod]
-.venv/
-venv/
+# ============================================
+# Local Database
+# ============================================
 
-# IDE
-.vs/
-.vscode/
+*.db
+*.sqlite
+*.sqlite3
 
-# Runtime output
-logs/
-backtest_results*/
-*.pkl
+# Nếu muốn giữ market.db thì comment dòng trên
+# !market.db
 
-# Local databases
-market.db
-market-backup.db
-*.db-journal
-*.db-wal
-*.db-shm
+# ============================================
+# Logs
+# ============================================
 
-# Generated files
-signal_cache.pkl
-__pycache__/
-logs/
-.env
-__pycache__/
-.pytest_cache/
-*.pyc
+*.log
+
+# ============================================
+# Generated Research Results
+# ============================================
+
 research_results/
-*.prof
+reports/
+output/
+outputs/
+results/
+
+# ============================================
+# Excel
+# ============================================
+
+*.xlsx
+*.xls
+*.xlsm
+*.csv
+
+# Nếu muốn giữ sample CSV:
+# !sample.csv
+
+# ============================================
+# Figures
+# ============================================
+
+figures/
+plots/
+charts/
+images/generated/
+
+# ============================================
+# Temporary
+# ============================================
+
+tmp/
+temp/
+cache/
+
+# ============================================
+# Jupyter
+# ============================================
+
+.ipynb_checkpoints/
+
+# ============================================
+# Environment
+# ============================================
+
+.env
+.env.*
+# Archives
+*.zip
+*.rar
+*.7z
+
+# PDFs generated from reports
+*.pdf
+
+# PowerPoint
+*.pptx
+
+# Word
+*.docx
+
+# Backup files
+*.bak
+
+# Local test scripts
+scratch.py
+playground.py

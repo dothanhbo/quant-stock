@@ -1,53 +1,45 @@
-# Quant Stock Roadmap
+# ROADMAP
 
-## Phase 1 — Data Foundation ✅
-- Historical OHLCV database
-- Incremental updater
-- Eight-year backfill
-- Coverage checker
-- Indicators
-- Market regime
+## Phase 1 ✅
 
-## Phase 2 — Backtesting Engine ✅
-- Entry evaluation
-- Exit simulation
-- Portfolio simulator
-- Transaction fees, tax and slippage
-- Equity curve, drawdown and benchmark metrics
+-   Data collection
+-   SQLite database
+-   Indicator engine
 
-## Phase 3 — Exit Research ✅
-- Fixed Exit
-- ATR Exit
-- Break-even Exit
-- Trailing ATR Exit
-- Grid Search
-- Benchmark
-- Winner Matrix
-- Walk-Forward Optimization
+## Phase 2 ✅
 
-## Phase 4 — Entry Research 🔄
-- BaseEntryModel
-- EMA Pullback
-- EMA Breakout
-- Donchian Breakout
-- Momentum Entry
-- Volume Breakout
-- RSI Reversal
-- Mean Reversion
-- Entry benchmark
-- Entry Walk-Forward Optimization
+-   Backtesting engine
+-   Exit models
+-   Entry models
 
-## Phase 5 — Advanced Research
-- Entry × Exit benchmark
-- Monte Carlo simulation
-- Sensitivity analysis
-- Robustness testing
-- Portfolio optimization
-- Automated reports
+## Phase 3 ✅
 
-## Phase 6 — Production
-- Daily update
-- Daily signals
-- Dashboard
-- Notifications
-- Paper trading
+-   Benchmarks
+-   Walk Forward Optimization
+-   Strategy diagnostics
+-   Ablation studies
+
+## Phase 4 (Next)
+
+### Strategy Research
+
+-   Donchian + ADX
+-   Donchian + Volume
+-   Donchian + Relative Strength
+-   Donchian + Market Regime
+
+### Robustness
+
+-   Monte Carlo
+-   Bootstrap
+-   Parameter Stability
+-   Sensitivity Analysis
+
+### Portfolio
+
+-   Position sizing
+-   Risk parity
+-   Portfolio backtesting
+
+Goal: Build a research-grade quantitative trading framework rather than
+a single optimized strategy.
