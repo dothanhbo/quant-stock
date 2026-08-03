@@ -328,7 +328,7 @@ Before using Quant Stock, ensure that your environment meets the following requi
 ## Clone Repository
 
 ```bash
-git clone https://github.com/<your-username>/quant-stock.git
+git clone https://github.com/dothanhbo/quant-stock.git
 
 cd quant-stock
 ```
@@ -1512,7 +1512,7 @@ MBA Student | Quantitative Research Enthusiast | Vietnamese Stock Market
 
 GitHub
 
-https://github.com/<your-username>
+https://github.com/dothanhbo
 
 ---
 
