@@ -18,18 +18,29 @@ from backtesting.trade import Trade
 from backtesting.transaction_cost import (
     TransactionCostConfig,
 )
-
+from backtesting.decision_engine import (
+    CandidateDecision,
+    DecisionAction,
+    decide_candidate,
+)
 
 @dataclass(slots=True)
 class RejectedTrade:
     trade: Trade
     reason: str
 
+@dataclass(slots=True)
+class ReplacementOpportunity:
+    decision: CandidateDecision
+    event_date: datetime
 
 @dataclass(slots=True)
 class PortfolioSimulationResult:
     executed_trades: list[Trade]
     rejected_trades: list[RejectedTrade]
+    replacement_opportunities: list[
+        ReplacementOpportunity
+    ]
     equity_curve: pd.DataFrame
     final_cash: float
     final_market_value: float
@@ -214,42 +225,58 @@ class PortfolioSimulator:
         self,
         *,
         candidate: Trade,
+        event_date: datetime,
         active_trades: dict[int, Trade],
         rejected_trades: list[RejectedTrade],
+        replacement_opportunities: list[
+            ReplacementOpportunity
+        ],
     ) -> None:
-        if (
-            len(
+
+        decision = decide_candidate(
+            candidate=candidate,
+            open_positions=(
                 self.portfolio.open_positions
-            )
-            >= self.max_positions
+            ),
+            max_positions=self.max_positions,
+            ranking_method=self.ranking_method,
+            replacement_threshold=0.0,
+            allow_duplicate_symbols=False,
+        )
+
+        if (
+            decision.action
+            == DecisionAction.WOULD_REPLACE
         ):
+            replacement_opportunities.append(
+                ReplacementOpportunity(
+                    decision=decision,
+                    event_date=event_date,
+                )
+            )
+
             self._reject_trade(
-                rejected_trades=(
-                    rejected_trades
-                ),
+                rejected_trades=rejected_trades,
                 candidate=candidate,
-                reason="max_positions",
+                reason="would_replace",
             )
 
             return
 
-        if self.portfolio.has_open_position(
-            candidate.symbol
+        if (
+            decision.action
+            == DecisionAction.REJECT
         ):
             self._reject_trade(
-                rejected_trades=(
-                    rejected_trades
-                ),
+                rejected_trades=rejected_trades,
                 candidate=candidate,
-                reason="duplicate_symbol",
+                reason=decision.reason,
             )
 
             return
 
-        quantity = (
-            self._calculate_quantity(
-                candidate.entry_price
-            )
+        quantity = self._calculate_quantity(
+            candidate.entry_price
         )
 
         if quantity <= 0:
@@ -350,6 +377,10 @@ class PortfolioSimulator:
 
         rejected_trades: list[
             RejectedTrade
+        ] = []
+
+        replacement_opportunities: list[
+            ReplacementOpportunity
         ] = []
 
         equity_rows: list[
@@ -509,11 +540,15 @@ class PortfolioSimulator:
             ):
                 self._open_candidate(
                     candidate=candidate,
+                    event_date=event_date,
                     active_trades=(
                         active_trades
                     ),
                     rejected_trades=(
                         rejected_trades
+                    ),
+                    replacement_opportunities=(
+                        replacement_opportunities
                     ),
                 )
 
@@ -587,6 +622,9 @@ class PortfolioSimulator:
             ),
             rejected_trades=(
                 rejected_trades
+            ),
+            replacement_opportunities=(
+                replacement_opportunities
             ),
             equity_curve=equity_curve,
             final_cash=(
