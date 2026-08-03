@@ -3,9 +3,6 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-TELEGRAM_TOKEN = os.getenv("8860199022:AAHNtR2Xd5eekkzRvG_ILrslvrc4pKNwd2I")
-CHAT_ID = os.getenv("5137019839")
-
 SCAN_TIME = "15:05"
 
 DATABASE = "data/market.db"
