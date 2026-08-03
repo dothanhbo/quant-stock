@@ -27,6 +27,14 @@ class Trade:
     entry_price: float
     quantity: int
 
+    # ---------- Signal metadata ----------
+    signal_score: float | None = None
+    relative_strength: float | None = None
+    adx: float | None = None
+    volume_ratio: float | None = None
+    market_regime: str | None = None
+    entry_model: str | None = None
+
     exit_date: datetime | None = None
     exit_price: float | None = None
     exit_reason: ExitReason | None = None
@@ -135,6 +143,12 @@ class Trade:
             "entry_date": self.entry_date,
             "entry_price": self.entry_price,
             "quantity": self.quantity,
+            "signal_score": self.signal_score,
+            "relative_strength": self.relative_strength,
+            "adx": self.adx,
+            "volume_ratio": self.volume_ratio,
+            "market_regime": self.market_regime,
+            "entry_model": self.entry_model,
             "exit_date": self.exit_date,
             "exit_price": self.exit_price,
             "exit_reason": (

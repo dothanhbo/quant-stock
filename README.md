@@ -1,82 +1,51 @@
-# Quant Stock Research Framework
+# Quant Stock
 
-## Release Summary
+A quantitative investing framework for the Vietnamese stock market.
 
-This release transforms the project from a single-strategy backtesting
-tool into a quantitative research framework capable of:
+## Highlights
 
--   Historical data management with SQLite
--   Indicator pipeline
--   Modular Entry / Exit models
--   Backtesting engine
--   Exit model benchmarking
--   Entry model benchmarking
--   Entry × Exit strategy matrix
--   Walk-Forward Optimization (WFO)
--   Strategy diagnostics
--   Strategy ablation studies (In-Sample & Out-of-Sample)
+- Indicator Engine
+- Trend / Donchian / Hybrid Entry Models
+- ATR Exit Models
+- Market Regime Detection
+- Walk-Forward Validation
+- Portfolio Backtesting
+- Parameter Stability
+- Monte Carlo Simulation
+- Trade Quality Diagnostics
 
-## Current Architecture
+## Architecture
 
-    Historical Data
-          │
-    SQLite Database
-          │
-    Indicator Engine
-          │
-    Entry Models
-          │
-    Exit Models
-          │
-    Backtesting Engine
-          │
-    Benchmark Engine
-          │
-    Walk Forward Research
-          │
-    Research Reports
+Market Data
+→ Indicator Engine
+→ Entry Models
+→ Exit Models
+→ Portfolio Engine
+→ Research & Diagnostics
 
-## Major Findings
+## Research Status
 
-### Exit Models
+✅ Sprint 1 Completed
+- Backtesting framework
+- Portfolio engine
+- Walk-forward analysis
+- Monte Carlo
+- Parameter stability
+- Market regime analysis
+- Signal quality diagnostics
 
--   ATR Exit consistently outperformed Fixed Exit in several scenarios.
--   Trailing ATR improved trend capture but was less stable across
-    windows.
+🟡 Sprint 2
+- Signal quality model
+- Feature engineering
+- ML ranking
 
-### Entry Models
+## Repository Structure
 
--   Trend V1 remains a competitive baseline.
--   Donchian Breakout is simpler but more robust.
-
-### Ablation Study
-
-In-sample: - `trend_v1__no_volume_no_rs` produced the highest average
-return.
-
-Out-of-sample: - `donchian_breakout_v1` won every WFO window.
-
-Conclusion:
-
-> Better in-sample performance does not imply better generalization.
-
-## Current Status
-
-Completed
-
--   Data pipeline
--   Research framework
--   Backtesting engine
--   Entry benchmark
--   Exit benchmark
--   Strategy matrix
--   Walk-forward optimization
--   OOS diagnostics
--   Ablation framework
-
-Next Research
-
--   Donchian feature engineering
--   Monte Carlo simulation
--   Parameter stability analysis
--   Portfolio construction
+```text
+config/
+strategy/
+backtesting/
+research/
+research_results/
+docs/
+```

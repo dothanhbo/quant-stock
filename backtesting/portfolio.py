@@ -58,6 +58,12 @@ class Portfolio:
         entry_date: datetime,
         entry_price: float,
         quantity: int,
+        signal_score: float | None = None,
+        relative_strength: float | None = None,
+        adx: float | None = None,
+        volume_ratio: float | None = None,
+        market_regime: str | None = None,
+        entry_model: str | None = None,
     ) -> Trade:
         if not symbol or not symbol.strip():
             raise ValueError("symbol must not be empty")
@@ -100,9 +106,19 @@ class Portfolio:
         trade = Trade(
             symbol=symbol,
             entry_date=entry_date,
-            entry_price=float(effective_entry_price),
+            entry_price=float(
+                effective_entry_price
+            ),
             quantity=quantity,
-            buy_commission=buy_cost.commission,
+            signal_score=signal_score,
+            relative_strength=relative_strength,
+            adx=adx,
+            volume_ratio=volume_ratio,
+            market_regime=market_regime,
+            entry_model=entry_model,
+            buy_commission=(
+                buy_cost.commission
+            ),
         )
 
         self.cash -= position_cost

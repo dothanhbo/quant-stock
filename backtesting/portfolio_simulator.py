@@ -205,6 +205,12 @@ class PortfolioSimulator:
                         entry_date=candidate.entry_date,
                         entry_price=candidate.entry_price,
                         quantity=quantity,
+                        signal_score=candidate.signal_score,
+                        relative_strength=candidate.relative_strength,
+                        adx=candidate.adx,
+                        volume_ratio=candidate.volume_ratio,
+                        market_regime=candidate.market_regime,
+                        entry_model=candidate.entry_model,
                     )
                 except InsufficientCashError:
                     rejected_trades.append(

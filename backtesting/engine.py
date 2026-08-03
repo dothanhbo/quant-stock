@@ -163,13 +163,27 @@ def load_price_data(
     return df
 
 
-def _safe_float(value: Any, default: float = math.nan) -> float:
+def _safe_float(
+    value: Any,
+    default: float | None = math.nan,
+) -> float | None:
     try:
-        result = float(value)
-    except (TypeError, ValueError):
+        result = float(
+            value
+        )
+    except (
+        TypeError,
+        ValueError,
+    ):
         return default
 
-    return result if math.isfinite(result) else default
+    return (
+        result
+        if math.isfinite(
+            result
+        )
+        else default
+    )
 
 
 def _get_signal_adx(signal: dict[str, Any]) -> float:
@@ -454,6 +468,46 @@ def generate_candidate_trades(
             entry_date=exit_info.entry_date,
             entry_price=exit_info.entry_price,
             quantity=1,
+            signal_score=_safe_float(
+                evaluation.get(
+                    "score"
+                ),
+                default=None,
+            ),
+            relative_strength=_safe_float(
+                evaluation.get(
+                    "relative_strength_20d"
+                ),
+                default=None,
+            ),
+            adx=_safe_float(
+                evaluation.get(
+                    "adx"
+                ),
+                default=None,
+            ),
+            volume_ratio=_safe_float(
+                evaluation.get(
+                    "volume_ratio"
+                ),
+                default=None,
+            ),
+            market_regime=str(
+                evaluation.get(
+                    "regime",
+                    market_config.get(
+                        "regime",
+                        "UNKNOWN",
+                    ),
+                )
+            ),
+            entry_model=str(
+                getattr(
+                    entry_model,
+                    "name",
+                    entry_model.__class__.__name__,
+                )
+            ),
         )
 
         trade.close(

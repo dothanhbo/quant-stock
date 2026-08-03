@@ -1,45 +1,22 @@
-# ROADMAP
+# Roadmap
 
-## Phase 1 ✅
+## Sprint 1 ✅
+- Backtesting
+- Research
+- Portfolio
+- Diagnostics
 
--   Data collection
--   SQLite database
--   Indicator engine
+## Sprint 2 🟡
+- ML Signal Quality
+- Feature Importance
+- Ranking Model
 
-## Phase 2 ✅
+## Sprint 3 ⏳
+- Position Sizing
+- Risk Parity
+- Portfolio Optimization
 
--   Backtesting engine
--   Exit models
--   Entry models
-
-## Phase 3 ✅
-
--   Benchmarks
--   Walk Forward Optimization
--   Strategy diagnostics
--   Ablation studies
-
-## Phase 4 (Next)
-
-### Strategy Research
-
--   Donchian + ADX
--   Donchian + Volume
--   Donchian + Relative Strength
--   Donchian + Market Regime
-
-### Robustness
-
--   Monte Carlo
--   Bootstrap
--   Parameter Stability
--   Sensitivity Analysis
-
-### Portfolio
-
--   Position sizing
--   Risk parity
--   Portfolio backtesting
-
-Goal: Build a research-grade quantitative trading framework rather than
-a single optimized strategy.
+## Sprint 4 ⏳
+- Live Trading
+- Dashboard
+- Auto Execution
