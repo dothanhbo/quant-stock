@@ -6,16 +6,14 @@ from typing import Any
 
 import pandas as pd
 
+from backtesting.allocation_diagnostics import (
+    analyze_allocation_diagnostics,
+)
 from backtesting.engine import (
     build_exit_model,
     run_backtest,
 )
 from backtesting.portfolio_allocation import (
-    EqualWeightAllocator,
-    InverseATRAllocator,
-    PortfolioAllocator,
-    StopRiskAllocator,
-    VolatilityScalingAllocator,
     RiskBudgetAllocator,
 )
 from backtesting.position_sizers import (
@@ -34,15 +32,15 @@ from research.universes import (
 
 DEFAULT_OUTPUT_DIR = Path(
     "research_results/"
-    "portfolio_allocation"
+    "portfolio_allocation/"
+    "risk_budget_sensitivity"
 )
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Benchmark portfolio allocation "
-            "methods on the same strategy."
+            "Benchmark multiple risk-budget levels."
         )
     )
 
@@ -107,6 +105,27 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
+        "--risk-levels",
+        default="0.8,1.0,1.2,1.4",
+        help=(
+            "Danh sách risk budget mỗi vị thế, "
+            "phân cách bằng dấu phẩy."
+        ),
+    )
+
+    parser.add_argument(
+        "--maximum-position",
+        type=float,
+        default=35.0,
+    )
+
+    parser.add_argument(
+        "--minimum-position",
+        type=float,
+        default=2.0,
+    )
+
+    parser.add_argument(
         "--output",
         default=str(
             DEFAULT_OUTPUT_DIR
@@ -114,6 +133,38 @@ def parse_args() -> argparse.Namespace:
     )
 
     return parser.parse_args()
+
+
+def parse_risk_levels(
+    raw_value: str,
+) -> list[float]:
+    levels: list[float] = []
+
+    for item in raw_value.split(","):
+        stripped = item.strip()
+
+        if not stripped:
+            continue
+
+        value = float(
+            stripped
+        )
+
+        if value <= 0:
+            raise ValueError(
+                "Mọi risk level phải lớn hơn 0."
+            )
+
+        levels.append(
+            value
+        )
+
+    if not levels:
+        raise ValueError(
+            "Không có risk level hợp lệ."
+        )
+
+    return levels
 
 
 def _safe_float(
@@ -131,42 +182,9 @@ def _safe_float(
     return result
 
 
-def build_allocator_registry(
-) -> dict[str, PortfolioAllocator | None]:
-    return {
-        "fixed_fraction_baseline": None,
-        "equal_weight": (
-            EqualWeightAllocator()
-        ),
-        "inverse_atr": (
-            InverseATRAllocator()
-        ),
-        "volatility_scaling": (
-            VolatilityScalingAllocator(
-                target_volatility_pct=3.0,
-                scaling_power=1.5,
-                maximum_position_pct=40.0,
-            )
-        ),
-        "stop_risk": (
-            StopRiskAllocator(
-                maximum_position_pct=35.0,
-            )
-        ),
-        "risk_budget": (
-            RiskBudgetAllocator(
-                target_risk_per_position_pct=0.80,
-                maximum_position_pct=35.0,
-                minimum_position_pct=2.0,
-            )
-        ),
-    }
-
-
-def run_single_benchmark(
+def run_single_level(
     *,
-    name: str,
-    allocator: PortfolioAllocator | None,
+    risk_level: float,
     symbols: list[str],
     args: argparse.Namespace,
     entry_model: Any,
@@ -183,14 +201,22 @@ def run_single_benchmark(
         trailing_atr_multiplier=2.0,
     )
 
+    allocator = RiskBudgetAllocator(
+        target_risk_per_position_pct=(
+            risk_level
+        ),
+        maximum_position_pct=(
+            args.maximum_position
+        ),
+        minimum_position_pct=(
+            args.minimum_position
+        ),
+    )
+
     position_sizer = FixedFractionSizer(
         position_size_pct=(
             args.position_size
         )
-    )
-
-    regime_policy = (
-        RegimePortfolioPolicy()
     )
 
     trades, metrics, equity = run_backtest(
@@ -212,13 +238,27 @@ def run_single_benchmark(
             position_sizer
         ),
         regime_policy=(
-            regime_policy
+            RegimePortfolioPolicy()
         ),
         portfolio_allocator=(
             allocator
         ),
         verbose=False,
     )
+
+    diagnostics = (
+        analyze_allocation_diagnostics(
+            allocator_name=(
+                f"risk_budget_{risk_level:.2f}"
+            ),
+            trades=trades,
+            metrics=metrics,
+            equity_curve=equity,
+            initial_capital=args.capital,
+        )
+    )
+
+    summary = diagnostics.summary
 
     rejected_reasons = (
         metrics.get(
@@ -228,23 +268,9 @@ def run_single_benchmark(
         or {}
     )
 
-    allocator_name = (
-        "position_sizer"
-        if allocator is None
-        else allocator.name
-    )
-
     row = {
-        "model": name,
-        "allocator": allocator_name,
-        "symbols": len(symbols),
-        "start_date": args.start,
-        "end_date": args.end,
-        "initial_capital": (
-            args.capital
-        ),
-        "position_size_pct": (
-            args.position_size
+        "risk_budget_pct": (
+            risk_level
         ),
         "total_trades": len(
             trades
@@ -252,6 +278,16 @@ def run_single_benchmark(
         "rejected_trades": int(
             sum(
                 rejected_reasons.values()
+            )
+        ),
+        "rejected_heat": int(
+            rejected_reasons.get(
+                "portfolio_heat_limit",
+                0,
+            )
+            + rejected_reasons.get(
+                "portfolio_heat_exceeded",
+                0,
             )
         ),
         "final_equity": _safe_float(
@@ -272,14 +308,18 @@ def run_single_benchmark(
                 "cagr_pct"
             )
         ),
-        "sharpe_ratio": _safe_float(
-            metrics.get(
-                "sharpe_ratio"
+        "sharpe_ratio": (
+            _safe_float(
+                metrics.get(
+                    "sharpe_ratio"
+                )
             )
         ),
-        "sortino_ratio": _safe_float(
-            metrics.get(
-                "sortino_ratio"
+        "sortino_ratio": (
+            _safe_float(
+                metrics.get(
+                    "sortino_ratio"
+                )
             )
         ),
         "max_drawdown_pct": (
@@ -310,97 +350,111 @@ def run_single_benchmark(
                 )
             )
         ),
-        "total_transaction_cost": (
-            _safe_float(
-                metrics.get(
-                    "total_transaction_cost"
-                )
-            )
+        "average_trade_notional": (
+            summary[
+                "average_trade_notional"
+            ]
+        ),
+        "average_trade_notional_pct_initial": (
+            summary[
+                "average_trade_notional_pct_initial"
+            ]
+        ),
+        "average_risk_pct": (
+            summary[
+                "average_risk_pct"
+            ]
+        ),
+        "median_risk_pct": (
+            summary[
+                "median_risk_pct"
+            ]
+        ),
+        "average_exposure_pct": (
+            summary[
+                "average_exposure_pct"
+            ]
+        ),
+        "maximum_exposure_pct": (
+            summary[
+                "maximum_exposure_pct"
+            ]
+        ),
+        "average_cash_pct": (
+            summary[
+                "average_cash_pct"
+            ]
+        ),
+        "minimum_cash_pct": (
+            summary[
+                "minimum_cash_pct"
+            ]
+        ),
+        "average_open_positions": (
+            summary[
+                "average_open_positions"
+            ]
+        ),
+        "maximum_open_positions": (
+            summary[
+                "maximum_open_positions"
+            ]
         ),
         "average_portfolio_heat_pct": (
-            _safe_float(
-                equity.get(
-                    "portfolio_heat_pct",
-                    pd.Series(
-                        dtype=float
-                    ),
-                ).mean()
-                if not equity.empty
-                else 0.0
-            )
+            summary[
+                "average_portfolio_heat_pct"
+            ]
         ),
         "maximum_portfolio_heat_pct": (
-            _safe_float(
-                equity.get(
-                    "portfolio_heat_pct",
-                    pd.Series(
-                        dtype=float
-                    ),
-                ).max()
-                if not equity.empty
-                else 0.0
-            )
+            summary[
+                "maximum_portfolio_heat_pct"
+            ]
         ),
-        "rejected_regime": int(
-            rejected_reasons.get(
-                "regime_entries_disabled",
-                0,
-            )
-        ),
-        "rejected_heat": int(
-            rejected_reasons.get(
-                "portfolio_heat_exceeded",
-                0,
-            )
-           + rejected_reasons.get(
-                "portfolio_heat_exceeded",
-                0,
-            )
-        ),
-        "rejected_cash": int(
-            rejected_reasons.get(
-                "insufficient_cash",
-                0,
-            )
-        ),
-        "rejected_duplicate": int(
-            rejected_reasons.get(
-                "duplicate_symbol",
-                0,
-            )
+        "total_transaction_cost": (
+            summary[
+                "total_transaction_cost"
+            ]
         ),
     }
 
     print()
     print("-" * 100)
-    print(f"ALLOCATOR={name}")
-    print("-" * 100)
     print(
-        f"Trades   : "
+        f"RISK BUDGET = "
+        f"{risk_level:.2f}%"
+    )
+    print("-" * 100)
+
+    print(
+        f"Trades       : "
         f"{row['total_trades']}"
     )
     print(
-        f"Return   : "
+        f"Return       : "
         f"{row['total_return_pct']:+.2f}%"
     )
     print(
-        f"Sharpe   : "
+        f"Sharpe       : "
         f"{row['sharpe_ratio']:.2f}"
     )
     print(
-        f"Drawdown : "
+        f"Drawdown     : "
         f"{row['max_drawdown_pct']:.2f}%"
     )
     print(
-        f"Heat Avg : "
+        f"Avg Exposure : "
+        f"{row['average_exposure_pct']:.2f}%"
+    )
+    print(
+        f"Avg Risk     : "
+        f"{row['average_risk_pct']:.2f}%"
+    )
+    print(
+        f"Avg Heat     : "
         f"{row['average_portfolio_heat_pct']:.2f}%"
     )
     print(
-        f"Heat Max : "
-        f"{row['maximum_portfolio_heat_pct']:.2f}%"
-    )
-    print(
-        f"Rejected : "
+        f"Rejected     : "
         f"{rejected_reasons}"
     )
 
@@ -408,11 +462,26 @@ def run_single_benchmark(
 
 
 def build_ranking(
-    summary: pd.DataFrame,
+    results: pd.DataFrame,
 ) -> pd.DataFrame:
-    ranked = summary.copy()
+    ranked = results.copy()
 
-    ranked["rank"] = (
+    ranked[
+        "return_to_drawdown"
+    ] = (
+        ranked[
+            "total_return_pct"
+        ]
+        / ranked[
+            "max_drawdown_pct"
+        ]
+        .abs()
+        .replace(0, pd.NA)
+    ).fillna(0.0)
+
+    ranked[
+        "rank"
+    ] = (
         ranked[
             "sharpe_ratio"
         ]
@@ -423,49 +492,60 @@ def build_ranking(
         .astype(int)
     )
 
-    ranked = ranked.sort_values(
-        by=[
-            "rank",
-            "sharpe_ratio",
-            "total_return_pct",
-            "max_drawdown_pct",
-        ],
-        ascending=[
-            True,
-            False,
-            False,
-            False,
-        ],
-    )
-
     columns = [
         "rank",
-        "model",
-        "allocator",
+        "risk_budget_pct",
         "total_trades",
         "total_return_pct",
         "cagr_pct",
         "sharpe_ratio",
         "sortino_ratio",
         "max_drawdown_pct",
+        "return_to_drawdown",
         "profit_factor",
         "win_rate_pct",
         "expectancy_pct",
+        "average_trade_notional_pct_initial",
+        "average_risk_pct",
+        "average_exposure_pct",
+        "average_cash_pct",
         "average_portfolio_heat_pct",
         "maximum_portfolio_heat_pct",
-        "total_transaction_cost",
         "rejected_trades",
+        "rejected_heat",
+        "total_transaction_cost",
     ]
 
-    return ranked[
-        columns
-    ].reset_index(
-        drop=True
+    return (
+        ranked[
+            columns
+        ]
+        .sort_values(
+            by=[
+                "rank",
+                "sharpe_ratio",
+                "return_to_drawdown",
+                "total_return_pct",
+            ],
+            ascending=[
+                True,
+                False,
+                False,
+                False,
+            ],
+        )
+        .reset_index(
+            drop=True
+        )
     )
 
 
 def main() -> None:
     args = parse_args()
+
+    risk_levels = parse_risk_levels(
+        args.risk_levels
+    )
 
     symbols = (
         list(TOP10_SYMBOLS)
@@ -491,23 +571,22 @@ def main() -> None:
         args.entry_model
     ]
 
-    allocators = (
-        build_allocator_registry()
-    )
-
     print("=" * 100)
     print(
-        "PORTFOLIO ALLOCATION BENCHMARK"
+        "RISK BUDGET SENSITIVITY BENCHMARK"
     )
     print("=" * 100)
-    print(f"Symbols : {len(symbols)}")
+    print(f"Symbols     : {len(symbols)}")
     print(
-        f"Period  : "
+        f"Period      : "
         f"{args.start} -> {args.end}"
     )
     print(
-        f"Models  : "
-        f"{len(allocators)}"
+        f"Risk Levels : "
+        + ", ".join(
+            f"{level:.2f}%"
+            for level in risk_levels
+        )
     )
     print("=" * 100)
 
@@ -515,12 +594,9 @@ def main() -> None:
         dict[str, Any]
     ] = []
 
-    for name, allocator in (
-        allocators.items()
-    ):
-        row = run_single_benchmark(
-            name=name,
-            allocator=allocator,
+    for risk_level in risk_levels:
+        row = run_single_level(
+            risk_level=risk_level,
             symbols=symbols,
             args=args,
             entry_model=entry_model,
@@ -570,11 +646,11 @@ def main() -> None:
     )
 
     print()
-    print("=" * 140)
+    print("=" * 160)
     print(
-        "PORTFOLIO ALLOCATION RANKING"
+        "RISK BUDGET SENSITIVITY RANKING"
     )
-    print("=" * 140)
+    print("=" * 160)
 
     print(
         ranking.to_string(

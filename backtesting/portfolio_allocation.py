@@ -490,6 +490,142 @@ class InverseATRAllocator:
             ),
         )
 
+@dataclass(slots=True, frozen=True)
+class VolatilityScalingAllocator:
+    """
+    Phân bổ vốn dựa trên ATR% như một đại diện
+    đơn giản cho volatility.
+
+    Raw weight:
+
+        (target_volatility_pct / ATR%) ** scaling_power
+
+    scaling_power:
+    - 1.0: gần giống inverse ATR.
+    - > 1.0: ưu tiên rõ hơn cho mã volatility thấp.
+    - < 1.0: phân bổ mềm hơn.
+    """
+
+    target_volatility_pct: float = 3.0
+    scaling_power: float = 1.5
+    minimum_atr_pct: float = 0.50
+    maximum_position_pct: float = 40.0
+    name: str = "volatility_scaling"
+
+    def allocate(
+        self,
+        candidates: Sequence[
+            AllocationCandidate
+        ],
+        *,
+        portfolio_equity: float,
+        investable_pct: float = 100.0,
+    ) -> list[AllocationResult]:
+        _validate_common_inputs(
+            candidates,
+            portfolio_equity=(
+                portfolio_equity
+            ),
+            investable_pct=(
+                investable_pct
+            ),
+        )
+
+        if self.target_volatility_pct <= 0:
+            raise ValueError(
+                "target_volatility_pct "
+                "phải lớn hơn 0."
+            )
+
+        if self.scaling_power <= 0:
+            raise ValueError(
+                "scaling_power phải lớn hơn 0."
+            )
+
+        if self.minimum_atr_pct <= 0:
+            raise ValueError(
+                "minimum_atr_pct phải lớn hơn 0."
+            )
+
+        if not 0 < self.maximum_position_pct <= 100:
+            raise ValueError(
+                "maximum_position_pct phải nằm "
+                "trong khoảng (0, 100]."
+            )
+
+        raw_weights: dict[
+            str,
+            float,
+        ] = {}
+
+        reference_risks: dict[
+            str,
+            float | None,
+        ] = {}
+
+        for candidate in candidates:
+            atr_pct = candidate.atr_pct
+
+            if atr_pct is None:
+                continue
+
+            effective_atr_pct = max(
+                atr_pct,
+                self.minimum_atr_pct,
+            )
+
+            volatility_ratio = (
+                self.target_volatility_pct
+                / effective_atr_pct
+            )
+
+            raw_weights[
+                candidate.symbol
+            ] = (
+                volatility_ratio
+                ** self.scaling_power
+            )
+
+            reference_risks[
+                candidate.symbol
+            ] = atr_pct
+
+        if not raw_weights:
+            raise ValueError(
+                "Không có candidate nào có "
+                "ATR hợp lệ để volatility scaling."
+            )
+
+        maximum_weight = (
+            self.maximum_position_pct
+            / 100
+        )
+
+        capped_weights = (
+            _cap_and_redistribute_weights(
+                raw_weights,
+                maximum_weight=(
+                    maximum_weight
+                ),
+            )
+        )
+
+        return _build_results(
+            candidates,
+            raw_weights=capped_weights,
+            portfolio_equity=(
+                portfolio_equity
+            ),
+            investable_pct=(
+                investable_pct
+            ),
+            reference_risks=(
+                reference_risks
+            ),
+            reason=(
+                "ATR volatility scaling allocation"
+            ),
+        )
 
 @dataclass(slots=True, frozen=True)
 class StopRiskAllocator:
@@ -605,6 +741,243 @@ class StopRiskAllocator:
             ),
         )
 
+@dataclass(slots=True, frozen=True)
+class RiskBudgetAllocator:
+    """
+    Phân bổ vốn dựa trên ngân sách rủi ro tới stop.
+
+    Mỗi vị thế được nhắm tới một mức risk contribution
+    bằng target_risk_per_position_pct của portfolio equity.
+
+    Allocation value x stop distance %
+        ≈ target risk value
+    """
+
+    target_risk_per_position_pct: float = 0.80
+    maximum_position_pct: float = 35.0
+    minimum_position_pct: float = 2.0
+    minimum_stop_distance_pct: float = 0.50
+    name: str = "risk_budget"
+
+    def allocate(
+        self,
+        candidates: Sequence[
+            AllocationCandidate
+        ],
+        *,
+        portfolio_equity: float,
+        investable_pct: float = 100.0,
+    ) -> list[AllocationResult]:
+        _validate_common_inputs(
+            candidates,
+            portfolio_equity=portfolio_equity,
+            investable_pct=investable_pct,
+        )
+
+        if self.target_risk_per_position_pct <= 0:
+            raise ValueError(
+                "target_risk_per_position_pct "
+                "phải lớn hơn 0."
+            )
+
+        if not 0 < self.maximum_position_pct <= 100:
+            raise ValueError(
+                "maximum_position_pct phải nằm "
+                "trong khoảng (0, 100]."
+            )
+
+        if not 0 <= self.minimum_position_pct <= 100:
+            raise ValueError(
+                "minimum_position_pct phải nằm "
+                "trong khoảng [0, 100]."
+            )
+
+        if (
+            self.minimum_position_pct
+            > self.maximum_position_pct
+        ):
+            raise ValueError(
+                "minimum_position_pct không được "
+                "lớn hơn maximum_position_pct."
+            )
+
+        if self.minimum_stop_distance_pct <= 0:
+            raise ValueError(
+                "minimum_stop_distance_pct "
+                "phải lớn hơn 0."
+            )
+
+        investable_capital = (
+            portfolio_equity
+            * investable_pct
+            / 100
+        )
+
+        target_risk_value = (
+            portfolio_equity
+            * self.target_risk_per_position_pct
+            / 100
+        )
+
+        minimum_position_value = (
+            portfolio_equity
+            * self.minimum_position_pct
+            / 100
+        )
+
+        maximum_position_value = (
+            portfolio_equity
+            * self.maximum_position_pct
+            / 100
+        )
+
+        desired_values: dict[
+            str,
+            float,
+        ] = {}
+
+        reference_risks: dict[
+            str,
+            float | None,
+        ] = {}
+
+        candidate_by_symbol = {
+            candidate.symbol: candidate
+            for candidate in candidates
+        }
+
+        for candidate in candidates:
+            stop_distance_pct = (
+                candidate.stop_distance_pct
+            )
+
+            if stop_distance_pct is None:
+                continue
+
+            effective_stop_distance_pct = max(
+                stop_distance_pct,
+                self.minimum_stop_distance_pct,
+            )
+
+            desired_value = (
+                target_risk_value
+                / (
+                    effective_stop_distance_pct
+                    / 100
+                )
+            )
+
+            desired_value = max(
+                desired_value,
+                minimum_position_value,
+            )
+
+            desired_value = min(
+                desired_value,
+                maximum_position_value,
+            )
+
+            desired_values[
+                candidate.symbol
+            ] = desired_value
+
+            reference_risks[
+                candidate.symbol
+            ] = stop_distance_pct
+
+        if not desired_values:
+            raise ValueError(
+                "Không có candidate nào có "
+                "stop_price hợp lệ."
+            )
+
+        total_desired_value = sum(
+            desired_values.values()
+        )
+
+        scale_factor = min(
+            1.0,
+            investable_capital
+            / total_desired_value,
+        )
+
+        results: list[
+            AllocationResult
+        ] = []
+
+        for symbol, desired_value in (
+            desired_values.items()
+        ):
+            candidate = candidate_by_symbol[
+                symbol
+            ]
+
+            scaled_value = (
+                desired_value
+                * scale_factor
+            )
+
+            quantity = int(
+                scaled_value
+                // candidate.entry_price
+            )
+
+            if quantity < 1:
+                continue
+
+            actual_allocation_value = (
+                quantity
+                * candidate.entry_price
+            )
+
+            normalized_weight = (
+                actual_allocation_value
+                / investable_capital
+                if investable_capital > 0
+                else 0.0
+            )
+
+            stop_distance_pct = (
+                reference_risks[symbol]
+            )
+
+            estimated_risk_value = (
+                actual_allocation_value
+                * stop_distance_pct
+                / 100
+                if stop_distance_pct is not None
+                else 0.0
+            )
+
+            estimated_risk_pct = (
+                estimated_risk_value
+                / portfolio_equity
+                * 100
+            )
+
+            results.append(
+                AllocationResult(
+                    symbol=symbol,
+                    raw_weight=desired_value,
+                    normalized_weight=(
+                        normalized_weight
+                    ),
+                    allocation_value=(
+                        actual_allocation_value
+                    ),
+                    quantity=quantity,
+                    reference_risk_pct=(
+                        stop_distance_pct
+                    ),
+                    reason=(
+                        "Risk budget allocation; "
+                        f"estimated portfolio risk "
+                        f"{estimated_risk_pct:.2f}%"
+                    ),
+                )
+            )
+
+        return results
 
 def calculate_portfolio_risk_pct(
     allocations: Sequence[

@@ -4,8 +4,10 @@ from backtesting.portfolio_allocation import (
     AllocationCandidate,
     EqualWeightAllocator,
     InverseATRAllocator,
+    RiskBudgetAllocator,
     StopRiskAllocator,
     calculate_portfolio_risk_pct,
+    VolatilityScalingAllocator,
 )
 
 
@@ -104,8 +106,18 @@ def main() -> None:
     allocators = [
         EqualWeightAllocator(),
         InverseATRAllocator(),
+        VolatilityScalingAllocator(
+            target_volatility_pct=3.0,
+            scaling_power=1.5,
+            maximum_position_pct=40.0,
+        ),
         StopRiskAllocator(
             maximum_position_pct=35.0
+        ),
+        RiskBudgetAllocator(
+            target_risk_per_position_pct=0.80,
+            maximum_position_pct=35.0,
+            minimum_position_pct=2.0,
         ),
     ]
 
