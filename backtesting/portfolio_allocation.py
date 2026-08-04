@@ -1029,6 +1029,7 @@ class CompositeAllocator:
     ]
     maximum_position_pct: float = 40.0
     minimum_composite_score: float = 0.0
+    aggregation: str = "sum"
     name: str = "composite"
 
     def __post_init__(self) -> None:
@@ -1059,6 +1060,106 @@ class CompositeAllocator:
             raise ValueError(
                 "Tổng factor weight phải lớn hơn 0."
             )
+        normalized_aggregation = (
+            self.aggregation
+            .strip()
+            .lower()
+        )
+
+        if normalized_aggregation not in {
+            "sum",
+            "product",
+        }:
+            raise ValueError(
+                "aggregation phải là "
+                "'sum' hoặc 'product'."
+            )
+
+        object.__setattr__(
+            self,
+            "aggregation",
+            normalized_aggregation,
+        )
+
+    def _compute_composite_score(
+        self,
+        candidate: AllocationCandidate,
+    ) -> float:
+        factor_scores: list[
+            tuple[float, float]
+        ] = []
+
+        for weighted_factor in self.factors:
+            raw_score = float(
+                weighted_factor.factor.score(
+                    candidate
+                )
+            )
+
+            weight = float(
+                weighted_factor.weight
+            )
+
+            if (
+                not math.isfinite(raw_score)
+                or raw_score < 0
+                or not math.isfinite(weight)
+                or weight < 0
+            ):
+                continue
+
+            factor_scores.append(
+                (
+                    raw_score,
+                    weight,
+                )
+            )
+
+        if not factor_scores:
+            return 0.0
+
+        if self.aggregation == "sum":
+            composite_score = sum(
+                score * weight
+                for score, weight
+                in factor_scores
+            )
+        else:
+            total_weight = sum(
+                weight
+                for _, weight
+                in factor_scores
+            )
+
+            if total_weight <= 0:
+                return 0.0
+
+            composite_score = 1.0
+
+            for score, weight in factor_scores:
+                normalized_weight = (
+                    weight / total_weight
+                )
+
+                if score <= 0:
+                    return 0.0
+
+                composite_score *= (
+                    score
+                    ** normalized_weight
+                )
+
+        if (
+            not math.isfinite(
+                composite_score
+            )
+            or composite_score < 0
+        ):
+            return 0.0
+
+        return float(
+            composite_score
+        )
 
     def allocate(
         self,
@@ -1090,11 +1191,10 @@ class CompositeAllocator:
         ] = {}
 
         for candidate in candidates:
-            composite_score = sum(
-                factor.score(
+            composite_score = (
+                self._compute_composite_score(
                     candidate
                 )
-                for factor in self.factors
             )
 
             if (

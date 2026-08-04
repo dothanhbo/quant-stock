@@ -9,7 +9,6 @@ from backtesting.portfolio_allocation import (
     StopRiskAllocator,
     calculate_portfolio_risk_pct,
     VolatilityScalingAllocator,
-    CompositeAllocator
 )
 from backtesting.allocation_factors import (
     ATRFactor,
@@ -115,6 +114,32 @@ def main() -> None:
         ),
     ]
 
+    composite_factors = [
+        WeightedAllocationFactor(
+            factor=SignalScoreFactor(
+                minimum_score=40,
+                maximum_score=100,
+            ),
+            weight=0.35,
+        ),
+        WeightedAllocationFactor(
+            factor=ATRFactor(
+                target_atr_pct=3.0,
+            ),
+            weight=0.25,
+        ),
+        WeightedAllocationFactor(
+            factor=StopDistanceFactor(
+                target_stop_distance_pct=6.0,
+            ),
+            weight=0.25,
+        ),
+        WeightedAllocationFactor(
+            factor=RegimeFactor(),
+            weight=0.15,
+        ),
+    ]
+
     allocators = [
         EqualWeightAllocator(),
         InverseATRAllocator(),
@@ -124,7 +149,7 @@ def main() -> None:
             maximum_position_pct=40.0,
         ),
         StopRiskAllocator(
-            maximum_position_pct=35.0
+            maximum_position_pct=35.0,
         ),
         RiskBudgetAllocator(
             target_risk_per_position_pct=0.80,
@@ -132,32 +157,16 @@ def main() -> None:
             minimum_position_pct=2.0,
         ),
         CompositeAllocator(
-            factors=[
-                WeightedAllocationFactor(
-                    factor=SignalScoreFactor(
-                        minimum_score=40,
-                        maximum_score=100,
-                    ),
-                    weight=0.35,
-                ),
-                WeightedAllocationFactor(
-                    factor=ATRFactor(
-                        target_atr_pct=3.0,
-                    ),
-                    weight=0.25,
-                ),
-                WeightedAllocationFactor(
-                    factor=StopDistanceFactor(
-                        target_stop_distance_pct=6.0,
-                    ),
-                    weight=0.25,
-                ),
-                WeightedAllocationFactor(
-                    factor=RegimeFactor(),
-                    weight=0.15,
-                ),
-            ],
+            factors=composite_factors,
             maximum_position_pct=40.0,
+            aggregation="sum",
+            name="composite_sum",
+        ),
+        CompositeAllocator(
+            factors=composite_factors,
+            maximum_position_pct=40.0,
+            aggregation="product",
+            name="composite_product",
         ),
     ]
 

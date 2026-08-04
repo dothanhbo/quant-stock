@@ -10,13 +10,21 @@ from backtesting.engine import (
     build_exit_model,
     run_backtest,
 )
+from backtesting.allocation_factors import (
+    ATRFactor,
+    RegimeFactor,
+    SignalScoreFactor,
+    StopDistanceFactor,
+    WeightedAllocationFactor,
+)
 from backtesting.portfolio_allocation import (
+    CompositeAllocator,
     EqualWeightAllocator,
     InverseATRAllocator,
     PortfolioAllocator,
+    RiskBudgetAllocator,
     StopRiskAllocator,
     VolatilityScalingAllocator,
-    RiskBudgetAllocator,
 )
 from backtesting.position_sizers import (
     FixedFractionSizer,
@@ -133,6 +141,32 @@ def _safe_float(
 
 def build_allocator_registry(
 ) -> dict[str, PortfolioAllocator | None]:
+
+    composite_factors = [
+        WeightedAllocationFactor(
+            factor=SignalScoreFactor(
+                minimum_score=40,
+                maximum_score=100,
+            ),
+            weight=0.35,
+        ),
+        WeightedAllocationFactor(
+            factor=ATRFactor(
+                target_atr_pct=3.0,
+            ),
+            weight=0.25,
+        ),
+        WeightedAllocationFactor(
+            factor=StopDistanceFactor(
+                target_stop_distance_pct=6.0,
+            ),
+            weight=0.25,
+        ),
+        WeightedAllocationFactor(
+            factor=RegimeFactor(),
+            weight=0.15,
+        ),
+    ]
     return {
         "fixed_fraction_baseline": None,
         "equal_weight": (
@@ -159,6 +193,18 @@ def build_allocator_registry(
                 maximum_position_pct=35.0,
                 minimum_position_pct=2.0,
             )
+        ),
+        "composite_sum": CompositeAllocator(
+            factors=composite_factors,
+            maximum_position_pct=40.0,
+            aggregation="sum",
+            name="composite_sum",
+        ),
+        "composite_product": CompositeAllocator(
+            factors=composite_factors,
+            maximum_position_pct=40.0,
+            aggregation="product",
+            name="composite_product",
         ),
     }
 
