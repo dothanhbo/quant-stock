@@ -70,6 +70,13 @@ class WalkForwardWindow:
     test_start: str
     test_end: str
 
+    @property
+    def window_number(self) -> int:
+        """
+        Backward-compatible alias cho các optimizer cũ.
+        """
+        return self.window_id
+
 
 @dataclass(frozen=True)
 class WalkForwardConfig:

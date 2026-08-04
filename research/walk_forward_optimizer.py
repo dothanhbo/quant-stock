@@ -16,10 +16,14 @@ from research.universes import (
     TOP10_SYMBOLS,
 )
 from research.walk_forward import (
+    WalkForwardConfig,
     WalkForwardWindow,
     build_walk_forward_windows,
 )
-
+from typing import (
+    Any,
+    Callable,
+)
 
 DEFAULT_OUTPUT = (
     "research_results/"
@@ -43,6 +47,15 @@ TRAILING_ATR_VALUES = (
     3.0,
 )
 
+TrainCandidateRunner = Callable[
+    [
+        str,
+        WalkForwardWindow,
+        dict[str, Any],
+    ],
+    dict[str, Any],
+]
+
 
 def generate_exit_parameter_sets() -> list[dict]:
     return [
@@ -62,116 +75,126 @@ def generate_exit_parameter_sets() -> list[dict]:
         )
     ]
 
-
-def evaluate_train_parameter_set(
+def summarize_train_symbol_rows(
     *,
-    symbols: list[str],
+    symbol_rows: list[dict],
     window: WalkForwardWindow,
-    parameters: dict,
-    stop_loss_pct: float,
-    take_profit_pct: float,
-    max_holding_days: int,
-    min_adx: float,
+    candidate_parameters: dict,
 ) -> dict:
-    symbol_rows: list[dict] = []
+    """
+    Tổng hợp kết quả train của nhiều symbol.
 
-    exit_model = build_exit_model(
-        name="trailing_atr",
-        stop_atr_multiplier=parameters[
-            "atr_stop_multiplier"
-        ],
-        target_atr_multiplier=parameters[
-            "atr_target_multiplier"
-        ],
-        trailing_atr_multiplier=parameters[
-            "trailing_atr_multiplier"
-        ],
+    Hàm này không phụ thuộc loại candidate được tối ưu:
+    - Exit parameters
+    - Composite weights
+    - Position sizing
+    - Regime policy
+    """
+
+    if not symbol_rows:
+        raise ValueError(
+            "symbol_rows không có dữ liệu."
+        )
+
+    symbol_df = pd.DataFrame(
+        symbol_rows
     )
 
-    for symbol in symbols:
-        _, metrics, _ = run_backtest(
-            symbols=[symbol],
-            stop_loss_pct=stop_loss_pct,
-            take_profit_pct=take_profit_pct,
-            max_holding_days=max_holding_days,
-            min_adx=min_adx,
-            start_date=window.train_start,
-            end_date=window.train_end,
-            verbose=False,
-            exit_model=exit_model,
-        )
+    required_columns = {
+        "symbol",
+        "total_trades",
+        "total_return_pct",
+        "sharpe_ratio",
+        "profit_factor",
+        "max_drawdown_pct",
+    }
 
-        symbol_rows.append(
-            {
-                "symbol": symbol,
-                "total_trades": metrics.get(
-                    "total_trades",
-                    0,
-                ),
-                "total_return_pct": metrics.get(
-                    "total_return_pct",
-                    0.0,
-                ),
-                "sharpe_ratio": metrics.get(
-                    "sharpe_ratio",
-                    0.0,
-                ),
-                "profit_factor": metrics.get(
-                    "profit_factor",
-                    0.0,
-                ),
-                "max_drawdown_pct": metrics.get(
-                    "max_drawdown_pct",
-                    0.0,
-                ),
-            }
-        )
+    missing_columns = (
+        required_columns
+        - set(symbol_df.columns)
+    )
 
-    symbol_df = pd.DataFrame(symbol_rows)
+    if missing_columns:
+        raise ValueError(
+            "Thiếu cột train metrics: "
+            + ", ".join(
+                sorted(missing_columns)
+            )
+        )
 
     returns = pd.to_numeric(
-        symbol_df["total_return_pct"],
+        symbol_df[
+            "total_return_pct"
+        ],
         errors="coerce",
     ).fillna(0.0)
 
     sharpes = pd.to_numeric(
-        symbol_df["sharpe_ratio"],
+        symbol_df[
+            "sharpe_ratio"
+        ],
         errors="coerce",
     ).fillna(0.0)
 
     profit_factors = pd.to_numeric(
-        symbol_df["profit_factor"],
+        symbol_df[
+            "profit_factor"
+        ],
         errors="coerce",
     ).fillna(0.0)
 
     drawdowns = pd.to_numeric(
-        symbol_df["max_drawdown_pct"],
+        symbol_df[
+            "max_drawdown_pct"
+        ],
         errors="coerce",
     ).fillna(0.0)
 
     trades = pd.to_numeric(
-        symbol_df["total_trades"],
+        symbol_df[
+            "total_trades"
+        ],
         errors="coerce",
     ).fillna(0).astype(int)
 
     positive_symbols = int(
-        (returns > 0).sum()
+        (
+            returns > 0
+        ).sum()
     )
 
     qualified_symbols = int(
-        (trades >= 10).sum()
+        (
+            trades >= 10
+        ).sum()
     )
 
     return {
-        "window_number": window.window_number,
-        "train_start": window.train_start,
-        "train_end": window.train_end,
-        "test_start": window.test_start,
-        "test_end": window.test_end,
-        **parameters,
-        "symbols": len(symbol_df),
-        "positive_symbols": positive_symbols,
-        "qualified_symbols": qualified_symbols,
+        "window_number": (
+            window.window_number
+        ),
+        "train_start": (
+            window.train_start
+        ),
+        "train_end": (
+            window.train_end
+        ),
+        "test_start": (
+            window.test_start
+        ),
+        "test_end": (
+            window.test_end
+        ),
+        **candidate_parameters,
+        "symbols": len(
+            symbol_df
+        ),
+        "positive_symbols": (
+            positive_symbols
+        ),
+        "qualified_symbols": (
+            qualified_symbols
+        ),
         "total_trades": int(
             trades.sum()
         ),
@@ -195,6 +218,138 @@ def evaluate_train_parameter_set(
         ),
     }
 
+def evaluate_train_candidate(
+    *,
+    symbols: list[str],
+    window: WalkForwardWindow,
+    candidate_parameters: dict[str, Any],
+    candidate_runner: TrainCandidateRunner,
+) -> dict[str, Any]:
+    symbol_rows: list[
+        dict[str, Any]
+    ] = []
+
+    for symbol in symbols:
+        metrics_row = candidate_runner(
+            symbol,
+            window,
+            candidate_parameters,
+        )
+
+        symbol_rows.append(
+            {
+                "symbol": symbol,
+                "total_trades": (
+                    metrics_row.get(
+                        "total_trades",
+                        0,
+                    )
+                ),
+                "total_return_pct": (
+                    metrics_row.get(
+                        "total_return_pct",
+                        0.0,
+                    )
+                ),
+                "sharpe_ratio": (
+                    metrics_row.get(
+                        "sharpe_ratio",
+                        0.0,
+                    )
+                ),
+                "profit_factor": (
+                    metrics_row.get(
+                        "profit_factor",
+                        0.0,
+                    )
+                ),
+                "max_drawdown_pct": (
+                    metrics_row.get(
+                        "max_drawdown_pct",
+                        0.0,
+                    )
+                ),
+            }
+        )
+
+    return summarize_train_symbol_rows(
+        symbol_rows=symbol_rows,
+        window=window,
+        candidate_parameters=(
+            candidate_parameters
+        ),
+    )
+
+def evaluate_train_parameter_set(
+    *,
+    symbols: list[str],
+    window: WalkForwardWindow,
+    parameters: dict,
+    stop_loss_pct: float,
+    take_profit_pct: float,
+    max_holding_days: int,
+    min_adx: float,
+) -> dict:
+    def run_exit_candidate(
+        symbol: str,
+        candidate_window: WalkForwardWindow,
+        candidate_parameters: dict[str, Any],
+    ) -> dict[str, Any]:
+        exit_model = build_exit_model(
+            name="trailing_atr",
+            stop_atr_multiplier=(
+                candidate_parameters[
+                    "atr_stop_multiplier"
+                ]
+            ),
+            target_atr_multiplier=(
+                candidate_parameters[
+                    "atr_target_multiplier"
+                ]
+            ),
+            trailing_atr_multiplier=(
+                candidate_parameters[
+                    "trailing_atr_multiplier"
+                ]
+            ),
+        )
+
+        _, metrics, _ = run_backtest(
+            symbols=[
+                symbol
+            ],
+            stop_loss_pct=(
+                stop_loss_pct
+            ),
+            take_profit_pct=(
+                take_profit_pct
+            ),
+            max_holding_days=(
+                max_holding_days
+            ),
+            min_adx=(
+                min_adx
+            ),
+            start_date=(
+                candidate_window.train_start
+            ),
+            end_date=(
+                candidate_window.train_end
+            ),
+            verbose=False,
+            exit_model=exit_model,
+        )
+
+        return metrics
+
+    return evaluate_train_candidate(
+        symbols=symbols,
+        window=window,
+        candidate_parameters=parameters,
+        candidate_runner=(
+            run_exit_candidate
+        ),
+    )
 
 def select_best_parameter_set(
     train_results: pd.DataFrame,
@@ -883,12 +1038,27 @@ def main() -> None:
         ]
     )
 
+    walk_forward_config = WalkForwardConfig(
+        start_date=(
+            f"{args.start_year}-01-01"
+        ),
+        end_date=(
+            f"{args.end_year}-12-31"
+        ),
+        train_years=(
+            args.train_years
+        ),
+        test_months=(
+            args.test_years * 12
+        ),
+        step_months=(
+            args.step_years * 12
+        ),
+        anchored=False,
+    )
+
     windows = build_walk_forward_windows(
-        start_year=args.start_year,
-        end_year=args.end_year,
-        train_years=args.train_years,
-        test_years=args.test_years,
-        step_years=args.step_years,
+        walk_forward_config
     )
 
     if not windows:
