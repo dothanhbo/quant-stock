@@ -26,6 +26,7 @@ class Trade:
     entry_date: datetime
     entry_price: float
     quantity: int
+    quantity_override: int | None = None
 
     # ---------- Signal metadata ----------
     signal_score: float | None = None
@@ -150,6 +151,7 @@ class Trade:
             "entry_date": self.entry_date,
             "entry_price": self.entry_price,
             "quantity": self.quantity,
+            "quantity_override": self.quantity_override,
             "signal_score": self.signal_score,
             "relative_strength": self.relative_strength,
             "adx": self.adx,

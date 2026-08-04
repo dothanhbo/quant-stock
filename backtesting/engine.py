@@ -22,6 +22,9 @@ from backtesting.portfolio_simulator import PortfolioSimulator
 from backtesting.portfolio_metrics import (
     calculate_portfolio_metrics,
 )
+from backtesting.portfolio_allocation import (
+    PortfolioAllocator,
+)
 from collections import Counter
 from core.universe import get_vn100_symbols
 from backtesting.transaction_cost import TransactionCostConfig
@@ -718,6 +721,9 @@ def run_backtest(
     position_sizer: PositionSizer | None = None,
     max_portfolio_heat_pct: float | None = None,
     regime_policy: RegimePortfolioPolicy | None = None,
+    portfolio_allocator: (
+        PortfolioAllocator | None
+    ) = None,
     exit_model: BaseExitModel = DEFAULT_EXIT_MODEL,
 ) -> tuple[list[Trade], dict[str, Any], pd.DataFrame]:
     config = BacktestConfig(
@@ -795,6 +801,9 @@ def run_backtest(
         initial_cash=config.initial_capital,
         position_size_pct=config.position_size_pct,
         position_sizer=position_sizer,
+        portfolio_allocator=(
+            portfolio_allocator
+        ),
         ranking_method=config.ranking_method,
         transaction_cost_config=transaction_cost_config,
         max_portfolio_heat_pct=(

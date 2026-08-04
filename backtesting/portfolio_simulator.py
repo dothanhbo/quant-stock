@@ -28,6 +28,10 @@ from backtesting.position_sizers import (
     PositionSizer,
     PositionSizingContext,
 )
+from backtesting.portfolio_allocation import (
+    PortfolioAllocator,
+    AllocationCandidate,
+)
 from backtesting.portfolio_heat import (
     PortfolioHeat,
     PositionRisk,
@@ -70,6 +74,7 @@ class PortfolioSimulator:
         initial_cash: float,
         position_size_pct: float = 20.0,
         position_sizer: PositionSizer | None = None,
+        portfolio_allocator: PortfolioAllocator | None = None,
         max_positions: int = 5,
         lot_size: int = 100,
         ranking_method: RankingMethod | str = (
@@ -130,6 +135,10 @@ class PortfolioSimulator:
             )
         )
 
+        self.portfolio_allocator = (
+            portfolio_allocator
+        )
+
         self.max_positions = int(
             max_positions
         )
@@ -156,6 +165,32 @@ class PortfolioSimulator:
         self,
         candidate: Trade,
     ) -> int:
+        quantity_override = getattr(
+            candidate,
+            "quantity_override",
+            None,
+        )
+
+        if quantity_override is not None:
+            try:
+                resolved_quantity = int(
+                    quantity_override
+                )
+            except (TypeError, ValueError):
+                return 0
+
+            if resolved_quantity <= 0:
+                return 0
+
+            # Luôn làm tròn xuống theo lot_size.
+            resolved_quantity = (
+                resolved_quantity
+                // self.lot_size
+                * self.lot_size
+            )
+
+            return resolved_quantity
+
         context = PositionSizingContext(
             candidate=candidate,
             cash=self.portfolio.cash,
@@ -172,6 +207,201 @@ class PortfolioSimulator:
                 context
             )
         )
+
+    def _allocate_daily_candidates(
+        self,
+        candidates: list[Trade],
+    ) -> list[Trade]:
+        """
+        Phân bổ quantity cho các candidate cùng ngày.
+
+        Nếu không cấu hình PortfolioAllocator,
+        candidate tiếp tục sử dụng PositionSizer cũ.
+        """
+        if not candidates:
+            return []
+
+        # Xóa quantity override cũ nếu cùng object
+        # được sử dụng lại.
+        for candidate in candidates:
+            candidate.quantity_override = None
+
+        if self.portfolio_allocator is None:
+            return candidates
+
+        open_position_count = len(
+            self.portfolio.open_positions
+        )
+
+        available_slots = max(
+            0,
+            self.max_positions
+            - open_position_count,
+        )
+
+        if available_slots <= 0:
+            return candidates
+
+        eligible_candidates: list[Trade] = []
+
+        for candidate in candidates:
+            # Không phân bổ cho mã đang có vị thế.
+            if self.portfolio.has_open_position(
+                candidate.symbol
+            ):
+                continue
+
+            regime_decision = (
+                self._resolve_regime_decision(
+                    candidate
+                )
+            )
+
+            if regime_decision is not None:
+                if (
+                    regime_decision.normalized_regime
+                    == "UNKNOWN"
+                ):
+                    continue
+
+                if not (
+                    regime_decision.allow_new_positions
+                ):
+                    continue
+
+                effective_max_positions = min(
+                    self.max_positions,
+                    regime_decision.max_positions,
+                )
+
+                projected_position_count = (
+                    open_position_count
+                    + len(eligible_candidates)
+                )
+
+                if (
+                    projected_position_count
+                    >= effective_max_positions
+                ):
+                    continue
+
+            eligible_candidates.append(
+                candidate
+            )
+
+            if (
+                len(eligible_candidates)
+                >= available_slots
+            ):
+                break
+
+        if not eligible_candidates:
+            return candidates
+
+        allocation_candidates: list[
+            AllocationCandidate
+        ] = []
+
+        trade_by_symbol: dict[
+            str,
+            Trade,
+        ] = {}
+
+        for candidate in eligible_candidates:
+            symbol = (
+                candidate.symbol
+                .upper()
+                .strip()
+            )
+
+            allocation_candidates.append(
+                AllocationCandidate(
+                    symbol=symbol,
+                    entry_price=float(
+                        candidate.entry_price
+                    ),
+                    stop_price=(
+                        resolve_candidate_stop_price(
+                            candidate
+                        )
+                    ),
+                    atr=getattr(
+                        candidate,
+                        "atr",
+                        None,
+                    ),
+                    signal_score=(
+                        candidate.signal_score
+                    ),
+                )
+            )
+
+            trade_by_symbol[
+                symbol
+            ] = candidate
+
+        portfolio_equity = (
+            self.portfolio.equity()
+        )
+
+        # Ví dụ:
+        # position_size_pct = 20%
+        # có 2 candidate đủ điều kiện
+        # => allocator được sử dụng tối đa 40% equity.
+        target_investable_pct = min(
+            100.0,
+            self.position_size_pct
+            * len(allocation_candidates),
+        )
+
+        # Không cho allocator sử dụng số vốn
+        # lớn hơn lượng cash hiện có.
+        cash_investable_pct = (
+            self.portfolio.cash
+            / portfolio_equity
+            * 100
+            if portfolio_equity > 0
+            else 0.0
+        )
+
+        effective_investable_pct = min(
+            target_investable_pct,
+            cash_investable_pct,
+        )
+
+        if effective_investable_pct <= 0:
+            return candidates
+
+        try:
+            allocations = (
+                self.portfolio_allocator.allocate(
+                    allocation_candidates,
+                    portfolio_equity=(
+                        portfolio_equity
+                    ),
+                    investable_pct=(
+                        effective_investable_pct
+                    ),
+                )
+            )
+        except ValueError:
+            # Thiếu ATR, stop hoặc metadata cần thiết:
+            # fallback về PositionSizer hiện tại.
+            return candidates
+
+        for allocation in allocations:
+            candidate = trade_by_symbol.get(
+                allocation.symbol
+            )
+
+            if candidate is None:
+                continue
+
+            candidate.quantity_override = int(
+                allocation.quantity
+            )
+
+        return candidates
 
     def _build_open_position_risks(
         self,
@@ -829,10 +1059,16 @@ class PortfolioSimulator:
                 )
             )
 
+            allocated_candidates = (
+                self._allocate_daily_candidates(
+                    ranked_candidates
+                )
+            )
+
             # Các candidate cùng ngày được xếp hạng
             # trước khi danh mục mở vị thế.
             for candidate in (
-                ranked_candidates
+                allocated_candidates
             ):
                 self._open_candidate(
                     candidate=candidate,
