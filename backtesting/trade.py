@@ -36,6 +36,12 @@ class Trade:
     market_regime: str | None = None
     entry_model: str | None = None
 
+    # ---------- Risk metadata ----------
+    stop_price: float | None = None
+    risk_per_share: float | None = None
+    risk_amount: float | None = None
+    risk_pct: float | None = None
+
     exit_date: datetime | None = None
     exit_price: float | None = None
     exit_reason: ExitReason | None = None
@@ -148,8 +154,15 @@ class Trade:
             "relative_strength": self.relative_strength,
             "adx": self.adx,
             "volume_ratio": self.volume_ratio,
+            "atr": self.atr,
             "market_regime": self.market_regime,
             "entry_model": self.entry_model,
+
+            "stop_price": self.stop_price,
+            "risk_per_share": self.risk_per_share,
+            "risk_amount": self.risk_amount,
+            "risk_pct": self.risk_pct,
+
             "exit_date": self.exit_date,
             "exit_price": self.exit_price,
             "exit_reason": (

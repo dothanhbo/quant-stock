@@ -470,6 +470,7 @@ def generate_candidate_trades(
             entry_date=exit_info.entry_date,
             entry_price=exit_info.entry_price,
             quantity=1,
+            stop_price=exit_info.stop_price,
             signal_score=_safe_float(
                 evaluation.get(
                     "score"
@@ -498,6 +499,11 @@ def generate_candidate_trades(
                evaluation.get("atr"),
                default=None,
             ),
+            risk_per_share=(
+                exit_info.entry_price
+                - exit_info.stop_price
+            ),
+
             market_regime=str(
                 evaluation.get(
                     "regime",
@@ -665,6 +671,7 @@ def run_backtest(
     sell_slippage_pct: float = 0.05,
     ranking_method: str = "first_come",
     position_sizer: PositionSizer | None = None,
+    max_portfolio_heat_pct: float | None = None,
     exit_model: BaseExitModel = DEFAULT_EXIT_MODEL,
 ) -> tuple[list[Trade], dict[str, Any], pd.DataFrame]:
     config = BacktestConfig(
@@ -744,6 +751,9 @@ def run_backtest(
         position_sizer=position_sizer,
         ranking_method=config.ranking_method,
         transaction_cost_config=transaction_cost_config,
+        max_portfolio_heat_pct=(
+            max_portfolio_heat_pct
+        ),
     )
 
     result = simulator.simulate(all_trades)
@@ -1032,6 +1042,15 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--sell-tax",type=float,default=0.10,help="Thuế bán theo phần trăm, mặc định 0.10.",)
     parser.add_argument("--buy-slippage",type=float,default=0.05,help="Slippage khi mua (%%). Mặc định 0.05.",)
     parser.add_argument("--sell-slippage",type=float,default=0.05,help="Slippage khi bán (%%). Mặc định 0.05.",)
+    parser.add_argument(
+        "--max-portfolio-heat",
+        type=float,
+        default=None,
+        help=(
+            "Giới hạn portfolio heat theo phần trăm. "
+            "Mặc định None để tắt giới hạn."
+        ),
+    )
     parser.add_argument("--warmup", type=int, default=60)
     parser.add_argument(
         "--output",
@@ -1113,6 +1132,9 @@ def main() -> None:
         sell_tax_pct=args.sell_tax,
         exit_model=exit_model,
         ranking_method="signal_score",
+        max_portfolio_heat_pct=(
+            args.max_portfolio_heat
+        ),
     )
     print(
         f"Phí mua {metrics['buy_commission_pct']:.2f}% | "

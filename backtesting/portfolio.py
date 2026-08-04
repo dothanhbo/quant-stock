@@ -65,6 +65,10 @@ class Portfolio:
         atr: float | None = None,
         market_regime: str | None = None,
         entry_model: str | None = None,
+        stop_price: float | None = None,
+        risk_per_share: float | None = None,
+        risk_amount: float | None = None,
+        risk_pct: float | None = None,
     ) -> Trade:
         if not symbol or not symbol.strip():
             raise ValueError("symbol must not be empty")
@@ -116,11 +120,16 @@ class Portfolio:
             adx=adx,
             volume_ratio=volume_ratio,
             atr=atr,
+
+            stop_price=stop_price,
+            risk_per_share=risk_per_share,
+            risk_amount=risk_amount,
+            risk_pct=risk_pct,
+
             market_regime=market_regime,
             entry_model=entry_model,
-            buy_commission=(
-                buy_cost.commission
-            ),
+
+            buy_commission=buy_cost.commission,
         )
 
         self.cash -= position_cost

@@ -28,6 +28,14 @@ from backtesting.position_sizers import (
     PositionSizer,
     PositionSizingContext,
 )
+from backtesting.portfolio_heat import (
+    PortfolioHeat,
+    PositionRisk,
+)
+from backtesting.trade_risk import (
+    TradeRiskMetadata,
+    resolve_candidate_stop_price,
+)
 @dataclass(slots=True)
 class RejectedTrade:
     trade: Trade
@@ -66,6 +74,7 @@ class PortfolioSimulator:
         transaction_cost_config: (
             TransactionCostConfig | None
         ) = None,
+        max_portfolio_heat_pct: float | None = None,
     ) -> None:
         if initial_cash <= 0:
             raise ValueError(
@@ -130,6 +139,10 @@ class PortfolioSimulator:
             )
         )
 
+        self.portfolio_heat = PortfolioHeat(
+            max_heat_pct=max_portfolio_heat_pct,
+        )
+
     def _calculate_quantity(
         self,
         candidate: Trade,
@@ -149,6 +162,65 @@ class PortfolioSimulator:
             .calculate_quantity(
                 context
             )
+        )
+
+    def _build_open_position_risks(
+        self,
+        *,
+        portfolio_equity: float,
+    ) -> list[PositionRisk]:
+        position_risks: list[
+            PositionRisk
+        ] = []
+
+        for trade in (
+            self.portfolio.open_positions
+        ):
+            stop_price = getattr(
+                trade,
+                "stop_price",
+                None,
+            )
+
+            if stop_price is None:
+                continue
+
+            position_risks.append(
+                PositionRisk.from_prices(
+                    symbol=trade.symbol,
+                    entry_price=(
+                        trade.entry_price
+                    ),
+                    stop_price=stop_price,
+                    quantity=trade.quantity,
+                    portfolio_equity=(
+                        portfolio_equity
+                    ),
+                )
+            )
+
+        return position_risks
+
+    def _current_heat_pct(
+        self,
+    ) -> float:
+        equity = self.portfolio.equity()
+
+        position_risks = (
+            self._build_open_position_risks(
+                portfolio_equity=equity,
+            )
+        )
+
+        return (
+            self.portfolio_heat
+            .snapshot(
+                portfolio_equity=equity,
+                position_risks=(
+                    position_risks
+                ),
+            )
+            .current_heat_pct
         )
 
     def _reject_trade(
@@ -272,6 +344,98 @@ class PortfolioSimulator:
 
             return
 
+        stop_price = (
+            resolve_candidate_stop_price(
+                candidate,
+            )
+        )
+
+        risk_metadata = None
+
+        if stop_price is not None:
+            risk_metadata = (
+                TradeRiskMetadata.build(
+                    entry_price=(
+                        candidate.entry_price
+                    ),
+                    stop_price=stop_price,
+                    quantity=quantity,
+                    portfolio_equity=(
+                        self.portfolio.equity()
+                    ),
+                )
+            )
+
+        if (
+            self.portfolio_heat.max_heat_pct
+            is not None
+        ):
+            if risk_metadata is None:
+                self._reject_trade(
+                    rejected_trades=(
+                        rejected_trades
+                    ),
+                    candidate=candidate,
+                    reason="missing_stop_price",
+                )
+
+                return
+
+            portfolio_equity = (
+                self.portfolio.equity()
+            )
+
+            existing_risks = (
+                self._build_open_position_risks(
+                    portfolio_equity=(
+                        portfolio_equity
+                    ),
+                )
+            )
+
+            proposed_risk = (
+                PositionRisk.from_prices(
+                    symbol=candidate.symbol,
+                    entry_price=(
+                        candidate.entry_price
+                    ),
+                    stop_price=(
+                        risk_metadata.stop_price
+                    ),
+                    quantity=quantity,
+                    portfolio_equity=(
+                        portfolio_equity
+                    ),
+                )
+            )
+
+            heat_decision = (
+                self.portfolio_heat.decide(
+                    portfolio_equity=(
+                        portfolio_equity
+                    ),
+                    position_risks=(
+                        existing_risks
+                    ),
+                    proposed_risk=(
+                        proposed_risk
+                    ),
+                )
+            )
+
+            if not heat_decision.allowed:
+                self._reject_trade(
+                    rejected_trades=(
+                        rejected_trades
+                    ),
+                    candidate=candidate,
+                    reason=(
+                        heat_decision.reason
+                    ),
+                )
+
+                return
+
         try:
             opened_trade = (
                 self.portfolio.open_position(
@@ -297,6 +461,31 @@ class PortfolioSimulator:
                         candidate,
                         "atr",
                         None,
+                    ),
+                    stop_price=(
+                        risk_metadata.stop_price
+                        if risk_metadata
+                        is not None
+                        else None
+                    ),
+                    risk_per_share=(
+                        risk_metadata
+                        .risk_per_share
+                        if risk_metadata
+                        is not None
+                        else None
+                    ),
+                    risk_amount=(
+                        risk_metadata.risk_amount
+                        if risk_metadata
+                        is not None
+                        else None
+                    ),
+                    risk_pct=(
+                        risk_metadata.risk_pct
+                        if risk_metadata
+                        is not None
+                        else None
                     ),
                     market_regime=(
                         candidate.market_regime
@@ -350,6 +539,13 @@ class PortfolioSimulator:
                 "closed_positions": len(
                     self.portfolio
                     .closed_positions
+                ),
+                "portfolio_heat_pct": (
+                    self._current_heat_pct()
+                ),
+                "max_portfolio_heat_pct": (
+                    self.portfolio_heat
+                    .max_heat_pct
                 ),
             }
         )
