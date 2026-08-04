@@ -23,7 +23,11 @@ from backtesting.decision_engine import (
     DecisionAction,
     decide_candidate,
 )
-
+from backtesting.position_sizers import (
+    FixedFractionSizer,
+    PositionSizer,
+    PositionSizingContext,
+)
 @dataclass(slots=True)
 class RejectedTrade:
     trade: Trade
@@ -53,6 +57,7 @@ class PortfolioSimulator:
         self,
         initial_cash: float,
         position_size_pct: float = 20.0,
+        position_sizer: PositionSizer | None = None,
         max_positions: int = 5,
         lot_size: int = 100,
         ranking_method: RankingMethod | str = (
@@ -104,6 +109,13 @@ class PortfolioSimulator:
             position_size_pct
         )
 
+        self.position_sizer = (
+            position_sizer
+            or FixedFractionSizer(
+                position_size_pct=position_size_pct,
+            )
+        )
+
         self.max_positions = int(
             max_positions
         )
@@ -120,54 +132,24 @@ class PortfolioSimulator:
 
     def _calculate_quantity(
         self,
-        entry_price: float,
+        candidate: Trade,
     ) -> int:
-        allocated_cash = (
-            self.portfolio.equity()
-            * self.position_size_pct
-            / 100
-        )
-
-        usable_cash = min(
-            allocated_cash,
-            self.portfolio.cash,
-        )
-
-        effective_entry_price = (
-            entry_price
-            * (
-                1
-                + (
-                    self.transaction_cost_config
-                    .buy_slippage_pct
-                    / 100
-                )
-            )
-        )
-
-        buy_fee_rate = (
-            self.transaction_cost_config
-            .buy_commission_pct
-            / 100
-        )
-
-        total_price_per_share = (
-            effective_entry_price
-            * (
-                1
-                + buy_fee_rate
-            )
-        )
-
-        raw_quantity = int(
-            usable_cash
-            / total_price_per_share
+        context = PositionSizingContext(
+            candidate=candidate,
+            cash=self.portfolio.cash,
+            equity=self.portfolio.equity(),
+            lot_size=self.lot_size,
+            transaction_cost_config=(
+                self.transaction_cost_config
+            ),
         )
 
         return (
-            raw_quantity
-            // self.lot_size
-        ) * self.lot_size
+            self.position_sizer
+            .calculate_quantity(
+                context
+            )
+        )
 
     def _reject_trade(
         self,
@@ -276,7 +258,7 @@ class PortfolioSimulator:
             return
 
         quantity = self._calculate_quantity(
-            candidate.entry_price
+            candidate
         )
 
         if quantity <= 0:
@@ -310,6 +292,11 @@ class PortfolioSimulator:
                     adx=candidate.adx,
                     volume_ratio=(
                         candidate.volume_ratio
+                    ),
+                    atr=getattr(
+                        candidate,
+                        "atr",
+                        None,
                     ),
                     market_regime=(
                         candidate.market_regime

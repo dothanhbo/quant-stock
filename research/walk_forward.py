@@ -1,8 +1,12 @@
 from __future__ import annotations
 
 import argparse
-from dataclasses import dataclass
+import json
+import math
+from dataclasses import asdict, dataclass
 from pathlib import Path
+from time import perf_counter
+from typing import Any, Iterable
 
 import pandas as pd
 
@@ -10,455 +14,1151 @@ from backtesting.engine import (
     build_exit_model,
     run_backtest,
 )
-from research.universes import (
-    TOP10_SYMBOLS,
+from backtesting.position_sizers import (
+    AtrRiskSizer,
+    FixedFractionSizer,
+    PositionSizer,
+)
+from research.universes import TOP10_SYMBOLS
+from strategy.base_strategy import BaseStrategy
+from strategy.donchian_breakout_entry import (
+    DonchianBreakoutEntryModel,
+)
+from strategy.hybrid_trend_donchian_entry import (
+    HybridTrendDonchianEntryModel,
 )
 
 
-DEFAULT_OUTPUT = (
-    "research_results/"
-    "walk_forward_results.csv"
+DEFAULT_OUTPUT_DIR = Path(
+    "research_results/walk_forward"
+)
+DEFAULT_DB_PATH = "market.db"
+
+ENTRY_MODEL_CHOICES = (
+    "donchian",
+    "hybrid_trend_context",
+    "hybrid_strict",
+)
+
+EXIT_MODEL_CHOICES = (
+    "fixed",
+    "atr",
+    "break_even",
+    "trailing_atr",
+)
+
+RANKING_CHOICES = (
+    "first_come",
+    "signal_score",
+    "relative_strength",
+    "adx",
+    "volume_ratio",
+    "composite",
+)
+
+POSITION_SIZER_CHOICES = (
+    "fixed_fraction",
+    "atr_risk",
 )
 
 
-@dataclass(frozen=True, slots=True)
+@dataclass(frozen=True)
 class WalkForwardWindow:
-    window_number: int
+    window_id: int
     train_start: str
     train_end: str
     test_start: str
     test_end: str
 
 
+@dataclass(frozen=True)
+class WalkForwardConfig:
+    start_date: str = "2020-01-01"
+    end_date: str = "2026-07-31"
+
+    train_years: int = 3
+    test_months: int = 12
+    step_months: int = 12
+    anchored: bool = False
+
+    initial_capital: float = 100_000_000.0
+    position_size_pct: float = 20.0
+
+    stop_loss_pct: float = 3.0
+    take_profit_pct: float = 8.0
+    max_holding_days: int = 30
+    min_adx: float = 20.0
+
+    entry_model_name: str = (
+        "hybrid_trend_context"
+    )
+    exit_model_name: str = "atr"
+    ranking_method: str = (
+        "relative_strength"
+    )
+    position_sizer_name: str = (
+        "fixed_fraction"
+    )
+
+    atr_stop_multiplier: float = 2.0
+    atr_target_multiplier: float = 5.0
+    trailing_atr_multiplier: float = 2.0
+    break_even_trigger: float = 5.0
+
+    risk_per_trade_pct: float = 1.0
+    max_position_size_pct: float = 20.0
+
+    buy_commission_pct: float = 0.15
+    sell_commission_pct: float = 0.15
+    sell_tax_pct: float = 0.10
+    buy_slippage_pct: float = 0.05
+    sell_slippage_pct: float = 0.05
+
+    min_trades_per_window: int = 5
+
+    def validate(self) -> None:
+        start = pd.Timestamp(
+            self.start_date
+        )
+        end = pd.Timestamp(
+            self.end_date
+        )
+
+        if start >= end:
+            raise ValueError(
+                "start_date phải nhỏ hơn end_date."
+            )
+
+        if self.train_years < 1:
+            raise ValueError(
+                "train_years phải từ 1 trở lên."
+            )
+
+        if self.test_months < 1:
+            raise ValueError(
+                "test_months phải từ 1 trở lên."
+            )
+
+        if self.step_months < 1:
+            raise ValueError(
+                "step_months phải từ 1 trở lên."
+            )
+
+        if self.initial_capital <= 0:
+            raise ValueError(
+                "initial_capital phải lớn hơn 0."
+            )
+
+        if not 0 < self.position_size_pct <= 100:
+            raise ValueError(
+                "position_size_pct phải nằm "
+                "trong khoảng (0, 100]."
+            )
+
+        if self.min_trades_per_window < 0:
+            raise ValueError(
+                "min_trades_per_window không được âm."
+            )
+
+        if (
+            self.entry_model_name
+            not in ENTRY_MODEL_CHOICES
+        ):
+            raise ValueError(
+                "entry_model_name không hợp lệ: "
+                f"{self.entry_model_name}"
+            )
+
+        if (
+            self.exit_model_name
+            not in EXIT_MODEL_CHOICES
+        ):
+            raise ValueError(
+                "exit_model_name không hợp lệ: "
+                f"{self.exit_model_name}"
+            )
+
+        if (
+            self.ranking_method
+            not in RANKING_CHOICES
+        ):
+            raise ValueError(
+                "ranking_method không hợp lệ: "
+                f"{self.ranking_method}"
+            )
+
+        if (
+            self.position_sizer_name
+            not in POSITION_SIZER_CHOICES
+        ):
+            raise ValueError(
+                "position_sizer_name không hợp lệ: "
+                f"{self.position_sizer_name}"
+            )
+
+        if self.atr_stop_multiplier <= 0:
+            raise ValueError(
+                "atr_stop_multiplier phải lớn hơn 0."
+            )
+
+        if self.atr_target_multiplier <= 0:
+            raise ValueError(
+                "atr_target_multiplier phải lớn hơn 0."
+            )
+
+        if self.risk_per_trade_pct <= 0:
+            raise ValueError(
+                "risk_per_trade_pct phải lớn hơn 0."
+            )
+
+        if not 0 < self.max_position_size_pct <= 100:
+            raise ValueError(
+                "max_position_size_pct phải nằm "
+                "trong khoảng (0, 100]."
+            )
+
+
+def build_entry_model(
+    name: str,
+) -> BaseStrategy:
+    if name == "donchian":
+        return DonchianBreakoutEntryModel()
+
+    if name == "hybrid_trend_context":
+        return HybridTrendDonchianEntryModel(
+            mode="trend_context"
+        )
+
+    if name == "hybrid_strict":
+        return HybridTrendDonchianEntryModel(
+            mode="strict"
+        )
+
+    raise ValueError(
+        f"Entry model không hỗ trợ: {name}"
+    )
+
+
+def build_position_sizer(
+    config: WalkForwardConfig,
+) -> PositionSizer:
+    if (
+        config.position_sizer_name
+        == "fixed_fraction"
+    ):
+        return FixedFractionSizer(
+            position_size_pct=(
+                config.position_size_pct
+            )
+        )
+
+    if (
+        config.position_sizer_name
+        == "atr_risk"
+    ):
+        return AtrRiskSizer(
+            risk_per_trade_pct=(
+                config.risk_per_trade_pct
+            ),
+            atr_stop_multiplier=(
+                config.atr_stop_multiplier
+            ),
+            max_position_size_pct=(
+                config.max_position_size_pct
+            ),
+        )
+
+    raise ValueError(
+        "Position sizer không hỗ trợ: "
+        f"{config.position_sizer_name}"
+    )
+
+
+def _date_text(
+    value: pd.Timestamp,
+) -> str:
+    return value.strftime(
+        "%Y-%m-%d"
+    )
+
+
 def build_walk_forward_windows(
-    *,
-    start_year: int,
-    end_year: int,
-    train_years: int,
-    test_years: int = 1,
-    step_years: int = 1,
+    config: WalkForwardConfig,
 ) -> list[WalkForwardWindow]:
-    if train_years <= 0:
-        raise ValueError(
-            "train_years phải lớn hơn 0"
+    """Create rolling or anchored OOS windows."""
+
+    config.validate()
+
+    global_start = pd.Timestamp(
+        config.start_date
+    ).normalize()
+
+    global_end = pd.Timestamp(
+        config.end_date
+    ).normalize()
+
+    test_start = (
+        global_start
+        + pd.DateOffset(
+            years=config.train_years
+        )
+    )
+
+    windows: list[
+        WalkForwardWindow
+    ] = []
+
+    while test_start <= global_end:
+        train_start = (
+            global_start
+            if config.anchored
+            else (
+                test_start
+                - pd.DateOffset(
+                    years=config.train_years
+                )
+            )
         )
 
-    if test_years <= 0:
-        raise ValueError(
-            "test_years phải lớn hơn 0"
+        train_end = (
+            test_start
+            - pd.Timedelta(days=1)
         )
 
-    if step_years <= 0:
-        raise ValueError(
-            "step_years phải lớn hơn 0"
+        test_end = min(
+            (
+                test_start
+                + pd.DateOffset(
+                    months=config.test_months
+                )
+                - pd.Timedelta(days=1)
+            ),
+            global_end,
         )
 
-    windows: list[WalkForwardWindow] = []
-
-    train_start_year = start_year
-    window_number = 1
-
-    while True:
-        train_end_year = (
-            train_start_year
-            + train_years
-            - 1
-        )
-
-        test_start_year = (
-            train_end_year
-            + 1
-        )
-
-        test_end_year = (
-            test_start_year
-            + test_years
-            - 1
-        )
-
-        if test_end_year > end_year:
+        if (
+            train_end < train_start
+            or test_end < test_start
+        ):
             break
 
         windows.append(
             WalkForwardWindow(
-                window_number=window_number,
-                train_start=(
-                    f"{train_start_year}-01-01"
+                window_id=(
+                    len(windows) + 1
                 ),
-                train_end=(
-                    f"{train_end_year}-12-31"
+                train_start=_date_text(
+                    train_start
                 ),
-                test_start=(
-                    f"{test_start_year}-01-01"
+                train_end=_date_text(
+                    train_end
                 ),
-                test_end=(
-                    f"{test_end_year}-12-31"
+                test_start=_date_text(
+                    test_start
+                ),
+                test_end=_date_text(
+                    test_end
                 ),
             )
         )
 
-        train_start_year += step_years
-        window_number += 1
+        test_start += pd.DateOffset(
+            months=config.step_months
+        )
+
+    if not windows:
+        raise ValueError(
+            "Không tạo được window. "
+            "Hãy tăng khoảng dữ liệu hoặc "
+            "giảm train_years."
+        )
 
     return windows
 
 
-def run_walk_forward(
-    *,
-    symbols: list[str],
-    windows: list[WalkForwardWindow],
-    exit_model_name: str,
-    stop_loss_pct: float,
-    take_profit_pct: float,
-    max_holding_days: int,
-    min_adx: float,
-    break_even_trigger: float,
-    atr_stop_multiplier: float,
-    atr_target_multiplier: float,
-    trailing_atr_multiplier: float,
-    output_path: str,
+def _safe_number(
+    value: Any,
+    default: float = 0.0,
+) -> float:
+    try:
+        number = float(value)
+
+    except (
+        TypeError,
+        ValueError,
+    ):
+        return default
+
+    return (
+        number
+        if math.isfinite(number)
+        else default
+    )
+
+
+def _trade_to_dict(
+    trade: Any,
+) -> dict[str, Any]:
+    if hasattr(
+        trade,
+        "to_dict",
+    ):
+        row = trade.to_dict()
+
+        if isinstance(
+            row,
+            dict,
+        ):
+            return row
+
+    if hasattr(
+        trade,
+        "__dataclass_fields__",
+    ):
+        return asdict(
+            trade
+        )
+
+    if hasattr(
+        trade,
+        "__dict__",
+    ):
+        return dict(
+            vars(trade)
+        )
+
+    return {
+        "trade": str(trade)
+    }
+
+
+def _normalize_trades(
+    trades: Any,
 ) -> pd.DataFrame:
-    rows: list[dict] = []
+    if isinstance(
+        trades,
+        pd.DataFrame,
+    ):
+        return trades.copy()
 
-    total_runs = (
-        len(symbols)
-        * len(windows)
+    if not trades:
+        return pd.DataFrame()
+
+    return pd.DataFrame(
+        [
+            _trade_to_dict(trade)
+            for trade in trades
+        ]
     )
 
-    completed = 0
 
-    for window in windows:
-        print()
-        print("=" * 80)
-        print(
-            f"WINDOW {window.window_number} | "
-            f"Train {window.train_start} "
-            f"→ {window.train_end} | "
-            f"Test {window.test_start} "
-            f"→ {window.test_end}"
+def _metric_row(
+    *,
+    window: WalkForwardWindow,
+    config: WalkForwardConfig,
+    metrics: dict[str, Any],
+    trade_count: int,
+    elapsed_seconds: float,
+) -> dict[str, Any]:
+    total_trades = int(
+        metrics.get(
+            "total_trades",
+            trade_count,
         )
-        print("=" * 80)
-
-        for symbol in symbols:
-            completed += 1
-
-            print(
-                f"[{completed}/{total_runs}] "
-                f"{symbol} | "
-                f"{exit_model_name}"
-            )
-
-            exit_model = build_exit_model(
-                name=exit_model_name,
-                break_even_trigger=(
-                    break_even_trigger
-                ),
-                stop_atr_multiplier=(
-                    atr_stop_multiplier
-                ),
-                target_atr_multiplier=(
-                    atr_target_multiplier
-                ),
-                trailing_atr_multiplier=(
-                    trailing_atr_multiplier
-                ),
-            )
-
-            _, metrics, _ = run_backtest(
-                symbols=[symbol],
-                stop_loss_pct=(
-                    stop_loss_pct
-                ),
-                take_profit_pct=(
-                    take_profit_pct
-                ),
-                max_holding_days=(
-                    max_holding_days
-                ),
-                min_adx=min_adx,
-                start_date=window.test_start,
-                end_date=window.test_end,
-                verbose=False,
-                exit_model=exit_model,
-            )
-
-            row = {
-                "window_number": (
-                    window.window_number
-                ),
-                "train_start": (
-                    window.train_start
-                ),
-                "train_end": (
-                    window.train_end
-                ),
-                "test_start": (
-                    window.test_start
-                ),
-                "test_end": (
-                    window.test_end
-                ),
-                "symbol": symbol,
-                "exit_model": (
-                    exit_model_name
-                ),
-                "stop_loss_pct": (
-                    stop_loss_pct
-                ),
-                "take_profit_pct": (
-                    take_profit_pct
-                ),
-                "max_holding_days": (
-                    max_holding_days
-                ),
-                "min_adx": min_adx,
-                "break_even_trigger": (
-                    break_even_trigger
-                ),
-                "atr_stop_multiplier": (
-                    atr_stop_multiplier
-                ),
-                "atr_target_multiplier": (
-                    atr_target_multiplier
-                ),
-                "trailing_atr_multiplier": (
-                    trailing_atr_multiplier
-                ),
-                "total_trades": metrics.get(
-                    "total_trades",
-                    0,
-                ),
-                "total_return_pct": metrics.get(
-                    "total_return_pct",
-                    0.0,
-                ),
-                "cagr_pct": metrics.get(
-                    "cagr_pct",
-                    0.0,
-                ),
-                "max_drawdown_pct": metrics.get(
-                    "max_drawdown_pct",
-                    0.0,
-                ),
-                "sharpe_ratio": metrics.get(
-                    "sharpe_ratio",
-                    0.0,
-                ),
-                "profit_factor": metrics.get(
-                    "profit_factor",
-                    0.0,
-                ),
-                "win_rate_pct": metrics.get(
-                    "win_rate_pct",
-                    0.0,
-                ),
-                "expectancy_pct": metrics.get(
-                    "expectancy_pct",
-                    0.0,
-                ),
-            }
-
-            rows.append(row)
-
-            print(
-                f"    Trades "
-                f"{row['total_trades']} | "
-                f"Return "
-                f"{row['total_return_pct']:+.2f}% | "
-                f"Sharpe "
-                f"{row['sharpe_ratio']:.2f} | "
-                f"DD "
-                f"{row['max_drawdown_pct']:.2f}%"
-            )
-
-    result_df = pd.DataFrame(rows)
-
-    output = Path(output_path)
-
-    output.parent.mkdir(
-        parents=True,
-        exist_ok=True,
+        or 0
     )
 
-    result_df.to_csv(
-        output,
-        index=False,
-        encoding="utf-8-sig",
-    )
+    return {
+        **asdict(window),
+        "entry_model": (
+            config.entry_model_name
+        ),
+        "exit_model": (
+            config.exit_model_name
+        ),
+        "ranking_method": (
+            config.ranking_method
+        ),
+        "position_sizer": (
+            config.position_sizer_name
+        ),
+        "elapsed_seconds": round(
+            elapsed_seconds,
+            2,
+        ),
+        "total_trades": total_trades,
+        "enough_trades": (
+            total_trades
+            >= config.min_trades_per_window
+        ),
+        "initial_capital": _safe_number(
+            metrics.get(
+                "initial_capital"
+            )
+        ),
+        "final_equity": _safe_number(
+            metrics.get(
+                "final_equity"
+            )
+        ),
+        "total_return_pct": _safe_number(
+            metrics.get(
+                "total_return_pct"
+            )
+        ),
+        "cagr_pct": _safe_number(
+            metrics.get(
+                "cagr_pct"
+            )
+        ),
+        "max_drawdown_pct": _safe_number(
+            metrics.get(
+                "max_drawdown_pct"
+            )
+        ),
+        "annualized_volatility_pct": (
+            _safe_number(
+                metrics.get(
+                    "annualized_volatility_pct"
+                )
+            )
+        ),
+        "sharpe_ratio": _safe_number(
+            metrics.get(
+                "sharpe_ratio"
+            )
+        ),
+        "sortino_ratio": _safe_number(
+            metrics.get(
+                "sortino_ratio"
+            )
+        ),
+        "calmar_ratio": _safe_number(
+            metrics.get(
+                "calmar_ratio"
+            )
+        ),
+        "profit_factor": _safe_number(
+            metrics.get(
+                "profit_factor"
+            )
+        ),
+        "win_rate_pct": _safe_number(
+            metrics.get(
+                "win_rate_pct"
+            )
+        ),
+        "expectancy_pct": _safe_number(
+            metrics.get(
+                "expectancy_pct"
+            )
+        ),
+        "total_transaction_cost": (
+            _safe_number(
+                metrics.get(
+                    "total_transaction_cost"
+                )
+            )
+        ),
+    }
 
-    print_walk_forward_summary(
-        result_df
-    )
 
-    print()
-    print(f"Đã xuất: {output}")
+def summarize_walk_forward(
+    summary_df: pd.DataFrame,
+) -> dict[str, Any]:
+    if summary_df.empty:
+        return {}
 
-    return result_df
+    valid = summary_df[
+        summary_df[
+            "enough_trades"
+        ]
+    ].copy()
 
-
-def print_walk_forward_summary(
-    result_df: pd.DataFrame,
-) -> None:
-    if result_df.empty:
-        print("Không có kết quả.")
-        return
-
-    summary = (
-        result_df
-        .groupby(
-            "window_number",
-            as_index=False,
-        )
-        .agg(
-            test_start=(
-                "test_start",
-                "first",
-            ),
-            test_end=(
-                "test_end",
-                "first",
-            ),
-            symbols=(
-                "symbol",
-                "count",
-            ),
-            total_trades=(
-                "total_trades",
-                "sum",
-            ),
-            average_return_pct=(
-                "total_return_pct",
-                "mean",
-            ),
-            median_return_pct=(
-                "total_return_pct",
-                "median",
-            ),
-            average_sharpe=(
-                "sharpe_ratio",
-                "mean",
-            ),
-            average_drawdown_pct=(
-                "max_drawdown_pct",
-                "mean",
-            ),
-            positive_symbols=(
-                "total_return_pct",
-                lambda values: int(
-                    (values > 0).sum()
-                ),
-            ),
-            qualified_symbols=(
-                "total_trades",
-                lambda values: int(
-                    (values >= 10).sum()
-                ),
-            ),
-            qualified_trades=(
-                "total_trades",
-                lambda values: int(
-                    values[
-                        values >= 10
-                    ].sum()
-                ),
-            ),
-        )
-    )
-
-    print()
-    print("=" * 120)
-    print("WALK-FORWARD TEST SUMMARY")
-    print("=" * 120)
-
-    print(
-        summary.to_string(
-            index=False,
-            float_format=lambda value: (
-                f"{value:.2f}"
-            ),
-        )
+    source = (
+        valid
+        if not valid.empty
+        else summary_df
     )
 
     positive_windows = int(
         (
-            summary[
-                "average_return_pct"
+            source[
+                "total_return_pct"
             ]
             > 0
         ).sum()
     )
 
-    print()
-    print(
-        f"Positive windows: "
-        f"{positive_windows}/"
-        f"{len(summary)}"
+    total_windows = int(
+        len(source)
     )
 
-    print(
-        f"Overall average return: "
-        f"{summary['average_return_pct'].mean():+.2f}%"
+    return {
+        "windows_total": int(
+            len(summary_df)
+        ),
+        "windows_used": total_windows,
+        "windows_with_enough_trades": (
+            int(
+                summary_df[
+                    "enough_trades"
+                ].sum()
+            )
+        ),
+        "positive_windows": (
+            positive_windows
+        ),
+        "positive_window_rate_pct": (
+            positive_windows
+            / total_windows
+            * 100
+            if total_windows
+            else 0.0
+        ),
+        "total_oos_trades": int(
+            summary_df[
+                "total_trades"
+            ].sum()
+        ),
+        "mean_oos_return_pct": (
+            _safe_number(
+                source[
+                    "total_return_pct"
+                ].mean()
+            )
+        ),
+        "median_oos_return_pct": (
+            _safe_number(
+                source[
+                    "total_return_pct"
+                ].median()
+            )
+        ),
+        "worst_oos_return_pct": (
+            _safe_number(
+                source[
+                    "total_return_pct"
+                ].min()
+            )
+        ),
+        "best_oos_return_pct": (
+            _safe_number(
+                source[
+                    "total_return_pct"
+                ].max()
+            )
+        ),
+        "mean_sharpe_ratio": (
+            _safe_number(
+                source[
+                    "sharpe_ratio"
+                ].mean()
+            )
+        ),
+        "median_sharpe_ratio": (
+            _safe_number(
+                source[
+                    "sharpe_ratio"
+                ].median()
+            )
+        ),
+        "mean_max_drawdown_pct": (
+            _safe_number(
+                source[
+                    "max_drawdown_pct"
+                ].mean()
+            )
+        ),
+        "worst_max_drawdown_pct": (
+            _safe_number(
+                source[
+                    "max_drawdown_pct"
+                ].min()
+            )
+        ),
+        "mean_profit_factor": (
+            _safe_number(
+                source[
+                    "profit_factor"
+                ].mean()
+            )
+        ),
+        "mean_win_rate_pct": (
+            _safe_number(
+                source[
+                    "win_rate_pct"
+                ].mean()
+            )
+        ),
+        "robust": bool(
+            total_windows >= 3
+            and (
+                positive_windows
+                / total_windows
+            )
+            >= 0.60
+            and _safe_number(
+                source[
+                    "sharpe_ratio"
+                ].median()
+            )
+            > 0
+        ),
+    }
+
+
+def run_walk_forward(
+    *,
+    config: WalkForwardConfig,
+    symbols: Iterable[str] | None = None,
+    db_path: str = DEFAULT_DB_PATH,
+    output_dir: Path = DEFAULT_OUTPUT_DIR,
+) -> tuple[
+    pd.DataFrame,
+    pd.DataFrame,
+    dict[str, Any],
+]:
+    config.validate()
+
+    output_dir.mkdir(
+        parents=True,
+        exist_ok=True,
     )
 
+    selected_symbols = (
+        sorted(
+            {
+                str(symbol)
+                .upper()
+                .strip()
+                for symbol in symbols
+                if str(symbol).strip()
+            }
+        )
+        if symbols
+        else list(TOP10_SYMBOLS)
+    )
+
+    if not selected_symbols:
+        raise ValueError(
+            "Không tìm thấy symbol để chạy "
+            "walk-forward."
+        )
+
+    windows = build_walk_forward_windows(
+        config
+    )
+
+    entry_model = build_entry_model(
+        config.entry_model_name
+    )
+
+    exit_model = build_exit_model(
+        name=config.exit_model_name,
+        break_even_trigger=(
+            config.break_even_trigger
+        ),
+        stop_atr_multiplier=(
+            config.atr_stop_multiplier
+        ),
+        target_atr_multiplier=(
+            config.atr_target_multiplier
+        ),
+        trailing_atr_multiplier=(
+            config.trailing_atr_multiplier
+        ),
+    )
+
+    position_sizer = build_position_sizer(
+        config
+    )
+
+    summary_rows: list[
+        dict[str, Any]
+    ] = []
+
+    all_trade_frames: list[
+        pd.DataFrame
+    ] = []
+
+    print("=" * 100)
     print(
-        f"Overall average Sharpe: "
-        f"{summary['average_sharpe'].mean():.2f}"
+        "BENCHMARK-ALIGNED "
+        "WALK-FORWARD OOS VALIDATION"
+    )
+    print("=" * 100)
+    print(
+        f"Symbols       : "
+        f"{len(selected_symbols)}"
+    )
+    print(
+        f"Windows       : "
+        f"{len(windows)}"
+    )
+    print(
+        f"Train/Test    : "
+        f"{config.train_years} năm / "
+        f"{config.test_months} tháng"
+    )
+    print(
+        f"Mode          : "
+        f"{'Anchored' if config.anchored else 'Rolling'}"
+    )
+    print(
+        f"Entry         : "
+        f"{config.entry_model_name}"
+    )
+    print(
+        f"Exit          : "
+        f"{config.exit_model_name} "
+        f"({config.atr_stop_multiplier:g}/"
+        f"{config.atr_target_multiplier:g})"
+    )
+    print(
+        f"Ranking       : "
+        f"{config.ranking_method}"
+    )
+    print(
+        f"PositionSizer : "
+        f"{config.position_sizer_name}"
+    )
+    print(
+        f"Output        : "
+        f"{output_dir}"
+    )
+    print("=" * 100)
+
+    for window in windows:
+        print(
+            f"[{window.window_id:02d}/"
+            f"{len(windows):02d}] "
+            f"Train {window.train_start} "
+            f"-> {window.train_end} | "
+            f"OOS {window.test_start} "
+            f"-> {window.test_end}"
+        )
+
+        started_at = perf_counter()
+
+        (
+            trades,
+            metrics,
+            equity_df,
+        ) = run_backtest(
+            symbols=selected_symbols,
+            db_path=db_path,
+            start_date=(
+                window.test_start
+            ),
+            end_date=(
+                window.test_end
+            ),
+            initial_capital=(
+                config.initial_capital
+            ),
+            position_size_pct=(
+                config.position_size_pct
+            ),
+            stop_loss_pct=(
+                config.stop_loss_pct
+            ),
+            take_profit_pct=(
+                config.take_profit_pct
+            ),
+            max_holding_days=(
+                config.max_holding_days
+            ),
+            min_adx=config.min_adx,
+            buy_commission_pct=(
+                config.buy_commission_pct
+            ),
+            sell_commission_pct=(
+                config.sell_commission_pct
+            ),
+            sell_tax_pct=(
+                config.sell_tax_pct
+            ),
+            buy_slippage_pct=(
+                config.buy_slippage_pct
+            ),
+            sell_slippage_pct=(
+                config.sell_slippage_pct
+            ),
+            entry_model=entry_model,
+            exit_model=exit_model,
+            ranking_method=(
+                config.ranking_method
+            ),
+            position_sizer=(
+                position_sizer
+            ),
+            verbose=False,
+        )
+
+        elapsed = (
+            perf_counter()
+            - started_at
+        )
+
+        trades_df = _normalize_trades(
+            trades
+        )
+
+        row = _metric_row(
+            window=window,
+            config=config,
+            metrics=metrics,
+            trade_count=len(
+                trades_df
+            ),
+            elapsed_seconds=elapsed,
+        )
+
+        summary_rows.append(
+            row
+        )
+
+        if not trades_df.empty:
+            trades_df["window_id"] = (
+                window.window_id
+            )
+
+            trades_df["oos_start"] = (
+                window.test_start
+            )
+
+            trades_df["oos_end"] = (
+                window.test_end
+            )
+
+            trades_df["entry_model"] = (
+                config.entry_model_name
+            )
+
+            trades_df["position_sizer"] = (
+                config.position_sizer_name
+            )
+
+            metadata_columns = [
+                "window_id",
+                "oos_start",
+                "oos_end",
+                "entry_model",
+                "position_sizer",
+            ]
+
+            remaining_columns = [
+                column
+                for column in trades_df.columns
+                if column not in metadata_columns
+            ]
+
+            trades_df = trades_df[
+                metadata_columns
+                + remaining_columns
+            ]
+
+            all_trade_frames.append(
+                trades_df
+            )
+
+        if (
+            isinstance(
+                equity_df,
+                pd.DataFrame,
+            )
+            and not equity_df.empty
+        ):
+            curve = equity_df.copy()
+
+            curve.insert(
+                0,
+                "window_id",
+                window.window_id,
+            )
+            curve.insert(
+                1,
+                "entry_model",
+                config.entry_model_name,
+            )
+            curve.insert(
+                2,
+                "position_sizer",
+                config.position_sizer_name,
+            )
+
+            curve.to_csv(
+                (
+                    output_dir
+                    / (
+                        "equity_window_"
+                        f"{window.window_id:02d}.csv"
+                    )
+                ),
+                index=False,
+                encoding="utf-8-sig",
+            )
+
+        print(
+            f"    Trades="
+            f"{row['total_trades']} | "
+            f"Return="
+            f"{row['total_return_pct']:.2f}% | "
+            f"Sharpe="
+            f"{row['sharpe_ratio']:.2f} | "
+            f"MDD="
+            f"{row['max_drawdown_pct']:.2f}% | "
+            f"{elapsed:.1f}s"
+        )
+
+    summary_df = pd.DataFrame(
+        summary_rows
+    )
+
+    trades_df = (
+        pd.concat(
+            all_trade_frames,
+            ignore_index=True,
+        )
+        if all_trade_frames
+        else pd.DataFrame()
+    )
+
+    aggregate = summarize_walk_forward(
+        summary_df
+    )
+
+    summary_df.to_csv(
+        output_dir / "summary.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+
+    trades_df.to_csv(
+        output_dir / "trades.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+
+    with (
+        output_dir
+        / "aggregate.json"
+    ).open(
+        "w",
+        encoding="utf-8",
+    ) as file:
+        json.dump(
+            aggregate,
+            file,
+            indent=2,
+            ensure_ascii=False,
+        )
+
+    with (
+        output_dir
+        / "config.json"
+    ).open(
+        "w",
+        encoding="utf-8",
+    ) as file:
+        json.dump(
+            {
+                **asdict(config),
+                "db_path": db_path,
+                "symbols": (
+                    selected_symbols
+                ),
+                "note": (
+                    "Train windows are metadata "
+                    "only in this OOS validation "
+                    "version."
+                ),
+            },
+            file,
+            indent=2,
+            ensure_ascii=False,
+        )
+
+    return (
+        summary_df,
+        trades_df,
+        aggregate,
     )
 
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
         description=(
-            "Walk-Forward Test cho "
-            "Exit Model."
+            "Benchmark-aligned rolling OOS "
+            "validation."
         )
     )
 
     parser.add_argument(
-        "--symbol",
-        nargs="+",
+        "--db",
+        default=DEFAULT_DB_PATH,
+    )
+
+    parser.add_argument(
+        "--output",
+        default=str(
+            DEFAULT_OUTPUT_DIR
+        ),
+    )
+
+    parser.add_argument(
+        "--symbols",
+        nargs="*",
         default=None,
+        help=(
+            "Mặc định dùng TOP10_SYMBOLS."
+        ),
     )
 
     parser.add_argument(
-        "--start-year",
-        type=int,
-        default=2018,
+        "--start",
+        default="2020-01-01",
     )
 
     parser.add_argument(
-        "--end-year",
-        type=int,
-        default=2026,
+        "--end",
+        default="2026-07-31",
     )
 
     parser.add_argument(
         "--train-years",
         type=int,
-        default=4,
+        default=3,
     )
 
     parser.add_argument(
-        "--test-years",
+        "--test-months",
         type=int,
-        default=1,
+        default=12,
     )
 
     parser.add_argument(
-        "--step-years",
+        "--step-months",
         type=int,
-        default=1,
+        default=12,
     )
 
     parser.add_argument(
-        "--exit-model",
-        choices=[
-            "fixed",
-            "atr",
-            "break_even",
-            "trailing_atr",
-        ],
-        default="trailing_atr",
+        "--anchored",
+        action="store_true",
+    )
+
+    parser.add_argument(
+        "--capital",
+        type=float,
+        default=100_000_000.0,
+    )
+
+    parser.add_argument(
+        "--position-size",
+        type=float,
+        default=20.0,
     )
 
     parser.add_argument(
@@ -476,7 +1176,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--hold",
         type=int,
-        default=10,
+        default=30,
     )
 
     parser.add_argument(
@@ -486,15 +1186,41 @@ def parse_args() -> argparse.Namespace:
     )
 
     parser.add_argument(
-        "--break-even-trigger",
-        type=float,
-        default=7.0,
+        "--min-trades",
+        type=int,
+        default=5,
+    )
+
+    parser.add_argument(
+        "--entry-model",
+        choices=ENTRY_MODEL_CHOICES,
+        default=(
+            "hybrid_trend_context"
+        ),
+    )
+
+    parser.add_argument(
+        "--exit-model",
+        choices=EXIT_MODEL_CHOICES,
+        default="atr",
+    )
+
+    parser.add_argument(
+        "--ranking",
+        choices=RANKING_CHOICES,
+        default="relative_strength",
+    )
+
+    parser.add_argument(
+        "--position-sizer",
+        choices=POSITION_SIZER_CHOICES,
+        default="fixed_fraction",
     )
 
     parser.add_argument(
         "--atr-stop-multiplier",
         type=float,
-        default=2.5,
+        default=2.0,
     )
 
     parser.add_argument(
@@ -506,52 +1232,69 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument(
         "--trailing-atr-multiplier",
         type=float,
-        default=2.5,
+        default=2.0,
     )
 
     parser.add_argument(
-        "--output",
-        default=DEFAULT_OUTPUT,
+        "--break-even-trigger",
+        type=float,
+        default=5.0,
+    )
+
+    parser.add_argument(
+        "--risk-per-trade",
+        type=float,
+        default=1.0,
+    )
+
+    parser.add_argument(
+        "--max-position-size",
+        type=float,
+        default=20.0,
     )
 
     return parser.parse_args()
 
 
-def main() -> None:
+def main() -> int:
     args = parse_args()
 
-    symbols = (
-        TOP10_SYMBOLS
-        if args.symbol is None
-        else [
-            symbol.upper().strip()
-            for symbol in args.symbol
-        ]
-    )
-
-    windows = build_walk_forward_windows(
-        start_year=args.start_year,
-        end_year=args.end_year,
-        train_years=args.train_years,
-        test_years=args.test_years,
-        step_years=args.step_years,
-    )
-
-    if not windows:
-        raise ValueError(
-            "Không tạo được Walk-Forward Window."
-        )
-
-    run_walk_forward(
-        symbols=symbols,
-        windows=windows,
-        exit_model_name=args.exit_model,
+    config = WalkForwardConfig(
+        start_date=args.start,
+        end_date=args.end,
+        train_years=(
+            args.train_years
+        ),
+        test_months=(
+            args.test_months
+        ),
+        step_months=(
+            args.step_months
+        ),
+        anchored=args.anchored,
+        initial_capital=(
+            args.capital
+        ),
+        position_size_pct=(
+            args.position_size
+        ),
         stop_loss_pct=args.sl,
         take_profit_pct=args.tp,
-        max_holding_days=args.hold,
+        max_holding_days=(
+            args.hold
+        ),
         min_adx=args.min_adx,
-        break_even_trigger=(
-            args.break_even_trigger
+        entry_model_name=(
+            args.entry_model
+        ),
+        exit_model_name=(
+            args.exit_model
+        ),
+        ranking_method=(
+            args.ranking
+        ),
+        position_sizer_name=(
+            args.position_sizer
         ),
         atr_stop_multiplier=(
             args.atr_stop_multiplier
@@ -562,9 +1305,77 @@ def main() -> None:
         trailing_atr_multiplier=(
             args.trailing_atr_multiplier
         ),
-        output_path=args.output,
+        break_even_trigger=(
+            args.break_even_trigger
+        ),
+        risk_per_trade_pct=(
+            args.risk_per_trade
+        ),
+        max_position_size_pct=(
+            args.max_position_size
+        ),
+        min_trades_per_window=(
+            args.min_trades
+        ),
     )
+
+    (
+        summary_df,
+        _,
+        aggregate,
+    ) = run_walk_forward(
+        config=config,
+        symbols=args.symbols,
+        db_path=args.db,
+        output_dir=Path(
+            args.output
+        ),
+    )
+
+    print()
+    print("=" * 120)
+    print(
+        "WALK-FORWARD SUMMARY"
+    )
+    print("=" * 120)
+
+    display_columns = [
+        "window_id",
+        "test_start",
+        "test_end",
+        "entry_model",
+        "position_sizer",
+        "total_trades",
+        "total_return_pct",
+        "sharpe_ratio",
+        "max_drawdown_pct",
+        "profit_factor",
+        "enough_trades",
+    ]
+
+    print(
+        summary_df[
+            display_columns
+        ].to_string(
+            index=False
+        )
+    )
+
+    print("-" * 120)
+
+    for key, value in (
+        aggregate.items()
+    ):
+        print(
+            f"{key}: {value}"
+        )
+
+    print("=" * 120)
+
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(
+        main()
+    )

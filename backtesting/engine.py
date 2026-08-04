@@ -25,6 +25,7 @@ from backtesting.portfolio_metrics import (
 from collections import Counter
 from core.universe import get_vn100_symbols
 from backtesting.transaction_cost import TransactionCostConfig
+from backtesting.position_sizers import PositionSizer
 from strategy.base_strategy import BaseStrategy
 from strategy.trend_strategy_v1 import TrendStrategyV1
 from backtesting.trade_analytics import (
@@ -493,6 +494,10 @@ def generate_candidate_trades(
                 ),
                 default=None,
             ),
+           atr=_safe_float(
+               evaluation.get("atr"),
+               default=None,
+            ),
             market_regime=str(
                 evaluation.get(
                     "regime",
@@ -659,6 +664,7 @@ def run_backtest(
     buy_slippage_pct: float = 0.05,
     sell_slippage_pct: float = 0.05,
     ranking_method: str = "first_come",
+    position_sizer: PositionSizer | None = None,
     exit_model: BaseExitModel = DEFAULT_EXIT_MODEL,
 ) -> tuple[list[Trade], dict[str, Any], pd.DataFrame]:
     config = BacktestConfig(
@@ -735,6 +741,7 @@ def run_backtest(
     simulator = PortfolioSimulator(
         initial_cash=config.initial_capital,
         position_size_pct=config.position_size_pct,
+        position_sizer=position_sizer,
         ranking_method=config.ranking_method,
         transaction_cost_config=transaction_cost_config,
     )

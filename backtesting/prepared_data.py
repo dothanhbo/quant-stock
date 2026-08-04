@@ -186,6 +186,12 @@ def prepare_backtest_dataset(
         stock_df,
         end_date=end_date,
     )
+  
+    if (
+        data.empty
+        or "time" not in data.columns
+    ):
+        return pd.DataFrame()
 
     data = add_relative_strength_columns(
         data,
@@ -193,10 +199,37 @@ def prepare_backtest_dataset(
         period=rs_period,
     )
 
+    if (
+        data.empty
+        or "time" not in data.columns
+    ):
+        return pd.DataFrame()
+
     market_columns = [
-    "time",
-    "Market_Regime",
+        "time",
+        "Market_Regime",
     ]
+
+    if (
+        data.empty
+        or "time" not in data.columns
+    ):
+        return pd.DataFrame()
+
+    data["time"] = pd.to_datetime(
+        data["time"],
+        errors="coerce",
+    )
+
+    market_history["time"] = pd.to_datetime(
+        market_history["time"],
+        errors="coerce",
+    )
+
+    data = data.dropna(subset=["time"])
+    market_history = market_history.dropna(
+        subset=["time"]
+    )
 
     data = data.merge(
         market_history[

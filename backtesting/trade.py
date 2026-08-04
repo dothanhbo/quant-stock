@@ -32,6 +32,7 @@ class Trade:
     relative_strength: float | None = None
     adx: float | None = None
     volume_ratio: float | None = None
+    atr: float | None = None
     market_regime: str | None = None
     entry_model: str | None = None
 

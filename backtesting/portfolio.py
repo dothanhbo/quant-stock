@@ -62,6 +62,7 @@ class Portfolio:
         relative_strength: float | None = None,
         adx: float | None = None,
         volume_ratio: float | None = None,
+        atr: float | None = None,
         market_regime: str | None = None,
         entry_model: str | None = None,
     ) -> Trade:
@@ -114,6 +115,7 @@ class Portfolio:
             relative_strength=relative_strength,
             adx=adx,
             volume_ratio=volume_ratio,
+            atr=atr,
             market_regime=market_regime,
             entry_model=entry_model,
             buy_commission=(
