@@ -333,6 +333,9 @@ class PortfolioSimulator:
                     signal_score=(
                         candidate.signal_score
                     ),
+                    market_regime=(
+                        candidate.market_regime
+                    ),
                 )
             )
 

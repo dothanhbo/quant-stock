@@ -2,8 +2,17 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Mapping, Protocol, Sequence
+from typing import (
+    TYPE_CHECKING,
+    Mapping,
+    Protocol,
+    Sequence,
+)
 
+if TYPE_CHECKING:
+    from backtesting.allocation_factors import (
+        WeightedAllocationFactor,
+    )
 
 @dataclass(slots=True, frozen=True)
 class AllocationCandidate:
@@ -12,6 +21,7 @@ class AllocationCandidate:
     stop_price: float | None = None
     atr: float | None = None
     signal_score: float | None = None
+    market_regime: str | None = None
 
     def __post_init__(self) -> None:
         symbol = self.symbol.strip().upper()
@@ -1011,3 +1021,134 @@ def calculate_portfolio_risk_pct(
         / portfolio_equity
         * 100
     )
+
+@dataclass(slots=True, frozen=True)
+class CompositeAllocator:
+    factors: Sequence[
+        "WeightedAllocationFactor"
+    ]
+    maximum_position_pct: float = 40.0
+    minimum_composite_score: float = 0.0
+    name: str = "composite"
+
+    def __post_init__(self) -> None:
+        if not self.factors:
+            raise ValueError(
+                "CompositeAllocator cần ít nhất "
+                "một factor."
+            )
+
+        if not 0 < self.maximum_position_pct <= 100:
+            raise ValueError(
+                "maximum_position_pct phải nằm "
+                "trong khoảng (0, 100]."
+            )
+
+        if self.minimum_composite_score < 0:
+            raise ValueError(
+                "minimum_composite_score "
+                "không được âm."
+            )
+
+        total_factor_weight = sum(
+            factor.weight
+            for factor in self.factors
+        )
+
+        if total_factor_weight <= 0:
+            raise ValueError(
+                "Tổng factor weight phải lớn hơn 0."
+            )
+
+    def allocate(
+        self,
+        candidates: Sequence[
+            AllocationCandidate
+        ],
+        *,
+        portfolio_equity: float,
+        investable_pct: float = 100.0,
+    ) -> list[AllocationResult]:
+        _validate_common_inputs(
+            candidates,
+            portfolio_equity=(
+                portfolio_equity
+            ),
+            investable_pct=(
+                investable_pct
+            ),
+        )
+
+        raw_weights: dict[
+            str,
+            float,
+        ] = {}
+
+        reference_risks: dict[
+            str,
+            float | None,
+        ] = {}
+
+        for candidate in candidates:
+            composite_score = sum(
+                factor.score(
+                    candidate
+                )
+                for factor in self.factors
+            )
+
+            if (
+                not math.isfinite(
+                    composite_score
+                )
+                or composite_score
+                <= self.minimum_composite_score
+            ):
+                continue
+
+            raw_weights[
+                candidate.symbol
+            ] = composite_score
+
+            reference_risks[
+                candidate.symbol
+            ] = (
+                candidate.stop_distance_pct
+            )
+
+        if not raw_weights:
+            raise ValueError(
+                "Không có candidate nào đạt "
+                "minimum_composite_score."
+            )
+
+        maximum_weight = (
+            self.maximum_position_pct
+            / 100
+        )
+
+        capped_weights = (
+            _cap_and_redistribute_weights(
+                raw_weights,
+                maximum_weight=(
+                    maximum_weight
+                ),
+            )
+        )
+
+        return _build_results(
+            candidates,
+            raw_weights=capped_weights,
+            portfolio_equity=(
+                portfolio_equity
+            ),
+            investable_pct=(
+                investable_pct
+            ),
+            reference_risks=(
+                reference_risks
+            ),
+            reason=(
+                "Multi-factor composite allocation"
+            ),
+        )

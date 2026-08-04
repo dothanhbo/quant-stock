@@ -2,14 +2,22 @@ from __future__ import annotations
 
 from backtesting.portfolio_allocation import (
     AllocationCandidate,
+    CompositeAllocator,
     EqualWeightAllocator,
     InverseATRAllocator,
     RiskBudgetAllocator,
     StopRiskAllocator,
     calculate_portfolio_risk_pct,
     VolatilityScalingAllocator,
+    CompositeAllocator
 )
-
+from backtesting.allocation_factors import (
+    ATRFactor,
+    RegimeFactor,
+    SignalScoreFactor,
+    StopDistanceFactor,
+    WeightedAllocationFactor,
+)
 
 def print_results(
     name: str,
@@ -79,6 +87,7 @@ def main() -> None:
             stop_price=23_500,
             atr=800,
             signal_score=82,
+            market_regime="BULL",
         ),
         AllocationCandidate(
             symbol="FPT",
@@ -86,6 +95,7 @@ def main() -> None:
             stop_price=114_000,
             atr=3_000,
             signal_score=88,
+            market_regime="SIDEWAY",
         ),
         AllocationCandidate(
             symbol="MWG",
@@ -93,6 +103,7 @@ def main() -> None:
             stop_price=60_000,
             atr=2_600,
             signal_score=76,
+            market_regime="BEAR",
         ),
         AllocationCandidate(
             symbol="SSI",
@@ -100,6 +111,7 @@ def main() -> None:
             stop_price=29_800,
             atr=1_400,
             signal_score=80,
+            market_regime="BULL",
         ),
     ]
 
@@ -118,6 +130,34 @@ def main() -> None:
             target_risk_per_position_pct=0.80,
             maximum_position_pct=35.0,
             minimum_position_pct=2.0,
+        ),
+        CompositeAllocator(
+            factors=[
+                WeightedAllocationFactor(
+                    factor=SignalScoreFactor(
+                        minimum_score=40,
+                        maximum_score=100,
+                    ),
+                    weight=0.35,
+                ),
+                WeightedAllocationFactor(
+                    factor=ATRFactor(
+                        target_atr_pct=3.0,
+                    ),
+                    weight=0.25,
+                ),
+                WeightedAllocationFactor(
+                    factor=StopDistanceFactor(
+                        target_stop_distance_pct=6.0,
+                    ),
+                    weight=0.25,
+                ),
+                WeightedAllocationFactor(
+                    factor=RegimeFactor(),
+                    weight=0.15,
+                ),
+            ],
+            maximum_position_pct=40.0,
         ),
     ]
 
