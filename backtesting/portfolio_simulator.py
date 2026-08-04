@@ -36,6 +36,10 @@ from backtesting.trade_risk import (
     TradeRiskMetadata,
     resolve_candidate_stop_price,
 )
+from backtesting.regime_policy import (
+    RegimePortfolioDecision,
+    RegimePortfolioPolicy,
+)
 @dataclass(slots=True)
 class RejectedTrade:
     trade: Trade
@@ -75,6 +79,7 @@ class PortfolioSimulator:
             TransactionCostConfig | None
         ) = None,
         max_portfolio_heat_pct: float | None = None,
+        regime_policy: RegimePortfolioPolicy | None = None,
     ) -> None:
         if initial_cash <= 0:
             raise ValueError(
@@ -141,6 +146,10 @@ class PortfolioSimulator:
 
         self.portfolio_heat = PortfolioHeat(
             max_heat_pct=max_portfolio_heat_pct,
+        )
+
+        self.regime_policy = (
+            regime_policy
         )
 
     def _calculate_quantity(
@@ -223,6 +232,46 @@ class PortfolioSimulator:
             .current_heat_pct
         )
 
+    def _resolve_regime_decision(
+        self,
+        candidate: Trade,
+    ) -> RegimePortfolioDecision | None:
+        if self.regime_policy is None:
+            return None
+
+        return self.regime_policy.resolve(
+            candidate.market_regime
+        )
+
+    def _resolve_effective_heat_limit(
+        self,
+        regime_decision: (
+            RegimePortfolioDecision | None
+        ),
+    ) -> float | None:
+        configured_limit = (
+            self.portfolio_heat.max_heat_pct
+        )
+
+        if regime_decision is None:
+            return configured_limit
+
+        regime_limit = (
+            regime_decision
+            .max_portfolio_heat_pct
+        )
+
+        if configured_limit is None:
+            return regime_limit
+
+        if regime_limit is None:
+            return configured_limit
+
+        return min(
+            configured_limit,
+            regime_limit,
+        )
+
     def _reject_trade(
         self,
         *,
@@ -287,12 +336,63 @@ class PortfolioSimulator:
         ],
     ) -> None:
 
+        regime_decision = (
+            self._resolve_regime_decision(
+                candidate
+            )
+        )
+
+        if regime_decision is not None:
+            if (
+                regime_decision
+                .normalized_regime
+                == "UNKNOWN"
+            ):
+                self._reject_trade(
+                    rejected_trades=(
+                        rejected_trades
+                    ),
+                    candidate=candidate,
+                    reason=(
+                        "unknown_market_regime"
+                    ),
+                )
+
+                return
+
+            if not (
+                regime_decision
+                .allow_new_positions
+            ):
+                self._reject_trade(
+                    rejected_trades=(
+                        rejected_trades
+                    ),
+                    candidate=candidate,
+                    reason=(
+                        "regime_entries_disabled"
+                    ),
+                )
+
+                return
+
+            effective_max_positions = min(
+                self.max_positions,
+                regime_decision.max_positions,
+            )
+        else:
+            effective_max_positions = (
+                self.max_positions
+            )
+
         decision = decide_candidate(
             candidate=candidate,
             open_positions=(
                 self.portfolio.open_positions
             ),
-            max_positions=self.max_positions,
+            max_positions=(
+                effective_max_positions
+            ),
             ranking_method=self.ranking_method,
             replacement_threshold=0.0,
             allow_duplicate_symbols=False,
@@ -366,10 +466,13 @@ class PortfolioSimulator:
                 )
             )
 
-        if (
-            self.portfolio_heat.max_heat_pct
-            is not None
-        ):
+        effective_heat_limit = (
+            self._resolve_effective_heat_limit(
+                regime_decision
+            )
+        )
+
+        if effective_heat_limit is not None:
             if risk_metadata is None:
                 self._reject_trade(
                     rejected_trades=(
@@ -409,8 +512,14 @@ class PortfolioSimulator:
                 )
             )
 
+            heat_engine = PortfolioHeat(
+                max_heat_pct=(
+                    effective_heat_limit
+                ),
+            )
+
             heat_decision = (
-                self.portfolio_heat.decide(
+                heat_engine.decide(
                     portfolio_equity=(
                         portfolio_equity
                     ),
@@ -546,6 +655,10 @@ class PortfolioSimulator:
                 "max_portfolio_heat_pct": (
                     self.portfolio_heat
                     .max_heat_pct
+                ),
+                "regime_policy_enabled": (
+                    self.regime_policy
+                    is not None
                 ),
             }
         )
