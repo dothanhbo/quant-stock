@@ -14,12 +14,13 @@ from backtesting.trade import (
 class ExitResult:
     entry_index: int
     exit_index: int
-
     entry_date: pd.Timestamp
     exit_date: pd.Timestamp
-
     entry_price: float
     exit_price: float
+
+    initial_stop_price: float
+    initial_target_price: float
 
     stop_price: float
     target_price: float

@@ -26,6 +26,9 @@ from collections import Counter
 from core.universe import get_vn100_symbols
 from backtesting.transaction_cost import TransactionCostConfig
 from backtesting.position_sizers import PositionSizer
+from backtesting.regime_policy import (
+    RegimePortfolioPolicy,
+)
 from strategy.base_strategy import BaseStrategy
 from strategy.trend_strategy_v1 import TrendStrategyV1
 from backtesting.trade_analytics import (
@@ -203,13 +206,27 @@ def _simulate_exit(
 ) -> ExitResult:
     entry_row = price_df.iloc[entry_index]
     entry_price = float(entry_row["open"])
-    entry_date = pd.Timestamp(entry_row["time"])
 
     stop_price, target_price = exit_model.calculate_levels(
         entry_price=entry_price,
         entry_row=entry_row,
         config=config,
     )
+
+    initial_stop_price = float(stop_price)
+    initial_target_price = float(target_price)
+
+    if initial_stop_price <= 0:
+        raise ValueError(
+            f"initial_stop_price không hợp lệ: "
+            f"{initial_stop_price:.2f}"
+        )
+
+    if initial_target_price <= initial_stop_price:
+        raise ValueError(
+            "initial_target_price phải lớn hơn "
+            "initial_stop_price"
+        )
 
     highest_price = entry_price
 
@@ -219,7 +236,9 @@ def _simulate_exit(
     )
 
     exit_index = final_index
-    exit_price = float(price_df.iloc[final_index]["close"])
+    exit_price = float(
+        price_df.iloc[final_index]["close"]
+    )
     exit_reason = ExitReason.TIME_EXIT
     execution = ExitExecution.NORMAL
 
@@ -233,7 +252,8 @@ def _simulate_exit(
         day_high = float(row["high"])
         day_low = float(row["low"])
 
-        # Kiểm tra gap bằng stop/target của phiên trước
+        # Kiểm tra gap bằng stop/target đang có hiệu lực
+        # từ phiên trước.
         if day_open <= stop_price:
             exit_index = current_index
             exit_price = day_open
@@ -272,7 +292,7 @@ def _simulate_exit(
             execution = ExitExecution.NORMAL
             break
 
-        # Chỉ cập nhật trailing sau khi phiên hiện tại kết thúc
+        # Chỉ cập nhật trailing/break-even sau khi phiên kết thúc.
         highest_price = max(
             highest_price,
             day_high,
@@ -289,18 +309,19 @@ def _simulate_exit(
             )
         )
 
+        stop_price = float(stop_price)
+        target_price = float(target_price)
+
         if stop_price <= 0:
             raise ValueError(
-                f"stop_price không hợp lệ: {stop_price:.2f}"
+                f"stop_price không hợp lệ: "
+                f"{stop_price:.2f}"
             )
 
         if target_price <= stop_price:
             raise ValueError(
                 "target_price phải lớn hơn stop_price"
             )
-
-    exit_row = price_df.iloc[exit_index]
-    return_pct = (exit_price / entry_price - 1) * 100
 
     return ExitResult(
         entry_index=entry_index,
@@ -313,8 +334,16 @@ def _simulate_exit(
         ),
         entry_price=entry_price,
         exit_price=exit_price,
+
+        # Stop/target ban đầu dùng cho position sizing
+        # và portfolio heat.
+        initial_stop_price=initial_stop_price,
+        initial_target_price=initial_target_price,
+
+        # Stop/target cuối cùng sau trailing/break-even.
         stop_price=stop_price,
         target_price=target_price,
+
         exit_reason=exit_reason,
         execution=execution,
     )
@@ -357,13 +386,6 @@ def generate_candidate_trades(
         .sort_values("time")
     )
 
-    if start_date is not None:
-        start_ts = pd.Timestamp(start_date)
-
-        price_df = price_df[
-            price_df["time"] >= start_ts
-        ]
-
     if end_date is not None:
         end_ts = pd.Timestamp(end_date)
 
@@ -394,11 +416,35 @@ def generate_candidate_trades(
             + ", ".join(sorted(missing_columns))
         )
 
+    first_signal_index = warmup_bars
+
+    if start_date is not None:
+        start_ts = pd.Timestamp(
+            start_date
+        )
+
+        eligible_indices = price_df.index[
+            price_df["time"] >= start_ts
+        ]
+
+        if len(eligible_indices) == 0:
+            return []
+
+        first_signal_index = max(
+            warmup_bars,
+            int(eligible_indices[0]),
+        )
+
     trades: list[Trade] = []
 
-    next_allowed_signal_index = warmup_bars
+    next_allowed_signal_index = (
+        first_signal_index
+    )
 
-    for signal_index in range(warmup_bars, len(price_df) - 1):
+    for signal_index in range(
+        first_signal_index,
+        len(price_df) - 1
+    ):
         if signal_index < next_allowed_signal_index:
             continue
 
@@ -470,7 +516,6 @@ def generate_candidate_trades(
             entry_date=exit_info.entry_date,
             entry_price=exit_info.entry_price,
             quantity=1,
-            stop_price=exit_info.stop_price,
             signal_score=_safe_float(
                 evaluation.get(
                     "score"
@@ -499,9 +544,9 @@ def generate_candidate_trades(
                evaluation.get("atr"),
                default=None,
             ),
-            risk_per_share=(
-                exit_info.entry_price
-                - exit_info.stop_price
+            stop_price=_safe_float(
+                exit_info.stop_price,
+                default=None,
             ),
 
             market_regime=str(
@@ -672,6 +717,7 @@ def run_backtest(
     ranking_method: str = "first_come",
     position_sizer: PositionSizer | None = None,
     max_portfolio_heat_pct: float | None = None,
+    regime_policy: RegimePortfolioPolicy | None = None,
     exit_model: BaseExitModel = DEFAULT_EXIT_MODEL,
 ) -> tuple[list[Trade], dict[str, Any], pd.DataFrame]:
     config = BacktestConfig(
@@ -754,6 +800,7 @@ def run_backtest(
         max_portfolio_heat_pct=(
             max_portfolio_heat_pct
         ),
+        regime_policy=regime_policy,
     )
 
     result = simulator.simulate(all_trades)
@@ -796,7 +843,11 @@ def run_backtest(
     profit_factor_amount = (
         gross_profit_amount / gross_loss_amount
         if gross_loss_amount > 0
-        else 0.0
+        else (
+            math.inf
+            if gross_profit_amount > 0
+            else 0.0
+        )
     )
 
     total_buy_commission = sum(
@@ -1136,6 +1187,13 @@ def main() -> None:
             args.max_portfolio_heat
         ),
     )
+    print("=" * 60)
+    print("Trades:", len(trades))
+    print(
+        "Rejected:",
+        metrics.get("rejected_trade_reasons", {}),
+    )
+    print("=" * 60)
     print(
         f"Phí mua {metrics['buy_commission_pct']:.2f}% | "
         f"Phí bán {metrics['sell_commission_pct']:.2f}% | "
