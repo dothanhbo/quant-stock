@@ -12,7 +12,7 @@ Quant Stock is an **end-to-end quantitative investment research framework** desi
 
 Unlike many retail trading projects that focus solely on finding profitable entry signals, Quant Stock emphasizes **research quality, statistical validation, portfolio simulation, and systematic strategy development**.
 
-The project provides a complete workflow—from historical market data and technical indicators to portfolio-level backtesting and advanced research diagnostics—allowing investment ideas to be evaluated objectively before being considered for live deployment.
+The project provides a complete workflow—from historical market data and technical indicators to portfolio-level backtesting, advanced research diagnostics, and persistent paper execution. Validated signals can be passed through shared position sizing, portfolio risk controls, a simulated broker, SQLite state persistence, and Telegram notifications before any live deployment is considered.
 
 ---
 
@@ -67,7 +67,8 @@ The philosophy is simple:
 - VNINDEX benchmark integration
 - Multi-symbol support
 - Incremental market updates
-- Clean data pipeline
+- Data freshness validation
+- Centralized OHLCV pipeline
 
 ---
 
@@ -87,47 +88,49 @@ Current indicators include:
 - Distance from EMA
 - Momentum Indicators
 
-Designed to be fully extensible.
-
-Adding a new indicator typically requires only a few lines of code.
+The indicator layer is reusable across scanning, backtesting, research, and execution.
 
 ---
 
 ## 📌 Entry Models
 
-Implemented strategies
+Implemented strategies:
 
 - Trend Strategy V1
 - Donchian Breakout V1
 - Hybrid Trend + Donchian
 - Market Regime Filter
 
-The framework follows a modular architecture, allowing new strategies to be implemented independently.
+Strategies follow a common interface so they can be evaluated consistently across the framework.
 
 ---
 
 ## 📉 Exit Models
 
-Supported exit mechanisms
+Supported exit mechanisms:
 
 - ATR Stop Loss
 - ATR Profit Target
 - Time-based Exit
 - Maximum Holding Period
 - Gap-aware Execution
+- Trailing ATR logic in research and portfolio simulation
 
 ---
 
 ## 💼 Portfolio Engine
 
-Portfolio simulation includes
+Portfolio simulation includes:
 
 - Cash management
-- Position sizing
+- Shared position-sizing interface
+- ATR risk sizing
+- Fixed-fraction sizing for benchmarking
 - Transaction costs
 - Slippage
 - Tax
 - Maximum concurrent positions
+- Portfolio heat and exposure controls
 - Equity curve generation
 - Portfolio performance metrics
 
@@ -135,17 +138,54 @@ Unlike many retail backtesting tools, Quant Stock evaluates strategies at the **
 
 ---
 
+## 🧪 Paper Trading Execution
+
+The paper-trading layer extends validated research into a simulated execution environment:
+
+- Shared `PositionSizer` implementations with backtesting
+- ATR-based risk sizing by default
+- Order Manager
+- Risk Guard
+- Maximum position and portfolio exposure limits
+- Maximum open positions
+- Daily loss limit
+- Kill switch support
+- Commission and slippage simulation
+- Persistent orders, fills, positions, and snapshots in SQLite
+- Duplicate-position prevention
+- Telegram execution summaries
+- Paper mode disabled by configuration when not required
+
+No live broker API is called by the paper-trading workflow.
+
+---
+
+## 📲 Notifications
+
+- Daily scanner summaries
+- Signal and watchlist reporting
+- Paper-order execution results
+- Portfolio cash, equity, exposure, and open-position summaries
+- Retry handling for temporary Telegram API failures
+- Safe message splitting and HTML escaping
+
+---
+
 ## 🔬 Research Framework
 
-Current research modules
+Current research modules include:
 
 - Walk Forward Validation
+- Composite Walk Forward Optimization
 - Strategy Ablation Study
 - Monte Carlo Simulation
 - Parameter Stability Analysis
 - Market Regime Analysis
 - Trade Quality Diagnostics
 - Portfolio Benchmarking
+- Portfolio Stress Testing
+- Robustness Scoring
+- Automated HTML Research Report
 
 These modules help distinguish robust strategies from those that simply fit historical data.
 
@@ -155,31 +195,31 @@ These modules help distinguish robust strategies from those that simply fit hist
 
 ```mermaid
 flowchart LR
+    A[(Historical Market Database)]
+    A --> B[Indicator Engine]
+    B --> C[Strategy Scanner]
+    C --> D[Portfolio Allocation]
+    D --> E[Shared Position Sizer]
+    E --> F[Risk Guard]
+    F --> G[Order Manager]
+    G --> H[Paper Broker]
+    H --> I[(Paper Trading SQLite)]
+    H --> J[Telegram Notifications]
 
-A[(Historical Database)]
-
-A --> B[Indicator Engine]
-
-B --> C[Entry Models]
-
-C --> D[Exit Models]
-
-D --> E[Portfolio Engine]
-
-E --> F[Research Framework]
-
-F --> G[Research Reports]
+    C --> K[Backtesting Engine]
+    K --> L[Walk Forward / Monte Carlo / Stress Tests]
+    L --> M[HTML Research Report]
 ```
 
-The framework follows a modular pipeline where each component has a clearly defined responsibility.
+The project now separates research, portfolio construction, execution, persistence, and notification responsibilities.
 
-This architecture allows new strategies, indicators, or research modules to be integrated without affecting the rest of the system.
+The same position-sizing abstractions can be reused by portfolio backtests and paper execution, reducing the risk that simulated production behavior diverges from the research configuration.
 
 ---
 
-# 🔄 Research Pipeline
+# 🔄 Research and Execution Pipeline
 
-Every investment idea follows the same research workflow.
+Every investment idea follows a research-first workflow.
 
 ```text
 Historical Market Data
@@ -191,31 +231,36 @@ Indicator Calculation
 Signal Generation
           │
           ▼
-Trade Simulation
-          │
-          ▼
-Portfolio Construction
-          │
-          ▼
-Performance Evaluation
+Portfolio Backtesting
           │
           ▼
 Walk Forward Validation
           │
           ▼
-Monte Carlo Simulation
+Monte Carlo and Stress Testing
           │
           ▼
-Market Regime Analysis
+Parameter and Model Selection
           │
           ▼
-Trade Quality Analysis
+Automated Research Report
           │
           ▼
-Research Report
+Shared Position Sizing
+          │
+          ▼
+Risk Guard
+          │
+          ▼
+Paper Broker
+          │
+          ▼
+SQLite Persistence and Telegram
 ```
 
-The objective is not simply to discover profitable trades, but to understand **why a strategy works, when it works, and under which conditions it may fail.**
+The objective is not simply to discover profitable trades, but to understand **why a strategy works, when it works, under which conditions it may fail, and how it behaves in a simulated execution environment**.
+
+Paper trading is a validation stage—not evidence that a strategy is suitable for live capital.
 
 ---
 
@@ -223,22 +268,26 @@ The objective is not simply to discover profitable trades, but to understand **w
 
 ```text
 quant-stock/
-
-├── backtesting/          # Portfolio engine and execution simulator
-├── config/               # Strategy configurations
-├── core/                 # Shared utilities and database
-├── data/                 # Local databases
-├── research/             # Research modules
-├── research_results/     # Generated reports
-├── scripts/              # Data update scripts
-├── services/             # External data services
-├── strategy/             # Trading strategies
-├── tests/                # Unit tests
 │
-├── market.db
+├── backtesting/                 # Backtest, portfolio simulation and diagnostics
+│   └── position_sizers/         # Shared sizing interfaces and implementations
+├── config/                      # Strategy and research configuration
+├── core/                        # Database and shared infrastructure
+├── data/                        # Local generated databases (ignored by Git)
+├── execution/                   # Paper broker, risk guard and order management
+├── reporting/                   # Terminal dashboards and reporting helpers
+├── research/                    # Walk forward, Monte Carlo, stress and reports
+├── scripts/                     # Operational and data-update scripts
+├── services/                    # Telegram clients and notification formatters
+├── strategy/                    # Indicators, filters, scanners and entry models
+├── tests/                       # Automated tests
+│
+├── .env.example                 # Environment variable template
 ├── requirements.txt
 └── README.md
 ```
+
+Generated databases, reports, charts, caches, and local `.env` files should remain outside version control.
 
 ---
 
@@ -397,41 +446,94 @@ symbols
 
 # 🚀 Quick Start
 
-Run a basic signal scan
+## 1. Configure environment variables
 
-```bash
-python scanner.py
+Create a local `.env` file. Do not commit it.
+
+```env
+TELEGRAM_TOKEN=
+CHAT_ID=
+
+PAPER_TRADING_ENABLED=false
+PAPER_DATABASE_PATH=data/paper_trading.db
+PAPER_INITIAL_CASH=100000000
+
+PAPER_POSITION_SIZER=atr_risk
+PAPER_RISK_PER_TRADE_PCT=1.0
+PAPER_ATR_STOP_MULTIPLIER=2.0
+PAPER_MAX_POSITION_PCT=20.0
+
+PAPER_MAX_ORDERS_PER_SCAN=3
+PAPER_LOT_SIZE=100
+PAPER_MAX_EXPOSURE_PCT=80
+PAPER_MAX_OPEN_POSITIONS=10
+PAPER_MAX_DAILY_LOSS_PCT=3
+PAPER_MIN_CASH_BUFFER_PCT=5
 ```
 
-Run a strategy evaluation
+Keep `PAPER_TRADING_ENABLED=false` until local tests pass.
+
+## 2. Compile the project
 
 ```bash
-python strategy/scanner.py
+python -m compileall .
 ```
 
-Run portfolio backtest
+## 3. Run the market scanner
 
 ```bash
-python -m research.portfolio_backtest
+python -m strategy.scanner
 ```
 
-Run Walk Forward Validation
+The scanner evaluates the latest valid market date, prints the signal dashboard, persists new signals, and sends the Telegram summary.
+
+## 4. Run a single-symbol backtest
 
 ```bash
-python -m research.walk_forward_hybrid_diagnostics
+python -m backtesting.engine --symbol HPG --quiet
 ```
 
-Run Monte Carlo
+## 5. Run composite walk-forward validation
 
 ```bash
-python -m research.monte_carlo
+python -m research.composite_walk_forward --symbols HPG FPT --start 2018-01-01 --end 2024-12-31 --train-years 4 --test-months 12 --step-months 12
 ```
 
-Generate research reports
+## 6. Run portfolio stress testing
 
 ```bash
-python -m research.generate_reports
+python -m research.benchmark_portfolio_stress --symbols HPG FPT
 ```
+
+## 7. Generate the research dashboard
+
+```bash
+python -m research.generate_research_report
+```
+
+Open the generated HTML file from `research_results/`.
+
+## 8. Test shared position sizing
+
+```bash
+python test_shared_position_sizer.py
+```
+
+## 9. Enable paper trading
+
+After the tests pass, update:
+
+```env
+PAPER_TRADING_ENABLED=true
+```
+
+Then run:
+
+```bash
+python -m strategy.scanner
+```
+
+Paper execution will use the configured shared position sizer, pass orders through `RiskGuard`, persist account state in SQLite, and send a separate Telegram portfolio update.
 
 ---
 
@@ -1101,21 +1203,34 @@ Hybrid strategies generally exhibit more stable behavior across different market
 
 ---
 
-# 🏆 Current Research Status
+# 🏆 Current Research and Execution Status
 
 | Module | Status |
 |---------|--------|
+| Market Data Pipeline | ✅ |
 | Indicator Engine | ✅ |
 | Trend Strategy | ✅ |
 | Donchian Breakout | ✅ |
 | Hybrid Strategy | ✅ |
+| Signal Scoring and Watchlist | ✅ |
+| Market Regime Adaptation | ✅ |
 | Portfolio Engine | ✅ |
+| Shared Position Sizing | ✅ |
 | Walk Forward Validation | ✅ |
+| Composite Walk Forward | ✅ |
 | Monte Carlo Simulation | ✅ |
 | Parameter Stability | ✅ |
-| Market Regime Analysis | ✅ |
-| Trade Diagnostics | ✅ |
-| Signal Quality Model | 🚧 |
+| Portfolio Stress Testing | ✅ |
+| Robustness Scoring | ✅ |
+| Automated HTML Research Report | ✅ |
+| Telegram Scanner Notification | ✅ |
+| Paper Broker | ✅ |
+| Risk Guard | ✅ |
+| SQLite Paper Persistence | ✅ |
+| Paper Execution Telegram Summary | ✅ |
+| Order Exit Lifecycle | 🚧 |
+| Paper Performance Analytics | 📅 Planned |
+| Live Broker Integration | 📅 Planned |
 | Machine Learning Ranking | 📅 Planned |
 
 ---
@@ -1140,159 +1255,90 @@ Historical performance is presented for research purposes only and should not be
 
 # 🛣️ Development Roadmap
 
-Quant Stock follows an iterative research-driven development process.
+Quant Stock follows an iterative, research-driven development process. New execution capabilities are added only after their corresponding research and risk assumptions are testable.
 
-Instead of continuously adding new indicators, development focuses on improving the quality, robustness, and reproducibility of research.
+## ✅ Phase 1 — Research Foundation
 
----
+Completed:
 
-## ✅ Sprint 1 — Research Foundation
-
-Completed
-
-### Data Layer
-
-- Historical market database
-- Incremental data update pipeline
-- VNINDEX benchmark integration
-- Data validation
-
----
-
-### Indicator Engine
-
-Implemented
-
-- EMA
-- RSI
-- ATR
-- ADX
-- Relative Strength
-- Donchian Channel
-- Volume Ratio
-- Breakout Detection
-
----
-
-### Trading Strategies
-
-Implemented
-
-- Trend Strategy V1
-- Donchian Breakout V1
-- Hybrid Trend + Donchian
-
----
-
-### Exit Models
-
-Implemented
-
-- ATR Stop Loss
-- ATR Target
-- Time Exit
-- Gap-aware execution
-
----
-
-### Portfolio Engine
-
-Implemented
-
-- Cash management
-- Position sizing
-- Portfolio simulation
-- Transaction costs
-- Slippage
-- Tax model
-- Equity tracking
-
----
-
-### Research
-
-Implemented
-
+- Historical market database and update pipeline
+- Indicator engine
+- Trend, Donchian, and hybrid entry models
+- Exit models and transaction-cost assumptions
+- Portfolio-level backtesting
 - Walk Forward Validation
-- Monte Carlo Simulation
-- Parameter Stability Analysis
-- Market Regime Analysis
-- Trade Quality Diagnostics
-- Strategy Benchmarking
+- Monte Carlo simulation
+- Parameter stability and diagnostics
+- Market regime analysis
 
-Sprint 1 establishes the complete quantitative research workflow.
+## ✅ Phase 2 — Portfolio Research and Robustness
 
----
+Completed:
 
-# 🚧 Sprint 2 — Signal Intelligence
+- Shared `PositionSizer` interface
+- Fixed-fraction and ATR risk sizing
+- Portfolio allocation diagnostics
+- Composite weighting research
+- Portfolio stress scenarios
+- Robustness ranking
+- Automated HTML research dashboard
 
-Current Focus
+## ✅ Phase 3 — Paper Execution Foundation
 
-The second development stage aims to improve signal quality rather than adding more trading rules.
+Completed:
 
-Current objectives include
+- Telegram client refactor
+- Notification formatter separation
+- Paper Broker
+- Order Manager
+- Risk Guard
+- Commission and slippage simulation
+- SQLite persistence
+- Shared sizing between backtesting and paper trading
+- Paper execution Telegram summaries
+- Duplicate-position prevention
+- Portfolio cash, equity, and exposure reporting
 
-- Signal Quality Model
-- Trade scoring
-- Probability estimation
+## 🚧 Phase 4 — Order Lifecycle and Paper Analytics
+
+Current focus:
+
+- Mark-to-market updates
+- Stop-loss and take-profit execution
+- Trailing stop handling
+- Exit-signal processing
+- Order and position reconciliation
+- Daily portfolio snapshots
+- Realized and unrealized performance analytics
+- Paper equity curve
+- Win rate, profit factor, expectancy, and drawdown reporting
+- Daily and weekly Telegram summaries
+
+## 📅 Phase 5 — Controlled Live-Execution Preparation
+
+Planned only after paper validation:
+
+- Broker adapter interface
+- Live order reconciliation
+- Partial-fill handling
+- Idempotent retries
+- Trading-session validation
+- Heartbeat and connection monitoring
+- Audit logging
+- Emergency kill switch
+- Deployment and operational monitoring
+
+## 📅 Phase 6 — Signal Intelligence Research
+
+Potential future work:
+
+- Probability-calibrated signal ranking
 - Feature engineering
-- Entry quality diagnostics
-- Signal ranking
+- Machine-learning-assisted prioritization
+- Explainable model diagnostics
+- Sector and correlation-aware allocation
 
-Potential features
-
-- Relative Strength percentile
-- ADX percentile
-- Breakout quality
-- Volume expansion quality
-- Regime-adjusted confidence
-
----
-
-# 📅 Sprint 3 — Portfolio Optimization
-
-Planned
-
-Future research will focus on capital allocation rather than signal generation.
-
-Topics include
-
-- Kelly Position Sizing
-- Risk Parity
-- Volatility Scaling
-- Dynamic Position Sizing
-- Correlation Control
-- Portfolio Rebalancing
-
----
-
-# 🤖 Sprint 4 — AI Research
-
-Future research directions
-
-- Machine Learning Ranking
-- Gradient Boosting
-- Random Forest
-- XGBoost
-- LightGBM
-- Feature Importance
-- Explainable AI (SHAP)
-- Probability Calibration
-
-The goal is **not** to replace quantitative rules, but to improve signal prioritization using statistical learning.
-
----
-
-# 🌐 Sprint 5 — Production Environment
-
-Long-term vision
-
-- Daily Scanner
-- Live Dashboard
-- Telegram Notification
-- Portfolio Monitoring
-- Performance Tracking
-- Automatic Report Generation
+Live execution is intentionally not treated as a shortcut. It remains downstream of research validation, paper execution, lifecycle management, and operational risk controls.
 
 ---
 
@@ -1532,26 +1578,26 @@ Special thanks to everyone who contributes to open financial research.
 
 Current Version
 
-```
-v1.0
+```text
+v1.1 — Research Framework with Paper Execution Foundation
 ```
 
 Status
 
-```
-Research Active
+```text
+Active Development
 ```
 
 Primary Focus
 
-```
-Portfolio Research
+```text
+Order Lifecycle and Paper Trading Analytics
 ```
 
 Current Stage
 
-```
-Sprint 2
+```text
+Phase 4
 ```
 
 ---
@@ -1560,13 +1606,13 @@ Sprint 2
 
 Quant Stock was never intended to become another trading bot.
 
-Its primary objective is to become a **quantitative investment research framework** capable of testing ideas objectively, validating assumptions statistically, and supporting systematic decision-making in the Vietnamese stock market.
+Its primary objective is to become a **quantitative research and controlled execution framework** capable of testing ideas objectively, validating assumptions statistically, and carrying validated signals into a persistent paper-trading environment before any live-capital decision.
 
 Every module—from data collection and indicator calculation to portfolio simulation and research diagnostics—has been developed with a single philosophy:
 
 > **Research first. Evidence second. Execution last.**
 
-The framework will continue evolving toward a more robust, transparent, and reproducible research environment, with future work focusing on portfolio optimization, probabilistic signal evaluation, and machine learning-assisted quantitative investing.
+The framework will continue evolving toward a more robust, transparent, and reproducible environment, with near-term work focused on position lifecycle management, paper-performance analytics, reconciliation, and operational safety before live-broker integration is considered.
 
 If this repository helps your own research or learning journey, consider giving it a ⭐ and sharing your ideas through discussions or pull requests.
 
