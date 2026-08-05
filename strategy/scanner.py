@@ -9,8 +9,12 @@ from sqlalchemy import text
 from config.strategy_loader import COMMON_CONFIG
 from core.database import engine, get_reference_market_date, get_symbol_latest_dates, load_price_data
 from core.signal_database import save_signal
+from execution.signal_executor import PaperSignalExecutor
 from reporting.dashboard import print_end_of_day_dashboard, print_scan_results
 from services.notification_formatter import build_scan_message
+from services.paper_notification_formatter import (
+    build_paper_execution_message,
+)
 from services.telegram_client import TelegramClient
 from strategy.cache import get_indicators_cached
 from strategy.filters import REQUIRED_INDICATORS, trend_passes
@@ -33,6 +37,7 @@ from dotenv import load_dotenv
 load_dotenv()
 
 telegram_client = TelegramClient.from_env()
+paper_signal_executor = PaperSignalExecutor.from_env()
 
 # Backward-compatible aliases for earlier imports.
 _trend_passes = trend_passes
@@ -411,6 +416,36 @@ def run_scan() -> tuple[list[dict], dict]:
     print(f"Tín hiệu trùng: {duplicate_count}")
     print(f"Lỗi lưu: {save_failed_count}")
 
+    paper_result = (
+        paper_signal_executor.execute_signals(
+            results
+        )
+    )
+
+    if paper_result.enabled:
+        print("\n" + "-" * 60)
+        print("PAPER TRADING")
+        print(
+            f"Filled: "
+            f"{paper_result.filled_count}"
+        )
+        print(
+            f"Skipped: "
+            f"{paper_result.skipped_count}"
+        )
+        print(
+            f"Rejected: "
+            f"{paper_result.rejected_count}"
+        )
+        print(
+            f"Cash: "
+            f"{paper_result.cash:,.0f}"
+        )
+        print(
+            f"Equity: "
+            f"{paper_result.equity:,.0f}"
+        )
+
     try:
         message = build_scan_message(
             results,
@@ -418,8 +453,11 @@ def run_scan() -> tuple[list[dict], dict]:
             watchlist=watchlist,
             market_config=market_config,
         )
-        telegram_result = telegram_client.send_message(
-            message
+
+        telegram_result = (
+            telegram_client.send_message(
+                message
+            )
         )
 
         if telegram_result.success:
@@ -433,11 +471,38 @@ def run_scan() -> tuple[list[dict], dict]:
                 "\n⚠️ Không gửi được Telegram: "
                 f"{telegram_result.error}"
             )
+
+        paper_message = (
+            build_paper_execution_message(
+                paper_result
+            )
+        )
+
+        if paper_message:
+            paper_telegram_result = (
+                telegram_client.send_message(
+                    paper_message
+                )
+            )
+
+            if paper_telegram_result.success:
+                print(
+                    "✅ Đã gửi kết quả paper trading "
+                    "lên Telegram."
+                )
+            else:
+                print(
+                    "⚠️ Không gửi được paper trading "
+                    "lên Telegram: "
+                    f"{paper_telegram_result.error}"
+                )
+
     except Exception as error:
         print(
             "\n⚠️ Telegram bị bỏ qua, scanner "
             f"vẫn hoàn tất: {error}"
         )
+
     return results, scan_stats
 
 

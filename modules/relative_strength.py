@@ -7,7 +7,7 @@ from core.database import load_price_data
 def calculate_relative_strength(
     symbol: str,
     benchmark: str = "VNINDEX",
-    period: int = 20
+    period: int = 20,
     as_of_date: str | pd.Timestamp | None = None,
 ) -> dict:
     stock_df = load_price_data(symbol)
