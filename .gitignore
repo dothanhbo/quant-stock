@@ -6,6 +6,7 @@ __pycache__/
 *.py[cod]
 *.pyo
 *.pyd
+*.so
 
 .venv/
 venv/
@@ -13,6 +14,9 @@ env/
 
 .pytest_cache/
 .mypy_cache/
+.ruff_cache/
+.coverage
+htmlcov/
 
 # ============================================
 # IDE
@@ -29,6 +33,14 @@ env/
 Thumbs.db
 
 # ============================================
+# Environment
+# ============================================
+
+.env
+.env.*
+!.env.example
+
+# ============================================
 # Local Database
 # ============================================
 
@@ -36,45 +48,41 @@ Thumbs.db
 *.sqlite
 *.sqlite3
 
-# Nếu muốn giữ market.db thì comment dòng trên
-# !market.db
-
 # ============================================
 # Logs
 # ============================================
 
 *.log
+logs/
 
 # ============================================
 # Generated Research Results
 # ============================================
 
 research_results/
+backtest_results/
+backtest_results_multi/
+backtest_results_optimized/
+
 reports/
 output/
 outputs/
 results/
 
 # ============================================
-# Excel
-# ============================================
-
-*.xlsx
-*.xls
-*.xlsm
-*.csv
-
-# Nếu muốn giữ sample CSV:
-# !sample.csv
-
-# ============================================
-# Figures
+# Generated Charts
 # ============================================
 
 figures/
 plots/
 charts/
 images/generated/
+
+*.png
+*.svg
+
+# Nếu README cần ảnh thì comment dòng trên
+# !docs/images/*.png
 
 # ============================================
 # Temporary
@@ -91,28 +99,54 @@ cache/
 .ipynb_checkpoints/
 
 # ============================================
-# Environment
+# Archives
 # ============================================
 
-.env
-.env.*
-# Archives
 *.zip
 *.rar
 *.7z
 
-# PDFs generated from reports
+# ============================================
+# Documents
+# ============================================
+
 *.pdf
-
-# PowerPoint
 *.pptx
-
-# Word
 *.docx
 
-# Backup files
-*.bak
+# ============================================
+# Backup
+# ============================================
 
-# Local test scripts
+*.bak
+*~
+*.old
+
+# ============================================
+# Local Scripts
+# ============================================
+
 scratch.py
 playground.py
+
+# ============================================
+# Python Build
+# ============================================
+
+build/
+dist/
+*.egg-info/
+
+# ============================================
+# Profiling
+# ============================================
+
+*.prof
+*.pstats
+
+# ============================================
+# Pickle / Cache
+# ============================================
+
+*.pkl
+*.pickle

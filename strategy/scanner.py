@@ -10,7 +10,8 @@ from config.strategy_loader import COMMON_CONFIG
 from core.database import engine, get_reference_market_date, get_symbol_latest_dates, load_price_data
 from core.signal_database import save_signal
 from reporting.dashboard import print_end_of_day_dashboard, print_scan_results
-from services.telegram import build_scan_message, send_telegram
+from services.notification_formatter import build_scan_message
+from services.telegram_client import TelegramClient
 from strategy.cache import get_indicators_cached
 from strategy.filters import REQUIRED_INDICATORS, trend_passes
 from strategy.market_regime import get_market_regime
@@ -24,6 +25,14 @@ RS_PERIOD = int(COMMON_CONFIG.get("rs_period", 20))
 from strategy.base_strategy import BaseStrategy
 
 strategy = TrendStrategyV1()
+
+import os
+
+from dotenv import load_dotenv
+
+load_dotenv()
+
+telegram_client = TelegramClient.from_env()
 
 # Backward-compatible aliases for earlier imports.
 _trend_passes = trend_passes
@@ -403,11 +412,32 @@ def run_scan() -> tuple[list[dict], dict]:
     print(f"Lỗi lưu: {save_failed_count}")
 
     try:
-        message = build_scan_message(results, top_n=TOP_RESULTS, watchlist=watchlist, market_config=market_config)
-        send_telegram(message)
-        print("\n✅ Đã gửi kết quả quét lên Telegram.")
+        message = build_scan_message(
+            results,
+            top_n=TOP_RESULTS,
+            watchlist=watchlist,
+            market_config=market_config,
+        )
+        telegram_result = telegram_client.send_message(
+            message
+        )
+
+        if telegram_result.success:
+            print(
+                "\n✅ Đã gửi kết quả quét lên "
+                "Telegram "
+                f"({telegram_result.chunks_sent} phần)."
+            )
+        else:
+            print(
+                "\n⚠️ Không gửi được Telegram: "
+                f"{telegram_result.error}"
+            )
     except Exception as error:
-        print(f"\n❌ Gửi Telegram thất bại: {error}")
+        print(
+            "\n⚠️ Telegram bị bỏ qua, scanner "
+            f"vẫn hoàn tất: {error}"
+        )
     return results, scan_stats
 
 
