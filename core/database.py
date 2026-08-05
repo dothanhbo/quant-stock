@@ -1,14 +1,29 @@
 from collections import Counter
 from sqlalchemy import create_engine, text
 import pandas as pd
-from sqlalchemy import text
 from datetime import datetime
-
+from pathlib import Path
 # ==========================
 # DATABASE CONFIG
 # ==========================
 
-DATABASE_URL = "sqlite:///market.db"
+DATABASE_PATH = (
+    Path(__file__)
+    .resolve()
+    .parent
+    .parent
+    / "data"
+    / "market.db"
+)
+
+DATABASE_PATH.parent.mkdir(
+    parents=True,
+    exist_ok=True,
+)
+
+DATABASE_URL = (
+    f"sqlite:///{DATABASE_PATH.as_posix()}"
+)
 
 engine = create_engine(
     DATABASE_URL,

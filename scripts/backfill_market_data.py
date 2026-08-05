@@ -7,7 +7,6 @@ import pandas as pd
 from vnstock.api.quote import Quote
 
 from core.database import (
-    get_latest_price_date,
     save_price_data,
 )
 from core.universe import (
@@ -15,64 +14,26 @@ from core.universe import (
 )
 
 
-# Lùi lại vài ngày để cập nhật lại các phiên gần nhất,
-# phòng trường hợp dữ liệu cuối ngày bị điều chỉnh.
-REFRESH_OVERLAP_DAYS = 7
-
-# Giữ khoảng nghỉ để tránh vượt giới hạn request Community.
+# Bản Community của vnstock giới hạn OHLCV 1D tối đa khoảng 8 năm.
+BACKFILL_YEARS = 8
 REQUEST_DELAY_SECONDS = 3.0
 
 
-def calculate_start_date(
-    symbol: str,
-) -> datetime:
-    latest_date = get_latest_price_date(
-        symbol
-    )
-
-    if (
-        latest_date is None
-        or pd.isna(latest_date)
-    ):
-        raise RuntimeError(
-            f"{symbol} chưa có dữ liệu lịch sử. "
-            "Hãy chạy backfill_market_data.py trước."
-        )
-
-    latest_datetime = pd.to_datetime(
-        latest_date,
-        errors="coerce",
-    )
-
-    if pd.isna(latest_datetime):
-        raise RuntimeError(
-            f"{symbol} có latest_date không hợp lệ: "
-            f"{latest_date}"
-        )
-
+def get_backfill_start_date() -> datetime:
     return (
-        latest_datetime.to_pydatetime()
+        datetime.now()
         - timedelta(
-            days=REFRESH_OVERLAP_DAYS
+            days=365 * BACKFILL_YEARS
         )
     )
 
 
-def update_symbol(
+def backfill_symbol(
     symbol: str,
+    *,
+    start_date: datetime,
+    end_date: datetime,
 ) -> bool:
-    try:
-        start_date = calculate_start_date(
-            symbol
-        )
-    except Exception as error:
-        print(
-            f"❌ {symbol}: {error}"
-        )
-        return False
-
-    end_date = datetime.now()
-
     print(
         f"📥 {symbol}: "
         f"{start_date:%Y-%m-%d} "
@@ -100,9 +61,9 @@ def update_symbol(
             or df.empty
         ):
             print(
-                f"⚠️ {symbol}: Không có dữ liệu mới."
+                f"⚠️ {symbol}: Không có dữ liệu."
             )
-            return True
+            return False
 
         df = df.copy()
         df["symbol"] = symbol
@@ -136,7 +97,7 @@ def update_symbol(
 
     except KeyboardInterrupt:
         print(
-            "\n⛔ Người dùng dừng cập nhật."
+            "\n⛔ Người dùng dừng backfill."
         )
         raise
 
@@ -147,15 +108,25 @@ def update_symbol(
         return False
 
 
-def update_all_symbols(
+def backfill_all_symbols(
     symbols: list[str],
 ) -> tuple[int, list[str]]:
+    start_date = (
+        get_backfill_start_date()
+    )
+    end_date = datetime.now()
+
     success_count = 0
     failed_symbols: list[str] = []
 
     print(
-        f"\n🚀 Bắt đầu cập nhật "
+        f"\n🚀 Bắt đầu backfill "
         f"{len(symbols)} mã..."
+    )
+    print(
+        f"Khoảng dữ liệu: "
+        f"{start_date:%Y-%m-%d} "
+        f"→ {end_date:%Y-%m-%d}"
     )
 
     for index, symbol in enumerate(
@@ -166,8 +137,10 @@ def update_all_symbols(
             f"\n[{index}/{len(symbols)}]"
         )
 
-        if update_symbol(
-            symbol
+        if backfill_symbol(
+            symbol,
+            start_date=start_date,
+            end_date=end_date,
         ):
             success_count += 1
         else:
@@ -213,7 +186,7 @@ def main() -> None:
             f"chỉ có {len(symbols)} mã"
         )
 
-    update_all_symbols(
+    backfill_all_symbols(
         symbols
     )
 

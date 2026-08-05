@@ -357,6 +357,15 @@ class PaperBroker(BrokerInterface):
     ) -> PortfolioSnapshot:
         return self.portfolio.snapshot()
 
+    def persist_portfolio_state(
+        self,
+    ) -> None:
+        """
+        Persist positions and one portfolio snapshot after a
+        batch market-price update.
+        """
+        self._persist_portfolio()
+
     def reset_paper_account(
         self,
         *,
