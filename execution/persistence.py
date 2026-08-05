@@ -16,6 +16,11 @@ from execution.models import (
     Position,
 )
 from execution.portfolio_state import PortfolioState
+from execution.exit_models import ExitReason
+from execution.lifecycle_models import (
+    ClosedPaperTrade,
+    PositionLifecycleState,
+)
 
 
 class PaperTradingStore:
@@ -121,6 +126,38 @@ class PaperTradingStore:
                     created_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS paper_position_lifecycle (
+                    symbol TEXT PRIMARY KEY,
+                    entry_date TEXT NOT NULL,
+                    entry_price REAL NOT NULL,
+                    initial_quantity INTEGER NOT NULL,
+                    stop_price REAL NOT NULL,
+                    take_profit_price REAL,
+                    highest_price REAL,
+                    trailing_stop_price REAL,
+                    trailing_atr_multiplier REAL,
+                    maximum_holding_days INTEGER,
+                    updated_at TEXT NOT NULL
+                );
+
+                CREATE TABLE IF NOT EXISTS paper_closed_trades (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    symbol TEXT NOT NULL,
+                    entry_date TEXT NOT NULL,
+                    exit_date TEXT NOT NULL,
+                    quantity INTEGER NOT NULL,
+                    entry_price REAL NOT NULL,
+                    exit_price REAL NOT NULL,
+                    gross_proceeds REAL NOT NULL,
+                    commission REAL NOT NULL,
+                    realized_pnl REAL NOT NULL,
+                    return_pct REAL NOT NULL,
+                    holding_days INTEGER NOT NULL,
+                    exit_reason TEXT NOT NULL,
+                    order_id TEXT NOT NULL UNIQUE,
+                    created_at TEXT NOT NULL
+                );
+
                 CREATE INDEX IF NOT EXISTS
                     idx_paper_orders_status
                 ON paper_orders(status);
@@ -134,6 +171,238 @@ class PaperTradingStore:
                 ON paper_portfolio_snapshots(created_at);
                 """
             )
+
+
+    def save_position_lifecycle(
+        self,
+        state: PositionLifecycleState,
+    ) -> None:
+        updated_at = (
+            state.updated_at
+            or datetime.now().astimezone()
+        )
+
+        with self._connection() as connection:
+            connection.execute(
+                """
+                INSERT INTO paper_position_lifecycle (
+                    symbol,
+                    entry_date,
+                    entry_price,
+                    initial_quantity,
+                    stop_price,
+                    take_profit_price,
+                    highest_price,
+                    trailing_stop_price,
+                    trailing_atr_multiplier,
+                    maximum_holding_days,
+                    updated_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ON CONFLICT(symbol)
+                DO UPDATE SET
+                    entry_date = excluded.entry_date,
+                    entry_price = excluded.entry_price,
+                    initial_quantity = excluded.initial_quantity,
+                    stop_price = excluded.stop_price,
+                    take_profit_price = excluded.take_profit_price,
+                    highest_price = excluded.highest_price,
+                    trailing_stop_price = excluded.trailing_stop_price,
+                    trailing_atr_multiplier = excluded.trailing_atr_multiplier,
+                    maximum_holding_days = excluded.maximum_holding_days,
+                    updated_at = excluded.updated_at
+                """,
+                (
+                    state.symbol,
+                    state.entry_date.isoformat(),
+                    state.entry_price,
+                    state.initial_quantity,
+                    state.stop_price,
+                    state.take_profit_price,
+                    state.highest_price,
+                    state.trailing_stop_price,
+                    state.trailing_atr_multiplier,
+                    state.maximum_holding_days,
+                    updated_at.isoformat(),
+                ),
+            )
+
+    def get_position_lifecycle(
+        self,
+        symbol: str,
+    ) -> PositionLifecycleState | None:
+        with self._connection() as connection:
+            row = connection.execute(
+                """
+                SELECT *
+                FROM paper_position_lifecycle
+                WHERE symbol = ?
+                """,
+                (
+                    symbol.strip().upper(),
+                ),
+            ).fetchone()
+
+        if row is None:
+            return None
+
+        return PositionLifecycleState(
+            symbol=str(row["symbol"]),
+            entry_date=datetime.fromisoformat(
+                row["entry_date"]
+            ).date(),
+            entry_price=float(
+                row["entry_price"]
+            ),
+            initial_quantity=int(
+                row["initial_quantity"]
+            ),
+            stop_price=float(
+                row["stop_price"]
+            ),
+            take_profit_price=(
+                float(row["take_profit_price"])
+                if row["take_profit_price"] is not None
+                else None
+            ),
+            highest_price=(
+                float(row["highest_price"])
+                if row["highest_price"] is not None
+                else None
+            ),
+            trailing_stop_price=(
+                float(row["trailing_stop_price"])
+                if row["trailing_stop_price"] is not None
+                else None
+            ),
+            trailing_atr_multiplier=(
+                float(row["trailing_atr_multiplier"])
+                if row["trailing_atr_multiplier"] is not None
+                else None
+            ),
+            maximum_holding_days=(
+                int(row["maximum_holding_days"])
+                if row["maximum_holding_days"] is not None
+                else None
+            ),
+            updated_at=datetime.fromisoformat(
+                row["updated_at"]
+            ),
+        )
+
+    def delete_position_lifecycle(
+        self,
+        symbol: str,
+    ) -> None:
+        with self._connection() as connection:
+            connection.execute(
+                """
+                DELETE FROM paper_position_lifecycle
+                WHERE symbol = ?
+                """,
+                (
+                    symbol.strip().upper(),
+                ),
+            )
+
+    def save_closed_trade(
+        self,
+        trade: ClosedPaperTrade,
+    ) -> None:
+        with self._connection() as connection:
+            connection.execute(
+                """
+                INSERT OR IGNORE INTO paper_closed_trades (
+                    symbol,
+                    entry_date,
+                    exit_date,
+                    quantity,
+                    entry_price,
+                    exit_price,
+                    gross_proceeds,
+                    commission,
+                    realized_pnl,
+                    return_pct,
+                    holding_days,
+                    exit_reason,
+                    order_id,
+                    created_at
+                )
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    trade.symbol,
+                    trade.entry_date.isoformat(),
+                    trade.exit_date.isoformat(),
+                    trade.quantity,
+                    trade.entry_price,
+                    trade.exit_price,
+                    trade.gross_proceeds,
+                    trade.commission,
+                    trade.realized_pnl,
+                    trade.return_pct,
+                    trade.holding_days,
+                    trade.exit_reason.value,
+                    trade.order_id,
+                    trade.created_at.isoformat(),
+                ),
+            )
+
+    def load_closed_trades(
+        self,
+    ) -> list[ClosedPaperTrade]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT *
+                FROM paper_closed_trades
+                ORDER BY id
+                """
+            ).fetchall()
+
+        return [
+            ClosedPaperTrade(
+                symbol=str(row["symbol"]),
+                entry_date=datetime.fromisoformat(
+                    row["entry_date"]
+                ).date(),
+                exit_date=datetime.fromisoformat(
+                    row["exit_date"]
+                ).date(),
+                quantity=int(row["quantity"]),
+                entry_price=float(
+                    row["entry_price"]
+                ),
+                exit_price=float(
+                    row["exit_price"]
+                ),
+                gross_proceeds=float(
+                    row["gross_proceeds"]
+                ),
+                commission=float(
+                    row["commission"]
+                ),
+                realized_pnl=float(
+                    row["realized_pnl"]
+                ),
+                return_pct=float(
+                    row["return_pct"]
+                ),
+                holding_days=int(
+                    row["holding_days"]
+                ),
+                exit_reason=ExitReason(
+                    row["exit_reason"]
+                ),
+                order_id=str(
+                    row["order_id"]
+                ),
+                created_at=datetime.fromisoformat(
+                    row["created_at"]
+                ),
+            )
+            for row in rows
+        ]
 
     def has_state(
         self,

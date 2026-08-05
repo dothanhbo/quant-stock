@@ -21,6 +21,10 @@ from execution.persistence import (
 from execution.portfolio_state import (
     PortfolioState,
 )
+from execution.lifecycle_models import (
+    ClosedPaperTrade,
+    PositionLifecycleState,
+)
 
 
 class PaperBroker(BrokerInterface):
@@ -356,6 +360,61 @@ class PaperBroker(BrokerInterface):
         self,
     ) -> PortfolioSnapshot:
         return self.portfolio.snapshot()
+
+
+    def save_position_lifecycle(
+        self,
+        state: PositionLifecycleState,
+    ) -> None:
+        if self._store is None:
+            raise RuntimeError(
+                "PaperBroker chưa cấu hình database."
+            )
+
+        self._store.save_position_lifecycle(
+            state
+        )
+
+    def get_position_lifecycle(
+        self,
+        symbol: str,
+    ) -> PositionLifecycleState | None:
+        if self._store is None:
+            return None
+
+        return self._store.get_position_lifecycle(
+            symbol
+        )
+
+    def delete_position_lifecycle(
+        self,
+        symbol: str,
+    ) -> None:
+        if self._store is not None:
+            self._store.delete_position_lifecycle(
+                symbol
+            )
+
+    def record_closed_trade(
+        self,
+        trade: ClosedPaperTrade,
+    ) -> None:
+        if self._store is None:
+            raise RuntimeError(
+                "PaperBroker chưa cấu hình database."
+            )
+
+        self._store.save_closed_trade(
+            trade
+        )
+
+    def get_closed_trades(
+        self,
+    ) -> list[ClosedPaperTrade]:
+        if self._store is None:
+            return []
+
+        return self._store.load_closed_trades()
 
     def persist_portfolio_state(
         self,

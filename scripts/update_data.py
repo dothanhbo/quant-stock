@@ -1,11 +1,12 @@
 from __future__ import annotations
 
+import argparse
 from datetime import datetime, timedelta
 import time
 
 import pandas as pd
 from vnstock.api.quote import Quote
-
+from pathlib import Path
 from core.database import (
     get_latest_price_date,
     save_price_data,
@@ -13,15 +14,24 @@ from core.database import (
 from core.universe import (
     get_all_symbols,
 )
+from enum import Enum
 
-
-# Lùi lại vài ngày để cập nhật lại các phiên gần nhất,
-# phòng trường hợp dữ liệu cuối ngày bị điều chỉnh.
+# Cập nhật lại vài phiên gần nhất để phòng dữ liệu EOD bị điều chỉnh.
 REFRESH_OVERLAP_DAYS = 7
 
-# Giữ khoảng nghỉ để tránh vượt giới hạn request Community.
-REQUEST_DELAY_SECONDS = 3.0
+# Giới hạn Community khoảng 60 request/phút.
+REQUEST_DELAY_SECONDS = 1.2
 
+# Sau lượt chính, chỉ retry những mã bị lỗi.
+RETRY_ROUNDS = 2
+RETRY_COOLDOWN_SECONDS = 45.0
+
+FAILED_LOG_PATH = "logs/update_data_failed.txt"
+
+class UpdateStatus(str, Enum):
+    SUCCESS = "SUCCESS"
+    RETRYABLE_ERROR = "RETRYABLE_ERROR"
+    NEEDS_BACKFILL = "NEEDS_BACKFILL"
 
 def calculate_start_date(
     symbol: str,
@@ -44,7 +54,9 @@ def calculate_start_date(
         errors="coerce",
     )
 
-    if pd.isna(latest_datetime):
+    if pd.isna(
+        latest_datetime
+    ):
         raise RuntimeError(
             f"{symbol} có latest_date không hợp lệ: "
             f"{latest_date}"
@@ -60,16 +72,30 @@ def calculate_start_date(
 
 def update_symbol(
     symbol: str,
-) -> bool:
+) -> UpdateStatus:
+    symbol = (
+        symbol
+        .strip()
+        .upper()
+    )
+
     try:
         start_date = calculate_start_date(
             symbol
         )
-    except Exception as error:
+    except RuntimeError as error:
+        if "chưa có dữ liệu lịch sử" in str(
+            error
+        ):
+            print(
+                f"📦 {symbol}: cần backfill lần đầu."
+            )
+            return UpdateStatus.NEEDS_BACKFILL
+
         print(
             f"❌ {symbol}: {error}"
         )
-        return False
+        return UpdateStatus.RETRYABLE_ERROR
 
     end_date = datetime.now()
 
@@ -82,7 +108,7 @@ def update_symbol(
     try:
         quote = Quote(
             symbol=symbol,
-            source="VCI",
+            source="KBS",
         )
 
         df = quote.history(
@@ -102,7 +128,7 @@ def update_symbol(
             print(
                 f"⚠️ {symbol}: Không có dữ liệu mới."
             )
-            return True
+            return UpdateStatus.SUCCESS
 
         df = df.copy()
         df["symbol"] = symbol
@@ -132,7 +158,7 @@ def update_symbol(
             f"mới nhất {latest_text}"
         )
 
-        return True
+        return UpdateStatus.SUCCESS
 
     except KeyboardInterrupt:
         print(
@@ -141,21 +167,39 @@ def update_symbol(
         raise
 
     except Exception as error:
+        error_name = type(
+            error
+        ).__name__
+
         print(
-            f"❌ {symbol}: {error}"
+            f"❌ {symbol}: "
+            f"{error_name}: {error}"
         )
-        return False
 
+        return UpdateStatus.RETRYABLE_ERROR
 
-def update_all_symbols(
+def run_symbol_batch(
     symbols: list[str],
-) -> tuple[int, list[str]]:
-    success_count = 0
-    failed_symbols: list[str] = []
+    *,
+    label: str,
+) -> tuple[
+    list[str],
+    list[str],
+    list[str],
+]:
+    succeeded: list[str] = []
+    retryable: list[str] = []
+    needs_backfill: list[str] = []
 
     print(
-        f"\n🚀 Bắt đầu cập nhật "
-        f"{len(symbols)} mã..."
+        "\n"
+        + "=" * 60
+    )
+    print(
+        label
+    )
+    print(
+        "=" * 60
     )
 
     for index, symbol in enumerate(
@@ -166,12 +210,25 @@ def update_all_symbols(
             f"\n[{index}/{len(symbols)}]"
         )
 
-        if update_symbol(
+        status = update_symbol(
             symbol
+        )
+
+        if status == UpdateStatus.SUCCESS:
+            succeeded.append(
+                symbol
+            )
+
+        elif (
+            status
+            == UpdateStatus.NEEDS_BACKFILL
         ):
-            success_count += 1
+            needs_backfill.append(
+                symbol
+            )
+
         else:
-            failed_symbols.append(
+            retryable.append(
                 symbol
             )
 
@@ -179,39 +236,282 @@ def update_all_symbols(
             REQUEST_DELAY_SECONDS
         )
 
+    return (
+        succeeded,
+        retryable,
+        needs_backfill,
+    )
+
+def retry_failed_symbols(
+    failed_symbols: list[str],
+) -> tuple[list[str], list[str], list[str]]:
+    recovered: list[str] = []
+    remaining = list(
+        dict.fromkeys(
+            failed_symbols
+        )
+    )
+    needs_backfill: list[str] = []
+
+
+    for retry_round in range(
+        1,
+        RETRY_ROUNDS + 1,
+    ):
+        if not remaining:
+            break
+
+        print(
+            "\n"
+            + "=" * 60
+        )
+        print(
+            f"🔁 Chờ {RETRY_COOLDOWN_SECONDS:.0f} giây "
+            f"trước retry lần {retry_round}"
+        )
+        print(
+            "Mã cần retry: "
+            + ", ".join(
+                remaining
+            )
+        )
+        print(
+            "=" * 60
+        )
+
+        time.sleep(
+            RETRY_COOLDOWN_SECONDS
+        )
+
+        (
+            round_succeeded,
+            round_failed,
+            round_needs_backfill,
+        ) = run_symbol_batch(
+            remaining,
+            label=(
+                f"RETRY LẦN {retry_round}"
+            ),
+        )
+
+        if round_needs_backfill:
+            print(
+                "📦 Chuyển sang danh sách backfill: "
+                + ", ".join(
+                    round_needs_backfill
+                )
+            )
+
+        recovered.extend(
+            round_succeeded
+        )
+
+        needs_backfill.extend(
+            round_needs_backfill
+        )
+
+        if round_needs_backfill:
+            print(
+                "📦 Chuyển sang danh sách backfill: "
+                + ", ".join(
+                    round_needs_backfill
+                )
+            )
+
+        remaining = round_failed
+
+    needs_backfill = list(
+        dict.fromkeys(
+            needs_backfill
+        )
+    )
+
+    return (
+        recovered,
+        remaining,
+        needs_backfill,
+    )
+
+
+def write_failed_log(
+    failed_symbols: list[str],
+) -> None:
+    log_path = Path(
+        FAILED_LOG_PATH
+    )
+    log_path.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
+
+    if not failed_symbols:
+        if log_path.exists():
+            log_path.unlink()
+        return
+
+    content = (
+        f"updated_at={datetime.now().isoformat()}\n"
+        + "\n".join(
+            failed_symbols
+        )
+        + "\n"
+    )
+
+    log_path.write_text(
+        content,
+        encoding="utf-8",
+    )
+
+
+def update_all_symbols(
+    symbols: list[str],
+) -> tuple[int, list[str]]:
+    normalized_symbols = list(
+        dict.fromkeys(
+            symbol.strip().upper()
+            for symbol in symbols
+            if symbol.strip()
+        )
+    )
+
+    print(
+        f"\n🚀 Bắt đầu cập nhật "
+        f"{len(normalized_symbols)} mã..."
+    )
+
+    (
+        first_success,
+        first_failed,
+        needs_backfill,
+    ) = run_symbol_batch(
+        normalized_symbols,
+        label="LƯỢT CẬP NHẬT CHÍNH",
+    )
+
+    recovered: list[str] = []
+    final_failed = first_failed
+
+    if first_failed:
+        (
+            recovered,
+            final_failed,
+            retry_backfill,
+        ) = retry_failed_symbols(
+            first_failed
+        )
+
+        needs_backfill.extend(
+            retry_backfill
+        )
+
+        needs_backfill = list(
+            dict.fromkeys(
+                needs_backfill
+            )
+        )
+
+    total_success = (
+        len(first_success)
+        + len(recovered)
+    )
+
+    write_failed_log(
+        final_failed
+    )
+
     print(
         "\n"
         + "=" * 60
     )
     print(
+        "📊 KẾT QUẢ CUỐI"
+    )
+    print(
+        "=" * 60
+    )
+    print(
         f"✅ Thành công: "
-        f"{success_count}/{len(symbols)}"
+        f"{total_success}/{len(normalized_symbols)}"
+    )
+    print(
+        f"🔁 Khôi phục sau retry: "
+        f"{len(recovered)}"
     )
 
-    if failed_symbols:
+    if final_failed:
         print(
-            "❌ Mã lỗi: "
+            "❌ Lỗi tạm thời sau retry: "
             + ", ".join(
-                failed_symbols
+                final_failed
+            )
+        )
+        print(
+            f"📝 Đã ghi vào: "
+            f"{FAILED_LOG_PATH}"
+        )
+
+    if needs_backfill:
+        print(
+            "📦 Cần backfill lần đầu: "
+            + ", ".join(
+                needs_backfill
             )
         )
 
+    if (
+        not final_failed
+        and not needs_backfill
+    ):
+        print(
+            "✅ Tất cả mã đã cập nhật thành công."
+        )
+
+    pipeline_issues = [
+        *final_failed,
+        *needs_backfill,
+    ]
+
     return (
-        success_count,
-        failed_symbols,
+        total_success,
+        pipeline_issues,
     )
+
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Incremental market-data updater "
+            "với retry riêng cho mã lỗi."
+        )
+    )
+
+    parser.add_argument(
+        "--symbols",
+        nargs="*",
+        default=None,
+        help=(
+            "Chỉ cập nhật các mã được chỉ định, "
+            "ví dụ: --symbols FRT FTS SJS"
+        ),
+    )
+
+    return parser
 
 
 def main() -> None:
-    symbols = list(
-        get_all_symbols()
-    )
+    args = build_parser().parse_args()
 
-    if len(symbols) < 100:
-        raise RuntimeError(
-            "Danh sách universe không hợp lệ: "
-            f"chỉ có {len(symbols)} mã"
+    if args.symbols:
+        symbols = args.symbols
+    else:
+        symbols = list(
+            get_all_symbols()
         )
+
+        if len(symbols) < 100:
+            raise RuntimeError(
+                "Danh sách universe không hợp lệ: "
+                f"chỉ có {len(symbols)} mã"
+            )
 
     update_all_symbols(
         symbols

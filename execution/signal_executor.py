@@ -19,6 +19,9 @@ from backtesting.transaction_cost import (
 from execution.order_manager import OrderManager
 from execution.paper_broker import PaperBroker
 from execution.risk_guard import RiskGuard, RiskLimits
+from execution.lifecycle_models import (
+    PositionLifecycleState,
+)
 
 
 def _read_bool(
@@ -549,6 +552,14 @@ class PaperSignalExecutor:
                 )
                 continue
 
+            lifecycle_input = (
+                self._prepare_lifecycle_input(
+                    signal=signal,
+                    symbol=symbol,
+                    expected_entry_price=broker_price,
+                )
+            )
+
             fill = self.order_manager.buy_market(
                 symbol=symbol,
                 quantity=quantity,
@@ -604,6 +615,37 @@ class PaperSignalExecutor:
 
             submitted_count += 1
 
+            self.broker.save_position_lifecycle(
+                PositionLifecycleState(
+                    symbol=symbol,
+                    entry_date=(
+                        lifecycle_input["entry_date"]
+                    ),
+                    entry_price=fill.price,
+                    initial_quantity=fill.quantity,
+                    stop_price=(
+                        lifecycle_input["stop_price"]
+                    ),
+                    take_profit_price=(
+                        lifecycle_input[
+                            "take_profit_price"
+                        ]
+                    ),
+                    highest_price=fill.price,
+                    trailing_stop_price=None,
+                    trailing_atr_multiplier=(
+                        lifecycle_input[
+                            "trailing_atr_multiplier"
+                        ]
+                    ),
+                    maximum_holding_days=(
+                        lifecycle_input[
+                            "maximum_holding_days"
+                        ]
+                    ),
+                )
+            )
+
             executions.append(
                 PaperSignalExecution(
                     symbol=symbol,
@@ -649,6 +691,111 @@ class PaperSignalExecutor:
                 snapshot.open_positions
             ),
         )
+
+
+    def _prepare_lifecycle_input(
+        self,
+        *,
+        signal: dict[str, Any],
+        symbol: str,
+        expected_entry_price: float,
+    ) -> dict[str, Any]:
+        stop_display = self._read_positive_float(
+            signal,
+            (
+                "stop_loss",
+                "stop_price",
+            ),
+        )
+
+        if stop_display is None:
+            raise RuntimeError(
+                f"{symbol} không có stop_loss; "
+                "không gửi lệnh BUY."
+            )
+
+        stop_price = (
+            stop_display
+            * self.PRICE_SCALE
+        )
+
+        if not (
+            0
+            < stop_price
+            < expected_entry_price
+        ):
+            raise RuntimeError(
+                f"{symbol} có stop_loss "
+                "không hợp lệ."
+            )
+
+        target_display = self._read_positive_float(
+            signal,
+            (
+                "take_profit",
+                "target_price",
+            ),
+        )
+
+        target_price = (
+            target_display
+            * self.PRICE_SCALE
+            if target_display is not None
+            else None
+        )
+
+        if (
+            target_price is not None
+            and target_price
+            <= expected_entry_price
+        ):
+            target_price = None
+
+        trailing_multiplier = self._safe_float(
+            signal.get(
+                "trailing_atr_multiplier"
+            )
+        )
+
+        maximum_holding_raw = signal.get(
+            "maximum_holding_days"
+        )
+        try:
+            maximum_holding_days = (
+                int(maximum_holding_raw)
+                if maximum_holding_raw is not None
+                else None
+            )
+        except (TypeError, ValueError):
+            maximum_holding_days = None
+
+        return {
+            "entry_date": (
+                self._read_signal_date(
+                    signal
+                ).date()
+            ),
+            "stop_price": stop_price,
+            "take_profit_price": target_price,
+            "trailing_atr_multiplier": (
+                trailing_multiplier
+                if (
+                    trailing_multiplier
+                    is not None
+                    and trailing_multiplier > 0
+                )
+                else None
+            ),
+            "maximum_holding_days": (
+                maximum_holding_days
+                if (
+                    maximum_holding_days
+                    is not None
+                    and maximum_holding_days > 0
+                )
+                else None
+            ),
+        }
 
     def _build_position_sizer(
         self,

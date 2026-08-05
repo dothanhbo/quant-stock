@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import argparse
 from datetime import datetime, timedelta
 import time
 
@@ -14,9 +15,15 @@ from core.universe import (
 )
 
 
-# Bản Community của vnstock giới hạn OHLCV 1D tối đa khoảng 8 năm.
+# Bản Community của vnstock giới hạn OHLCV 1D
+# tối đa khoảng 8 năm.
 BACKFILL_YEARS = 8
-REQUEST_DELAY_SECONDS = 3.0
+
+# KBS đang phản hồi nhanh hơn VCI trong quá trình test.
+DATA_SOURCE = "KBS"
+
+# Khoảng nghỉ giữa các request.
+REQUEST_DELAY_SECONDS = 1.2
 
 
 def get_backfill_start_date() -> datetime:
@@ -28,12 +35,30 @@ def get_backfill_start_date() -> datetime:
     )
 
 
+def normalize_symbols(
+    symbols: list[str],
+) -> list[str]:
+    return list(
+        dict.fromkeys(
+            symbol.strip().upper()
+            for symbol in symbols
+            if symbol.strip()
+        )
+    )
+
+
 def backfill_symbol(
     symbol: str,
     *,
     start_date: datetime,
     end_date: datetime,
 ) -> bool:
+    symbol = (
+        symbol
+        .strip()
+        .upper()
+    )
+
     print(
         f"📥 {symbol}: "
         f"{start_date:%Y-%m-%d} "
@@ -43,7 +68,7 @@ def backfill_symbol(
     try:
         quote = Quote(
             symbol=symbol,
-            source="VCI",
+            source=DATA_SOURCE,
         )
 
         df = quote.history(
@@ -102,15 +127,30 @@ def backfill_symbol(
         raise
 
     except Exception as error:
+        error_name = type(
+            error
+        ).__name__
+
         print(
-            f"❌ {symbol}: {error}"
+            f"❌ {symbol}: "
+            f"{error_name}: {error}"
         )
+
         return False
 
 
 def backfill_all_symbols(
     symbols: list[str],
 ) -> tuple[int, list[str]]:
+    normalized_symbols = normalize_symbols(
+        symbols
+    )
+
+    if not normalized_symbols:
+        raise ValueError(
+            "Không có mã hợp lệ để backfill."
+        )
+
     start_date = (
         get_backfill_start_date()
     )
@@ -121,7 +161,10 @@ def backfill_all_symbols(
 
     print(
         f"\n🚀 Bắt đầu backfill "
-        f"{len(symbols)} mã..."
+        f"{len(normalized_symbols)} mã..."
+    )
+    print(
+        f"Nguồn dữ liệu: {DATA_SOURCE}"
     )
     print(
         f"Khoảng dữ liệu: "
@@ -130,18 +173,20 @@ def backfill_all_symbols(
     )
 
     for index, symbol in enumerate(
-        symbols,
+        normalized_symbols,
         start=1,
     ):
         print(
-            f"\n[{index}/{len(symbols)}]"
+            f"\n[{index}/{len(normalized_symbols)}]"
         )
 
-        if backfill_symbol(
+        success = backfill_symbol(
             symbol,
             start_date=start_date,
             end_date=end_date,
-        ):
+        )
+
+        if success:
             success_count += 1
         else:
             failed_symbols.append(
@@ -157,8 +202,15 @@ def backfill_all_symbols(
         + "=" * 60
     )
     print(
+        "📊 KẾT QUẢ BACKFILL"
+    )
+    print(
+        "=" * 60
+    )
+    print(
         f"✅ Thành công: "
-        f"{success_count}/{len(symbols)}"
+        f"{success_count}/"
+        f"{len(normalized_symbols)}"
     )
 
     if failed_symbols:
@@ -168,6 +220,10 @@ def backfill_all_symbols(
                 failed_symbols
             )
         )
+    else:
+        print(
+            "✅ Tất cả mã đã backfill thành công."
+        )
 
     return (
         success_count,
@@ -175,16 +231,44 @@ def backfill_all_symbols(
     )
 
 
-def main() -> None:
-    symbols = list(
-        get_all_symbols()
+def build_parser() -> argparse.ArgumentParser:
+    parser = argparse.ArgumentParser(
+        description=(
+            "Backfill dữ liệu lịch sử cho "
+            "toàn bộ universe hoặc một số mã."
+        )
     )
 
-    if len(symbols) < 100:
-        raise RuntimeError(
-            "Danh sách universe không hợp lệ: "
-            f"chỉ có {len(symbols)} mã"
+    parser.add_argument(
+        "--symbols",
+        nargs="*",
+        default=None,
+        help=(
+            "Chỉ backfill các mã được chỉ định. "
+            "Ví dụ: --symbols SJS VIB"
+        ),
+    )
+
+    return parser
+
+
+def main() -> None:
+    args = build_parser().parse_args()
+
+    if args.symbols:
+        symbols = normalize_symbols(
+            args.symbols
         )
+    else:
+        symbols = list(
+            get_all_symbols()
+        )
+
+        if len(symbols) < 100:
+            raise RuntimeError(
+                "Danh sách universe không hợp lệ: "
+                f"chỉ có {len(symbols)} mã"
+            )
 
     backfill_all_symbols(
         symbols
