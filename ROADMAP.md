@@ -37,9 +37,24 @@ Result
 
 ---
 
-## Sprint 3 — Dynamic Portfolio Management
+## Sprint 3 — Paper Trading & Validation ✅
 
-- [ ] Position sizing research
-- [ ] Regime allocation
-- [ ] Risk budgeting
-- [ ] Sector exposure
+- [x] Shared Position Sizer
+- [x] ATR Risk Position Sizing
+- [x] Paper Broker
+- [x] Risk Guard
+- [x] Portfolio Snapshot
+- [x] Performance Analytics
+- [x] Backtest ↔ Paper Execution Parity
+- [x] Portfolio Integration Testing
+- [x] Dashboard V1
+
+---
+
+## Sprint 4 — Live Trading Preparation
+
+- [ ] Broker Adapter
+- [ ] Live Order Execution
+- [ ] Order Management System (OMS)
+- [ ] Reconciliation
+- [ ] Live Monitoring
