@@ -1,0 +1,1 @@
+"""Quant Stock Streamlit dashboard."""

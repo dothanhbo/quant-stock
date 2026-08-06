@@ -8,3 +8,5 @@ ta
 vnstock
 PyYAML
 pytest
+streamlit>=1.37
+plotly>=5.24
