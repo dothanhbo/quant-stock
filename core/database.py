@@ -30,6 +30,68 @@ engine = create_engine(
     echo=False
 )
 
+
+def _normalize_trading_date(value) -> str | None:
+    parsed = pd.to_datetime(value, errors="coerce")
+    if pd.isna(parsed):
+        return None
+    return parsed.strftime("%Y-%m-%d")
+
+
+def cleanup_price_duplicates() -> dict[str, int]:
+    with engine.begin() as conn:
+        rows = conn.execute(
+            text(
+                '''
+                SELECT id, symbol, time, open, high, low, close, volume
+                FROM prices
+                ORDER BY symbol ASC, id ASC
+                '''
+            )
+        ).mappings().all()
+
+        latest_by_day = {}
+        for row in rows:
+            trading_date = _normalize_trading_date(row["time"])
+            if trading_date is None:
+                continue
+            latest_by_day[(str(row["symbol"]), trading_date)] = {
+                "symbol": str(row["symbol"]),
+                "time": trading_date,
+                "open": row["open"],
+                "high": row["high"],
+                "low": row["low"],
+                "close": row["close"],
+                "volume": row["volume"],
+            }
+
+        conn.execute(text("DELETE FROM prices"))
+
+        if latest_by_day:
+            conn.execute(
+                text(
+                    '''
+                    INSERT INTO prices (
+                        symbol, time, open, high, low, close, volume
+                    )
+                    VALUES (
+                        :symbol, :time, :open, :high, :low, :close, :volume
+                    )
+                    '''
+                ),
+                list(latest_by_day.values()),
+            )
+
+    before = len(rows)
+    after = len(latest_by_day)
+    return {
+        "before": before,
+        "after": after,
+        "removed": before - after,
+    }
+
+
+
 def get_symbol_latest_dates():
     """
     Lấy ngày dữ liệu mới nhất của từng mã.
@@ -45,7 +107,7 @@ def get_symbol_latest_dates():
     query = text("""
         SELECT
             symbol,
-            MAX(time) AS latest_date
+            MAX(date(time)) AS latest_date
         FROM prices
         GROUP BY symbol
         ORDER BY symbol
@@ -158,8 +220,29 @@ def save_price_data(df):
         for c in data.columns
     ]
 
-    # Convert Timestamp sang string
-    data["time"] = data["time"].astype(str)
+    parsed_time = pd.to_datetime(
+        data["time"],
+        errors="coerce",
+    )
+
+    if parsed_time.isna().any():
+        invalid_count = int(parsed_time.isna().sum())
+        raise ValueError(
+            f"Có {invalid_count} dòng time không hợp lệ."
+        )
+
+    data["time"] = parsed_time.dt.strftime(
+        "%Y-%m-%d"
+    )
+
+    data = (
+        data
+        .drop_duplicates(
+            subset=["symbol", "time"],
+            keep="last",
+        )
+        .reset_index(drop=True)
+    )
 
     required = [
         "time",
@@ -299,7 +382,7 @@ def get_latest_price_date(symbol):
     """
 
     query = text("""
-        SELECT MAX(time)
+        SELECT MAX(date(time))
         FROM prices
         WHERE symbol = :symbol
     """)

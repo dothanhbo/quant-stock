@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import os
 from dataclasses import dataclass, field
-from datetime import datetime, timezone
+from datetime import date, datetime, timezone
 from pathlib import Path
 from typing import Any, Sequence
 
@@ -19,9 +19,6 @@ from backtesting.transaction_cost import (
 from execution.order_manager import OrderManager
 from execution.paper_broker import PaperBroker
 from execution.risk_guard import RiskGuard, RiskLimits
-from execution.lifecycle_models import (
-    PositionLifecycleState,
-)
 
 
 def _read_bool(
@@ -237,6 +234,33 @@ class PaperSignalExecution:
     reason: str = ""
 
 
+@dataclass(frozen=True, slots=True)
+class PaperPositionSummary:
+    symbol: str
+    quantity: int
+    average_price: float
+    market_price: float
+    cost_basis: float
+    market_value: float
+    unrealized_pnl: float
+    unrealized_pnl_pct: float
+    stop_price: float | None = None
+    take_profit_price: float | None = None
+    holding_days: int | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PaperClosedTradeSummary:
+    symbol: str
+    quantity: int
+    entry_price: float
+    exit_price: float
+    realized_pnl: float
+    return_pct: float
+    holding_days: int
+    exit_reason: str
+
+
 @dataclass(slots=True)
 class PaperExecutionBatchResult:
     enabled: bool
@@ -250,6 +274,18 @@ class PaperExecutionBatchResult:
     equity: float = 0.0
     gross_exposure_pct: float = 0.0
     open_positions: int = 0
+    positions: list[
+        PaperPositionSummary
+    ] = field(
+        default_factory=list
+    )
+    closed_today: list[
+        PaperClosedTradeSummary
+    ] = field(
+        default_factory=list
+    )
+    realized_pnl: float = 0.0
+    unrealized_pnl: float = 0.0
 
     @property
     def filled_count(
@@ -376,6 +412,8 @@ class PaperSignalExecutor:
         signals: Sequence[
             dict[str, Any]
         ],
+        *,
+        report_date: str | date | None = None,
     ) -> PaperExecutionBatchResult:
         if not self.config.enabled:
             return PaperExecutionBatchResult(
@@ -384,6 +422,12 @@ class PaperSignalExecutor:
                     self.position_sizer.name
                 ),
             )
+
+        resolved_report_date = (
+            self._resolve_report_date(
+                report_date
+            )
+        )
 
         executions: list[
             PaperSignalExecution
@@ -552,14 +596,6 @@ class PaperSignalExecutor:
                 )
                 continue
 
-            lifecycle_input = (
-                self._prepare_lifecycle_input(
-                    signal=signal,
-                    symbol=symbol,
-                    expected_entry_price=broker_price,
-                )
-            )
-
             fill = self.order_manager.buy_market(
                 symbol=symbol,
                 quantity=quantity,
@@ -615,37 +651,6 @@ class PaperSignalExecutor:
 
             submitted_count += 1
 
-            self.broker.save_position_lifecycle(
-                PositionLifecycleState(
-                    symbol=symbol,
-                    entry_date=(
-                        lifecycle_input["entry_date"]
-                    ),
-                    entry_price=fill.price,
-                    initial_quantity=fill.quantity,
-                    stop_price=(
-                        lifecycle_input["stop_price"]
-                    ),
-                    take_profit_price=(
-                        lifecycle_input[
-                            "take_profit_price"
-                        ]
-                    ),
-                    highest_price=fill.price,
-                    trailing_stop_price=None,
-                    trailing_atr_multiplier=(
-                        lifecycle_input[
-                            "trailing_atr_multiplier"
-                        ]
-                    ),
-                    maximum_holding_days=(
-                        lifecycle_input[
-                            "maximum_holding_days"
-                        ]
-                    ),
-                )
-            )
-
             executions.append(
                 PaperSignalExecution(
                     symbol=symbol,
@@ -676,6 +681,22 @@ class PaperSignalExecutor:
             self.broker.get_portfolio_snapshot()
         )
 
+        positions = [
+            self._build_position_summary(
+                position=position,
+                report_date=resolved_report_date,
+            )
+            for position
+            in self.broker.get_positions()
+            if position.quantity > 0
+        ]
+
+        closed_today = (
+            self._load_closed_trade_summaries(
+                report_date=resolved_report_date
+            )
+        )
+
         return PaperExecutionBatchResult(
             enabled=True,
             position_sizer=(
@@ -690,112 +711,154 @@ class PaperSignalExecutor:
             open_positions=(
                 snapshot.open_positions
             ),
+            positions=positions,
+            closed_today=closed_today,
+            realized_pnl=snapshot.realized_pnl,
+            unrealized_pnl=snapshot.unrealized_pnl,
         )
 
-
-    def _prepare_lifecycle_input(
+    def _build_position_summary(
         self,
         *,
-        signal: dict[str, Any],
-        symbol: str,
-        expected_entry_price: float,
-    ) -> dict[str, Any]:
-        stop_display = self._read_positive_float(
-            signal,
-            (
-                "stop_loss",
-                "stop_price",
-            ),
-        )
-
-        if stop_display is None:
-            raise RuntimeError(
-                f"{symbol} không có stop_loss; "
-                "không gửi lệnh BUY."
-            )
-
-        stop_price = (
-            stop_display
-            * self.PRICE_SCALE
-        )
-
-        if not (
-            0
-            < stop_price
-            < expected_entry_price
-        ):
-            raise RuntimeError(
-                f"{symbol} có stop_loss "
-                "không hợp lệ."
-            )
-
-        target_display = self._read_positive_float(
-            signal,
-            (
-                "take_profit",
-                "target_price",
-            ),
-        )
-
-        target_price = (
-            target_display
-            * self.PRICE_SCALE
-            if target_display is not None
-            else None
-        )
-
-        if (
-            target_price is not None
-            and target_price
-            <= expected_entry_price
-        ):
-            target_price = None
-
-        trailing_multiplier = self._safe_float(
-            signal.get(
-                "trailing_atr_multiplier"
+        position,
+        report_date: date,
+    ) -> PaperPositionSummary:
+        lifecycle = (
+            self.broker.get_position_lifecycle(
+                position.symbol
             )
         )
 
-        maximum_holding_raw = signal.get(
-            "maximum_holding_days"
-        )
-        try:
-            maximum_holding_days = (
-                int(maximum_holding_raw)
-                if maximum_holding_raw is not None
-                else None
-            )
-        except (TypeError, ValueError):
-            maximum_holding_days = None
+        stop_price = None
+        take_profit_price = None
+        holding_days = None
 
-        return {
-            "entry_date": (
-                self._read_signal_date(
-                    signal
-                ).date()
-            ),
-            "stop_price": stop_price,
-            "take_profit_price": target_price,
-            "trailing_atr_multiplier": (
-                trailing_multiplier
-                if (
-                    trailing_multiplier
-                    is not None
-                    and trailing_multiplier > 0
+        if lifecycle is not None:
+            stop_candidates = [
+                lifecycle.stop_price,
+                lifecycle.trailing_stop_price,
+            ]
+            valid_stops = [
+                float(value)
+                for value in stop_candidates
+                if value is not None
+                and float(value) > 0
+            ]
+
+            if valid_stops:
+                stop_price = max(
+                    valid_stops
                 )
-                else None
-            ),
-            "maximum_holding_days": (
-                maximum_holding_days
-                if (
-                    maximum_holding_days
-                    is not None
-                    and maximum_holding_days > 0
+
+            if (
+                lifecycle.take_profit_price
+                is not None
+                and lifecycle.take_profit_price > 0
+            ):
+                take_profit_price = float(
+                    lifecycle.take_profit_price
                 )
-                else None
+
+            holding_days = max(
+                0,
+                (
+                    report_date
+                    - lifecycle.entry_date
+                ).days,
+            )
+
+        return PaperPositionSummary(
+            symbol=position.symbol,
+            quantity=position.quantity,
+            average_price=position.average_price,
+            market_price=position.market_price,
+            cost_basis=position.cost_basis,
+            market_value=position.market_value,
+            unrealized_pnl=position.unrealized_pnl,
+            unrealized_pnl_pct=(
+                position.unrealized_pnl_pct
             ),
-        }
+            stop_price=stop_price,
+            take_profit_price=(
+                take_profit_price
+            ),
+            holding_days=holding_days,
+        )
+
+    def _load_closed_trade_summaries(
+        self,
+        *,
+        report_date: date,
+    ) -> list[
+        PaperClosedTradeSummary
+    ]:
+        summaries: list[
+            PaperClosedTradeSummary
+        ] = []
+
+        for trade in self.broker.get_closed_trades():
+            exit_date = trade.exit_date
+
+            if isinstance(
+                exit_date,
+                datetime,
+            ):
+                exit_date = exit_date.date()
+
+            if exit_date != report_date:
+                continue
+
+            reason = trade.exit_reason
+
+            if hasattr(
+                reason,
+                "value",
+            ):
+                reason = reason.value
+
+            summaries.append(
+                PaperClosedTradeSummary(
+                    symbol=trade.symbol,
+                    quantity=trade.quantity,
+                    entry_price=trade.entry_price,
+                    exit_price=trade.exit_price,
+                    realized_pnl=(
+                        trade.realized_pnl
+                    ),
+                    return_pct=trade.return_pct,
+                    holding_days=(
+                        trade.holding_days
+                    ),
+                    exit_reason=str(reason),
+                )
+            )
+
+        return summaries
+
+    @staticmethod
+    def _resolve_report_date(
+        value: str | date | None,
+    ) -> date:
+        if isinstance(
+            value,
+            datetime,
+        ):
+            return value.date()
+
+        if isinstance(
+            value,
+            date,
+        ):
+            return value
+
+        if value:
+            return date.fromisoformat(
+                str(value)[:10]
+            )
+
+        return datetime.now(
+            timezone.utc
+        ).date()
 
     def _build_position_sizer(
         self,

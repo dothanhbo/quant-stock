@@ -20,13 +20,6 @@ from execution.risk_guard import (
     RiskGuard,
     RiskLimits,
 )
-from services.lifecycle_notification_formatter import (
-    build_lifecycle_message,
-)
-from services.telegram_client import (
-    TelegramClient,
-    TelegramConfigurationError,
-)
 
 
 def env_float(
@@ -194,35 +187,9 @@ def main() -> None:
     )
 
 
-    message = build_lifecycle_message(
-        result
-    )
+    print("\nℹ️ Lifecycle chỉ ghi log terminal; "
+          "báo cáo danh mục được gửi sau scanner.")
 
-    try:
-        telegram_client = TelegramClient.from_env()
-    except TelegramConfigurationError as error:
-        print(
-            "\n⚠️ Không gửi Telegram: "
-            f"{error}"
-        )
-        return
-
-    send_result = telegram_client.send_message(
-        message
-    )
-
-    if send_result.success:
-        print(
-            "\n✅ Đã gửi cập nhật lifecycle "
-            "lên Telegram "
-            f"({send_result.chunks_sent} phần)."
-        )
-    else:
-        print(
-            "\n⚠️ Lifecycle đã xử lý xong "
-            "nhưng gửi Telegram thất bại: "
-            f"{send_result.error}"
-        )
 
 
 if __name__ == "__main__":

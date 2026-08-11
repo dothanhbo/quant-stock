@@ -9,6 +9,10 @@ from sqlalchemy import text
 from config.strategy_loader import COMMON_CONFIG
 from core.database import engine, get_reference_market_date, get_symbol_latest_dates, load_price_data
 from core.signal_database import save_signal
+from core.scan_telemetry import (
+    persist_scan_telemetry,
+    print_scan_diagnostics,
+)
 from execution.signal_executor import PaperSignalExecutor
 from reporting.dashboard import print_end_of_day_dashboard, print_scan_results
 from services.notification_formatter import build_scan_message
@@ -56,8 +60,28 @@ def _prepare_price_data(symbol: str, end_date=None) -> pd.DataFrame:
         return df
 
     prepared = df.copy()
-    prepared["time"] = pd.to_datetime(prepared["time"], errors="coerce")
-    prepared = prepared.dropna(subset=["time"]).sort_values("time").reset_index(drop=True)
+    prepared["time"] = pd.to_datetime(
+        prepared["time"],
+        errors="coerce",
+    )
+    prepared = prepared.dropna(
+        subset=["time"]
+    )
+
+    prepared["trading_date"] = (
+        prepared["time"]
+        .dt.strftime("%Y-%m-%d")
+    )
+    prepared = (
+        prepared
+        .sort_values("time")
+        .drop_duplicates(
+            subset=["trading_date"],
+            keep="last",
+        )
+        .drop(columns=["trading_date"])
+        .reset_index(drop=True)
+    )
 
     if end_date is not None:
         cutoff = pd.to_datetime(end_date, errors="coerce")
@@ -343,6 +367,7 @@ def scan_all_symbols(market_config=None):
 
     signals: list[dict] = []
     watchlist: list[dict] = []
+    evaluations: list[dict] = []
     scan_errors: list[dict] = []
     reject_stats: Counter = Counter()
     condition_fail_stats: Counter = Counter()
@@ -351,7 +376,12 @@ def scan_all_symbols(market_config=None):
     for index, symbol in enumerate(fresh_symbols, start=1):
         print(f"\rĐang quét {index}/{len(fresh_symbols)}: {symbol}", end="", flush=True)
         try:
-            evaluation = evaluate_symbol(symbol, reference_date=reference_date, market_config=market_config)
+            evaluation = evaluate_symbol(
+                symbol,
+                reference_date=reference_date,
+                market_config=market_config,
+            )
+            evaluations.append(evaluation)
             reject_stats[evaluation["reason"]] += 1
             condition_fail_stats.update(evaluation.get("failed_conditions", []))
             if evaluation["status"] == "PASSED":
@@ -378,6 +408,7 @@ def scan_all_symbols(market_config=None):
         "reject_stats": dict(reject_stats),
         "condition_fail_stats": dict(condition_fail_stats),
         "watchlist": watchlist,
+        "evaluations": evaluations,
         "market_config": market_config,
     }
     return signals, scan_stats
@@ -397,8 +428,35 @@ def run_scan() -> tuple[list[dict], dict]:
 
     results, scan_stats = scan_all_symbols(market_config=market_config)
     watchlist = scan_stats["watchlist"]
-    print_scan_results(results, watchlist, top_results=TOP_RESULTS, top_watchlist=TOP_WATCHLIST)
-    print_end_of_day_dashboard(results, scan_stats)
+    print_scan_results(
+        results,
+        watchlist,
+        top_results=TOP_RESULTS,
+        top_watchlist=TOP_WATCHLIST,
+    )
+    print_end_of_day_dashboard(
+        results,
+        scan_stats,
+    )
+    print_scan_diagnostics(
+        results=results,
+        scan_stats=scan_stats,
+    )
+
+    try:
+        persist_scan_telemetry(
+            results=results,
+            scan_stats=scan_stats,
+        )
+        print(
+            "\n✅ Đã lưu scan telemetry "
+            "vào market database."
+        )
+    except Exception as error:
+        print(
+            "\n⚠️ Không lưu được scan telemetry; "
+            f"scanner vẫn tiếp tục: {error}"
+        )
 
     saved_count = duplicate_count = save_failed_count = 0
     for signal in results:
@@ -418,7 +476,10 @@ def run_scan() -> tuple[list[dict], dict]:
 
     paper_result = (
         paper_signal_executor.execute_signals(
-            results
+            results,
+            report_date=(
+                scan_stats["reference_date"]
+            ),
         )
     )
 

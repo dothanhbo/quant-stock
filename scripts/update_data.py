@@ -8,6 +8,7 @@ import pandas as pd
 from vnstock.api.quote import Quote
 from pathlib import Path
 from core.database import (
+    cleanup_price_duplicates,
     get_latest_price_date,
     save_price_data,
 )
@@ -494,11 +495,28 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    parser.add_argument(
+        "--cleanup-only",
+        action="store_true",
+        help=(
+            "Chỉ chuẩn hóa/xóa duplicate trong bảng prices, "
+            "không gọi API market data."
+        ),
+    )
+
     return parser
 
 
 def main() -> None:
     args = build_parser().parse_args()
+
+    if args.cleanup_only:
+        result = cleanup_price_duplicates()
+        print("\n🧹 CLEANUP MARKET DATA")
+        print(f"Trước cleanup : {result['before']:,} dòng")
+        print(f"Sau cleanup   : {result['after']:,} dòng")
+        print(f"Đã loại       : {result['removed']:,} dòng trùng")
+        return
 
     if args.symbols:
         symbols = args.symbols
