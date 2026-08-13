@@ -16,6 +16,9 @@ from backtesting.trade import Trade
 from backtesting.transaction_cost import (
     TransactionCostConfig,
 )
+from execution.lifecycle_models import (
+    PositionLifecycleState,
+)
 from execution.order_manager import OrderManager
 from execution.paper_broker import PaperBroker
 from execution.risk_guard import RiskGuard, RiskLimits
@@ -574,7 +577,7 @@ class PaperSignalExecutor:
                         symbol=symbol,
                         status="SKIPPED",
                         requested_price=(
-                            display_entry_price
+                            broker_price
                         ),
                         position_sizer=(
                             self.position_sizer.name
@@ -627,7 +630,7 @@ class PaperSignalExecutor:
                         status="REJECTED",
                         quantity=quantity,
                         requested_price=(
-                            display_entry_price
+                            broker_price
                         ),
                         position_sizer=(
                             self.position_sizer.name
@@ -650,6 +653,14 @@ class PaperSignalExecutor:
                 continue
 
             submitted_count += 1
+
+            self._initialize_filled_position(
+                signal=signal,
+                candidate=candidate,
+                fill=fill,
+                broker_price=broker_price,
+                report_date=resolved_report_date,
+            )
 
             executions.append(
                 PaperSignalExecution(
@@ -715,6 +726,83 @@ class PaperSignalExecutor:
             closed_today=closed_today,
             realized_pnl=snapshot.realized_pnl,
             unrealized_pnl=snapshot.unrealized_pnl,
+        )
+
+    def _initialize_filled_position(
+        self,
+        *,
+        signal: dict[str, Any],
+        candidate: Trade,
+        fill,
+        broker_price: float,
+        report_date: date,
+    ) -> None:
+        stop_price = candidate.stop_price
+
+        take_profit_display = self._read_positive_float(
+            signal,
+            (
+                "take_profit",
+                "take_profit_price",
+            ),
+        )
+        take_profit_price = (
+            take_profit_display
+            * self.PRICE_SCALE
+            if take_profit_display is not None
+            else None
+        )
+
+        if (
+            stop_price is None
+            or stop_price <= 0
+            or stop_price >= fill.price
+        ):
+            raise RuntimeError(
+                f"{fill.symbol}: không thể tạo lifecycle "
+                "vì stop price không hợp lệ."
+            )
+
+        if (
+            take_profit_price is not None
+            and take_profit_price <= fill.price
+        ):
+            raise RuntimeError(
+                f"{fill.symbol}: không thể tạo lifecycle "
+                "vì take-profit không lớn hơn giá khớp."
+            )
+
+        state = PositionLifecycleState(
+            symbol=fill.symbol,
+            entry_date=report_date,
+            entry_price=fill.price,
+            initial_quantity=fill.quantity,
+            stop_price=float(stop_price),
+            take_profit_price=(
+                float(take_profit_price)
+                if take_profit_price is not None
+                else None
+            ),
+            highest_price=max(
+                float(fill.price),
+                float(broker_price),
+            ),
+            updated_at=datetime.now(
+                timezone.utc
+            ),
+        )
+
+        self.broker.save_position_lifecycle(
+            state
+        )
+
+        # PaperBroker sets market_price=fill_price at execution.
+        # For end-of-day reporting, mark the new position using
+        # the scanner's latest known market/reference close instead.
+        self.broker.update_market_price(
+            fill.symbol,
+            broker_price,
+            persist_snapshot=True,
         )
 
     def _build_position_summary(
