@@ -29,6 +29,7 @@ from dashboard.data import (
     DashboardPaths,
     compute_overview,
     compute_performance,
+    compute_forward_validation,
     load_closed_trades,
     load_fills,
     load_latest_signals,
@@ -142,6 +143,7 @@ def sidebar() -> str:
             "Portfolio",
             "Trades",
             "Analytics",
+            "Forward Validation",
             "Reports",
             "Data Health",
             "Settings",
@@ -256,6 +258,9 @@ def cached_data(
             paths
         ),
         "vnindex": load_vnindex(
+            paths
+        ),
+        "forward_validation": compute_forward_validation(
             paths
         ),
     }
@@ -1118,6 +1123,69 @@ def analytics_page(
         )
 
 
+def forward_validation_page(data: dict) -> None:
+    header(
+        "Forward Validation",
+        "Paper reality vs historical research và VNINDEX",
+    )
+    validation = data["forward_validation"]
+    paper = validation["paper"]
+    historical = validation["historical"]
+
+    if validation["sample_warning"]:
+        st.info(
+            "Paper sample hiện còn nhỏ (<30 closed trades). "
+            "Các chênh lệch bên dưới chỉ để theo dõi, chưa dùng để retune strategy."
+        )
+
+    columns = st.columns(4)
+    cards = [
+        ("Paper Return", f"{paper['total_return']:+.2f}%", "Forward", "↗"),
+        ("VNINDEX", f"{validation['benchmark_return']:+.2f}%", "Same window", "◎"),
+        ("Alpha vs VNINDEX", f"{validation['alpha_vs_vnindex']:+.2f}%", "Paper - benchmark", "Δ"),
+        ("Closed Trades", str(int(paper['total_trades'])), "Target ≥30 preliminary", "#"),
+    ]
+    for column, (label, value, delta, icon) in zip(columns, cards):
+        with column:
+            metric_card(label, value, delta, icon)
+
+    st.write("")
+    panel_title("Historical/OOS expectation vs Paper reality")
+    rows = []
+    metrics = [
+        ("Win Rate", "win_rate", "%"),
+        ("Profit Factor", "profit_factor", "x"),
+        ("Expectancy", "expectancy", "%"),
+        ("Max Drawdown", "max_drawdown", "%"),
+    ]
+    for label, key, unit in metrics:
+        hist = historical.get(key) if historical else None
+        live = float(paper.get(key, 0.0))
+        rows.append({
+            "Metric": label,
+            "Historical/OOS": None if hist is None else round(float(hist), 2),
+            "Paper": round(live, 2),
+            "Difference": None if hist is None else round(live - float(hist), 2),
+            "Unit": unit,
+        })
+    st.dataframe(pd.DataFrame(rows), hide_index=True, width="stretch")
+
+    comparison = validation["comparison"]
+    if not comparison.empty:
+        st.write("")
+        panel_title("Forward equity comparison", "Normalized return từ ngày paper snapshot đầu tiên")
+        chart = comparison.set_index("date")[[c for c in ["Paper", "VNINDEX"] if c in comparison.columns]]
+        st.line_chart(chart, width="stretch")
+
+    if historical:
+        st.caption(
+            f"Historical baseline: {historical.get('policy', 'baseline')} · "
+            f"{int(historical.get('total_trades', 0))} trades · source: {historical.get('source', '')}"
+        )
+    else:
+        st.warning("Không tìm thấy historical baseline để so sánh.")
+
+
 def reports_page(
     data: dict,
 ) -> None:
@@ -1317,6 +1385,10 @@ def main() -> None:
         )
     elif page == "Analytics":
         analytics_page(
+            data
+        )
+    elif page == "Forward Validation":
+        forward_validation_page(
             data
         )
     elif page == "Reports":

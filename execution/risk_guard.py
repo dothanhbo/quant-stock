@@ -19,6 +19,7 @@ class RiskLimits:
     maximum_daily_loss_pct: float = 3.0
     minimum_cash_buffer_pct: float = 5.0
     allow_duplicate_orders: bool = False
+    commission_rate: float = 0.0015
 
 
 @dataclass(slots=True)
@@ -120,7 +121,7 @@ class RiskGuard:
 
         estimated_commission = (
             order_value
-            * 0.0015
+            * self.limits.commission_rate
         )
 
         required_cash = (

@@ -410,6 +410,55 @@ class PaperSignalExecutor:
             PaperExecutionConfig.from_env()
         )
 
+    def _clip_quantity_to_exposure(
+        self,
+        *,
+        quantity: int,
+        price: float,
+    ) -> int:
+        if quantity <= 0 or price <= 0:
+            return 0
+
+        snapshot = (
+            self.broker
+            .get_portfolio_snapshot()
+        )
+
+        if snapshot.equity <= 0:
+            return 0
+
+        maximum_exposure_value = (
+            snapshot.equity
+            * self.config.maximum_gross_exposure_pct
+            / 100
+        )
+
+        remaining_exposure_value = (
+            maximum_exposure_value
+            - snapshot.positions_value
+        )
+
+        if remaining_exposure_value <= 0:
+            return 0
+
+        max_quantity_by_exposure = int(
+            remaining_exposure_value
+            / price
+        )
+
+        max_quantity_by_exposure = (
+            max_quantity_by_exposure
+            // self.config.lot_size
+        ) * self.config.lot_size
+
+        return max(
+            min(
+                quantity,
+                max_quantity_by_exposure,
+            ),
+            0,
+        )
+
     def execute_signals(
         self,
         signals: Sequence[
@@ -559,6 +608,11 @@ class PaperSignalExecutor:
                 .calculate_quantity(
                     sizing_context
                 )
+            )
+
+            quantity = self._clip_quantity_to_exposure(
+                quantity=quantity,
+                price=broker_price,
             )
 
             (

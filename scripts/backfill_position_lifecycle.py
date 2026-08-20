@@ -33,11 +33,11 @@ def build_parser() -> argparse.ArgumentParser:
     )
     return parser
 
-
-def load_latest_signal(
+def load_signal_for_fill(
     *,
     db_path: Path,
     symbol: str,
+    fill_date: date,
 ) -> sqlite3.Row:
     if not db_path.exists():
         raise FileNotFoundError(
@@ -59,23 +59,27 @@ def load_latest_signal(
             FROM signals
             WHERE UPPER(symbol) = ?
               AND stop_loss IS NOT NULL
+              AND date(signal_date) <= date(?)
             ORDER BY
-                signal_date DESC,
+                date(signal_date) DESC,
                 id DESC
             LIMIT 1
             """,
-            (symbol,),
+            (
+                symbol,
+                fill_date.isoformat(),
+            ),
         ).fetchone()
     finally:
         connection.close()
 
     if row is None:
         raise RuntimeError(
-            f"Không tìm thấy signal có stop_loss cho {symbol}."
+            f"Không tìm thấy signal phù hợp với "
+            f"BUY fill {symbol} ngày {fill_date}."
         )
 
     return row
-
 
 def load_latest_market_close(
     *,
@@ -166,15 +170,20 @@ def main() -> int:
         )
         return 0
 
-    signal = load_latest_signal(
-        db_path=market_db,
-        symbol=symbol,
-    )
-
     fill = resolve_buy_fill(
         executor,
         symbol,
     )
+
+    fill_date = fill.created_at.date()
+
+    signal = load_latest_signal(
+        db_path=market_db,
+        symbol=symbol,
+        fill_date=fill_date,
+    )
+
+
 
     stop_price = (
         float(signal["stop_loss"])

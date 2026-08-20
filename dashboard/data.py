@@ -291,3 +291,80 @@ def compute_performance(paths: DashboardPaths) -> dict[str, float]:
         "avg_win": float(wins["return_pct"].mean()) if not wins.empty else 0.0,
         "avg_loss": float(losses["return_pct"].mean()) if not losses.empty else 0.0,
     }
+
+
+def load_historical_baseline(
+    path: Path = Path("research_results/regime_policy/summary.csv"),
+) -> dict[str, float | str]:
+    """Load the frozen/adaptive research baseline used for forward comparison."""
+    if not path.exists():
+        return {}
+    frame = pd.read_csv(path)
+    if frame.empty:
+        return {}
+    if "policy" in frame.columns and (frame["policy"] == "adaptive_default").any():
+        row = frame.loc[frame["policy"] == "adaptive_default"].iloc[0]
+    else:
+        row = frame.iloc[0]
+    return {
+        "source": str(path),
+        "policy": str(row.get("policy", "baseline")),
+        "total_trades": float(row.get("total_trades", 0.0)),
+        "win_rate": float(row.get("win_rate_pct", 0.0)),
+        "profit_factor": float(row.get("profit_factor", 0.0)),
+        "expectancy": float(row.get("expectancy_pct", 0.0)),
+        "max_drawdown": float(row.get("max_drawdown_pct", 0.0)),
+        "sharpe": float(row.get("sharpe_ratio", 0.0)),
+        "total_return": float(row.get("total_return_pct", 0.0)),
+    }
+
+
+def compute_forward_validation(paths: DashboardPaths) -> dict[str, object]:
+    """Compare live paper observations with the frozen research baseline and VNINDEX."""
+    overview = compute_overview(paths)
+    performance = compute_performance(paths)
+    snapshots = load_snapshots(paths)
+    vnindex = load_vnindex(paths)
+    baseline = load_historical_baseline()
+
+    benchmark_return = 0.0
+    strategy_return = overview.total_return_pct
+    comparison = pd.DataFrame()
+    if not snapshots.empty:
+        daily = (
+            snapshots.sort_values("created_at")
+            .dropna(subset=["date", "equity"])
+            .drop_duplicates("date", keep="last")[["date", "equity"]]
+        )
+        if not daily.empty:
+            base_equity = float(daily.iloc[0]["equity"])
+            daily["Paper"] = daily["equity"].div(base_equity).sub(1.0).mul(100) if base_equity else 0.0
+            comparison = daily[["date", "Paper"]].copy()
+            if not vnindex.empty:
+                bench = (
+                    vnindex.dropna(subset=["date", "close"])
+                    .drop_duplicates("date", keep="last")
+                    .copy()
+                )
+                start_date = daily.iloc[0]["date"]
+                end_date = daily.iloc[-1]["date"]
+                bench = bench[(bench["date"] >= start_date) & (bench["date"] <= end_date)]
+                if not bench.empty:
+                    first_close = float(bench.iloc[0]["close"])
+                    bench["VNINDEX"] = bench["close"].div(first_close).sub(1.0).mul(100) if first_close else 0.0
+                    benchmark_return = float(bench.iloc[-1]["VNINDEX"])
+                    comparison = comparison.merge(bench[["date", "VNINDEX"]], on="date", how="left")
+                    comparison["VNINDEX"] = comparison["VNINDEX"].ffill().fillna(0.0)
+
+    return {
+        "paper": {
+            **performance,
+            "total_return": strategy_return,
+            "max_drawdown": overview.max_drawdown_pct,
+        },
+        "historical": baseline,
+        "benchmark_return": benchmark_return,
+        "alpha_vs_vnindex": strategy_return - benchmark_return,
+        "comparison": comparison,
+        "sample_warning": int(performance["total_trades"]) < 30,
+    }

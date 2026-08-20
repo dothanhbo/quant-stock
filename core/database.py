@@ -37,6 +37,40 @@ def _normalize_trading_date(value) -> str | None:
         return None
     return parsed.strftime("%Y-%m-%d")
 
+def ensure_price_unique_index() -> bool:
+    """
+    Chỉ tạo UNIQUE index khi database đã sạch duplicate.
+    """
+    with engine.begin() as conn:
+        duplicate_groups = conn.execute(
+            text(
+                """
+                SELECT COUNT(*)
+                FROM (
+                    SELECT symbol, time
+                    FROM prices
+                    GROUP BY symbol, time
+                    HAVING COUNT(*) > 1
+                )
+                """
+            )
+        ).scalar()
+
+        if duplicate_groups:
+            return False
+
+        conn.execute(
+            text(
+                """
+                CREATE UNIQUE INDEX IF NOT EXISTS
+                ux_prices_symbol_time
+                ON prices(symbol, time)
+                """
+            )
+        )
+
+    return True
+
 
 def cleanup_price_duplicates() -> dict[str, int]:
     with engine.begin() as conn:
@@ -84,6 +118,9 @@ def cleanup_price_duplicates() -> dict[str, int]:
 
     before = len(rows)
     after = len(latest_by_day)
+
+    ensure_price_unique_index()
+
     return {
         "before": before,
         "after": after,
