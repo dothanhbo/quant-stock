@@ -21,7 +21,7 @@ from backtesting.walk_forward import (
 from research.benchmark_portfolio_models import (
     build_portfolio_model_registry,
 )
-from research.universes import TOP10_SYMBOLS
+from research.universes import HOLDOUT20_SYMBOLS
 
 
 DEFAULT_OUTPUT_DIR = Path(
@@ -128,7 +128,7 @@ def main() -> None:
     args = parse_args()
 
     symbols = (
-        list(TOP10_SYMBOLS)
+        list(HOLDOUT20_SYMBOLS	)
         if args.symbols is None
         else [
             symbol.upper().strip()

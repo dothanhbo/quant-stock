@@ -242,6 +242,7 @@ def build_paper_execution_message(
                 f"<b>{html.escape(position_sizer_name)}</b>"
             ),
             (
+                f"🕘 Chờ open: <b>{result.queued_count}</b> | "
                 f"✅ Đã khớp: <b>{result.filled_count}</b> | "
                 f"⏭ Bỏ qua: <b>{result.skipped_count}</b> | "
                 f"❌ Từ chối: <b>{result.rejected_count}</b>"
@@ -262,6 +263,14 @@ def build_paper_execution_message(
         symbol = html.escape(
             execution.symbol
         )
+
+        if execution.status == "QUEUED":
+            lines.extend([
+                f"🕘 <b>{symbol}</b> — <b>CHỜ OPEN PHIÊN KẾ TIẾP</b>",
+                html.escape(execution.reason),
+                "",
+            ])
+            continue
 
         if execution.status == "FILLED":
             fill_price = (

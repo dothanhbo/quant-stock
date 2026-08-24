@@ -164,7 +164,7 @@ class PaperLifecycleManager:
                 )
                 continue
 
-            if resolved_date <= lifecycle.entry_date:
+            if resolved_date < lifecycle.entry_date:
                 self.broker.update_market_price(
                     symbol,
                     bar.close_price,

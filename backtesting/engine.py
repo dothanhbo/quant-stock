@@ -440,17 +440,10 @@ def generate_candidate_trades(
 
     trades: list[Trade] = []
 
-    next_allowed_signal_index = (
-        first_signal_index
-    )
-
     for signal_index in range(
         first_signal_index,
         len(price_df) - 1
     ):
-        if signal_index < next_allowed_signal_index:
-            continue
-
         signal_date = pd.Timestamp(
             price_df.iloc[signal_index]["time"]
         )
@@ -579,8 +572,9 @@ def generate_candidate_trades(
 
         trades.append(trade)
         
-        # Không chồng lệnh trên cùng một mã.
-        next_allowed_signal_index = exit_info.exit_index + 1
+        # Do not suppress later candidates here. PortfolioSimulator owns
+        # actual position state and rejects overlapping signals only when
+        # the earlier candidate was really executed.
 
         if verbose:
             print(

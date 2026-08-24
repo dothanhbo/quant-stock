@@ -10,7 +10,7 @@ except ImportError:  # pragma: no cover - project requirements normally provide 
         return False
 
 from backtesting.current_logic import CurrentScannerExitModel
-from backtesting.engine import run_backtest
+from backtesting.engine import build_exit_model, run_backtest
 from backtesting.paper_parity import BacktestPaperParityConfig
 from backtesting.walk_forward import (
     WalkForwardConfig,
@@ -20,6 +20,7 @@ from backtesting.walk_forward import (
 from execution.signal_executor import PaperExecutionConfig
 from research.universes import HOLDOUT20_SYMBOLS
 from strategy.trend_strategy_v1 import TrendStrategyV1
+from config.trading_policy import TradingPolicy
 
 
 DEFAULT_OUTPUT_DIR = Path(
@@ -51,6 +52,7 @@ def main() -> None:
     args = build_parser().parse_args()
 
     paper = PaperExecutionConfig.from_env()
+    policy = TradingPolicy.from_env()
     parity = BacktestPaperParityConfig.from_paper_config(
         paper,
         sell_tax_rate=args.sell_tax_rate,
@@ -75,9 +77,15 @@ def main() -> None:
 
     backtest_kwargs = {
         "symbols": symbols,
-        "max_holding_days": args.hold,
-        "entry_model": TrendStrategyV1(),
-        "exit_model": CurrentScannerExitModel(),
+        "max_holding_days": policy.maximum_holding_days,
+        "entry_model": policy.build_entry_model(),
+        "exit_model": build_exit_model(
+            name="atr",
+            stop_atr_multiplier=policy.stop_atr_multiplier,
+            target_atr_multiplier=policy.target_atr_multiplier,
+            break_even_trigger=policy.target_atr_multiplier,
+            trailing_atr_multiplier=policy.stop_atr_multiplier,
+        ),
         "ranking_method": "signal_score",
         "position_sizer": parity.build_position_sizer(),
         "buy_commission_pct": parity.commission_pct,

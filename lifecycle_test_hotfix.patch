@@ -1,0 +1,53 @@
+diff --git a/execution/signal_executor.py b/execution/signal_executor.py
+index aea3774..8781839 100644
+--- a/execution/signal_executor.py
++++ b/execution/signal_executor.py
+@@ -426,9 +426,16 @@ class PaperSignalExecutor:
+                 ),
+             )
+ 
++        inferred_report_date = report_date
++
++        if inferred_report_date is None and signals:
++            signal_date = signals[0].get("date")
++            if signal_date:
++                inferred_report_date = str(signal_date)[:10]
++
+         resolved_report_date = (
+             self._resolve_report_date(
+-                report_date
++                inferred_report_date
+             )
+         )
+ 
+diff --git a/services/lifecycle_notification_formatter.py b/services/lifecycle_notification_formatter.py
+index e1241d7..c471669 100644
+--- a/services/lifecycle_notification_formatter.py
++++ b/services/lifecycle_notification_formatter.py
+@@ -35,7 +35,11 @@ def _get_average_price(item: object) -> float | None:
+ 
+ 
+ def build_holdings_section(result: LifecycleRunResult) -> list[str]:
+-    lines = ["<b>🟡 DANH MỤC ĐANG NẮM GIỮ</b>", ""]
++    lines = [
++        "<b>🟡 DANH MỤC ĐANG NẮM GIỮ</b>",
++        "Tiếp tục nắm giữ các vị thế dưới đây.",
++        "",
++    ]
+ 
+     if not result.held:
+         return [*lines, "Không có vị thế đang mở.", ""]
+@@ -72,7 +76,11 @@ def build_exited_positions_section(
+     if not result.exited:
+         return []
+ 
+-    lines = ["<b>🔴 VỊ THẾ ĐÃ ĐÓNG HÔM NAY</b>", ""]
++    lines = [
++        "<b>🔴 VỊ THẾ ĐÃ ĐÓNG HÔM NAY</b>",
++        "Đã đóng vị thế:",
++        "",
++    ]
+ 
+     for item in result.exited:
+         reason = _REASON.get(
+

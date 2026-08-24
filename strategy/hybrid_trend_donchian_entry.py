@@ -118,7 +118,7 @@ class HybridTrendDonchianEntryModel(
 
         self.donchian_model = (
             donchian_model
-            or DonchianBreakoutEntryModel()
+            or DonchianBreakoutEntryModel(use_regime_thresholds=True)
         )
 
         self.trend_weight = (
@@ -271,6 +271,7 @@ class HybridTrendDonchianEntryModel(
             entry_passed = (
                 trend_context_passed
                 and donchian_passed
+                and hybrid_score >= self.min_hybrid_score
             )
 
         else:

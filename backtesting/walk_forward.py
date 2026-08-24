@@ -199,6 +199,7 @@ def run_walk_forward(
     run_backtest_fn: Callable[..., tuple],
     backtest_kwargs: dict[str, Any],
 ) -> WalkForwardResult:
+    """Rolling fixed-policy validation; this function does not optimize train parameters."""
     if initial_capital <= 0:
         raise ValueError(
             "initial_capital phải lớn hơn 0."
@@ -416,6 +417,7 @@ def run_walk_forward(
     )
 
     summary: dict[str, Any] = {
+        "optimization_performed": False,
         "folds": total_folds,
         "train_months": (
             config.train_months

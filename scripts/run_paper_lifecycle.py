@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 
 from dotenv import load_dotenv
 
@@ -20,6 +21,8 @@ from execution.risk_guard import (
     RiskGuard,
     RiskLimits,
 )
+from execution.signal_executor import PaperSignalExecutor
+from config.trading_policy import TradingPolicy
 
 
 def env_float(
@@ -49,6 +52,28 @@ def env_int(
 def main() -> None:
     load_dotenv()
 
+    market_database_path = os.getenv(
+        "MARKET_DATABASE_PATH",
+        "data/market.db",
+    )
+    with sqlite3.connect(market_database_path) as connection:
+        latest_value = connection.execute(
+            "SELECT MAX(date(time)) FROM prices WHERE symbol = 'VNINDEX'"
+        ).fetchone()[0]
+    if latest_value:
+        pending_result = PaperSignalExecutor.from_env().execute_pending_signals(
+            valuation_date=str(latest_value),
+            market_database_path=market_database_path,
+        )
+        if pending_result.executions:
+            print(
+                f"Pending next-open: {pending_result.filled_count} filled, "
+                f"{pending_result.skipped_count} skipped, "
+                f"{pending_result.rejected_count} rejected."
+            )
+
+    policy = TradingPolicy.from_env()
+
     broker = PaperBroker(
         initial_cash=env_float(
             "PAPER_INITIAL_CASH",
@@ -62,6 +87,7 @@ def main() -> None:
             "PAPER_SLIPPAGE_BPS",
             5.0,
         ),
+        sell_tax_rate=policy.sell_tax_rate,
         database_path=os.getenv(
             "PAPER_DATABASE_PATH",
             "data/paper_trading.db",
@@ -101,10 +127,7 @@ def main() -> None:
         broker=broker,
         order_manager=order_manager,
         exit_engine=ExitEngine(),
-        market_database_path=os.getenv(
-            "MARKET_DATABASE_PATH",
-            "data/market.db",
-        ),
+        market_database_path=market_database_path,
     )
 
     result = manager.run()

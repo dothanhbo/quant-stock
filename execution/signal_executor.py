@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import os
+import sqlite3
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -22,6 +23,7 @@ from execution.lifecycle_models import (
 from execution.order_manager import OrderManager
 from execution.paper_broker import PaperBroker
 from execution.risk_guard import RiskGuard, RiskLimits
+from config.trading_policy import TradingPolicy
 
 
 def _read_bool(
@@ -98,6 +100,7 @@ class PaperExecutionConfig:
     maximum_open_positions: int = 10
     maximum_daily_loss_pct: float = 3.0
     minimum_cash_buffer_pct: float = 5.0
+    sell_tax_rate: float = 0.001
 
     @classmethod
     def from_env(
@@ -170,6 +173,10 @@ class PaperExecutionConfig:
                 "PAPER_MIN_CASH_BUFFER_PCT",
                 5.0,
             ),
+            sell_tax_rate=_read_float(
+                "PAPER_SELL_TAX_RATE",
+                0.001,
+            ),
         )
         config.validate()
         return config
@@ -219,6 +226,21 @@ class PaperExecutionConfig:
             raise ValueError(
                 "PAPER_LOT_SIZE phải lớn hơn 0."
             )
+
+        if not 0 <= self.commission_rate < 1:
+            raise ValueError("PAPER_COMMISSION_RATE phải nằm trong [0, 1).")
+        if self.slippage_bps < 0:
+            raise ValueError("PAPER_SLIPPAGE_BPS không được âm.")
+        if not 0 < self.maximum_position_pct <= 100:
+            raise ValueError("PAPER_MAX_POSITION_PCT phải nằm trong (0, 100].")
+        if not 0 < self.maximum_gross_exposure_pct <= 100:
+            raise ValueError("PAPER_MAX_EXPOSURE_PCT phải nằm trong (0, 100].")
+        if self.maximum_open_positions <= 0:
+            raise ValueError("PAPER_MAX_OPEN_POSITIONS phải lớn hơn 0.")
+        if not 0 <= self.minimum_cash_buffer_pct < 100:
+            raise ValueError("PAPER_MIN_CASH_BUFFER_PCT phải nằm trong [0, 100).")
+        if not 0 <= self.sell_tax_rate < 1:
+            raise ValueError("PAPER_SELL_TAX_RATE phải nằm trong [0, 1).")
 
 
 @dataclass(slots=True)
@@ -317,6 +339,10 @@ class PaperExecutionBatchResult:
             for item in self.executions
         )
 
+    @property
+    def queued_count(self) -> int:
+        return sum(item.status == "QUEUED" for item in self.executions)
+
 
 class PaperSignalExecutor:
     """
@@ -337,6 +363,7 @@ class PaperSignalExecutor:
         position_sizer: PositionSizer | None = None,
     ) -> None:
         self.config = config
+        self.policy = TradingPolicy.from_env()
 
         self.broker = PaperBroker(
             initial_cash=config.initial_cash,
@@ -346,6 +373,7 @@ class PaperSignalExecutor:
             slippage_bps=(
                 config.slippage_bps
             ),
+            sell_tax_rate=config.sell_tax_rate,
             database_path=(
                 config.database_path
             ),
@@ -371,6 +399,7 @@ class PaperSignalExecutor:
                     minimum_cash_buffer_pct=(
                         config.minimum_cash_buffer_pct
                     ),
+                    commission_rate=config.commission_rate,
                 )
             ),
         )
@@ -390,7 +419,7 @@ class PaperSignalExecutor:
                     config.commission_rate
                     * 100
                 ),
-                sell_tax_pct=0.0,
+                sell_tax_pct=config.sell_tax_rate * 100,
                 buy_slippage_pct=(
                     config.slippage_bps
                     / 100
@@ -409,6 +438,107 @@ class PaperSignalExecutor:
         return cls(
             PaperExecutionConfig.from_env()
         )
+
+    def queue_signals(
+        self,
+        signals: Sequence[dict[str, Any]],
+        *,
+        report_date: str | date | None = None,
+    ) -> PaperExecutionBatchResult:
+        """Persist close-T signals for execution at the next session open."""
+        result = self.execute_signals([], report_date=report_date)
+        if not self.config.enabled:
+            return result
+        for signal in signals:
+            symbol = str(signal.get("symbol", "")).strip().upper()
+            try:
+                inserted = self.broker.queue_signal(dict(signal))
+                result.executions.append(
+                    PaperSignalExecution(
+                        symbol=symbol or "-",
+                        status="QUEUED" if inserted else "SKIPPED",
+                        position_sizer=self.position_sizer.name,
+                        reason=(
+                            "Chờ khớp tại open phiên kế tiếp."
+                            if inserted
+                            else "Signal đã có trong hàng đợi."
+                        ),
+                    )
+                )
+            except Exception as error:
+                result.executions.append(
+                    PaperSignalExecution(
+                        symbol=symbol or "-",
+                        status="REJECTED",
+                        position_sizer=self.position_sizer.name,
+                        reason=f"Không queue được signal: {error}",
+                    )
+                )
+        return result
+
+    def execute_pending_signals(
+        self,
+        *,
+        valuation_date: str | date,
+        market_database_path: str | Path = "data/market.db",
+    ) -> PaperExecutionBatchResult:
+        """Fill prior-session signals from the exact open of valuation_date."""
+        resolved_date = self._resolve_report_date(valuation_date)
+        pending = self.broker.load_pending_signals(resolved_date.isoformat())
+        if not pending:
+            return self.execute_signals([], report_date=resolved_date)
+
+        symbols = sorted({str(item["symbol"]).strip().upper() for item in pending})
+        placeholders = ",".join("?" for _ in symbols)
+        query = f"""
+            SELECT symbol, open FROM prices
+            WHERE date(time) = ? AND symbol IN ({placeholders})
+        """
+        with sqlite3.connect(market_database_path) as connection:
+            rows = connection.execute(
+                query,
+                (resolved_date.isoformat(), *symbols),
+            ).fetchall()
+        opens = {str(symbol).upper(): float(value) for symbol, value in rows}
+
+        executable: list[dict[str, Any]] = []
+        executable_ids: list[int] = []
+        for signal in pending:
+            symbol = str(signal["symbol"]).strip().upper()
+            pending_id = int(signal.pop("_pending_id"))
+            open_price = opens.get(symbol)
+            atr = self._read_positive_float(signal, ("atr",))
+            if open_price is None or open_price <= 0 or atr is None:
+                self.broker.complete_pending_signal(
+                    pending_id,
+                    processed_date=resolved_date.isoformat(),
+                    status="REJECTED",
+                    reason="Thiếu open hoặc ATR của phiên khớp.",
+                )
+                continue
+            stop, target = self.policy.calculate_levels(
+                entry_price=open_price,
+                atr=atr,
+            )
+            signal.update({
+                "date": resolved_date.isoformat(),
+                "entry": open_price,
+                "stop_loss": stop,
+                "take_profit": target,
+                "execution_timing": "next_open",
+            })
+            executable.append(signal)
+            executable_ids.append(pending_id)
+
+        result = self.execute_signals(executable, report_date=resolved_date)
+        for pending_id, execution in zip(executable_ids, result.executions):
+            self.broker.complete_pending_signal(
+                pending_id,
+                processed_date=resolved_date.isoformat(),
+                status=execution.status,
+                reason=execution.reason,
+            )
+        return result
 
     def _clip_quantity_to_exposure(
         self,
@@ -660,10 +790,16 @@ class PaperSignalExecutor:
                 )
                 continue
 
+            daily_realized_pnl = sum(
+                trade.realized_pnl
+                for trade in self.broker.get_closed_trades()
+                if trade.exit_date == resolved_report_date
+            )
             fill = self.order_manager.buy_market(
                 symbol=symbol,
                 quantity=quantity,
                 price=broker_price,
+                daily_realized_pnl=daily_realized_pnl,
             )
 
             if fill is None:
@@ -847,6 +983,9 @@ class PaperSignalExecutor:
             highest_price=max(
                 float(fill.price),
                 float(broker_price),
+            ),
+            maximum_holding_days=(
+                self.policy.maximum_holding_days
             ),
             updated_at=datetime.now(
                 timezone.utc

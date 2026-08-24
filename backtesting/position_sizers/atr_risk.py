@@ -33,6 +33,7 @@ class AtrRiskSizer(PositionSizer):
     atr_stop_multiplier: float = 2.0
     max_position_size_pct: float = 20.0
     atr_attribute: str = "atr"
+    use_candidate_stop: bool = True
 
     def __post_init__(self) -> None:
         if not 0 < self.risk_per_trade_pct <= 100:
@@ -155,10 +156,19 @@ class AtrRiskSizer(PositionSizer):
         if atr is None:
             return 0
 
-        stop_distance = (
-            atr
-            * self.atr_stop_multiplier
-        )
+        stop_distance = None
+        if self.use_candidate_stop:
+            try:
+                entry_price = float(context.candidate.entry_price)
+                stop_price = float(context.candidate.stop_price)
+                candidate_distance = entry_price - stop_price
+                if isfinite(candidate_distance) and candidate_distance > 0:
+                    stop_distance = candidate_distance
+            except (TypeError, ValueError):
+                stop_distance = None
+
+        if stop_distance is None:
+            stop_distance = atr * self.atr_stop_multiplier
 
         if stop_distance <= 0:
             return 0

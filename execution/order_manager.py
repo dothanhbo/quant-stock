@@ -103,6 +103,7 @@ class OrderManager:
         symbol: str,
         quantity: int,
         price: float,
+        daily_realized_pnl: float = 0.0,
     ) -> Fill | None:
         order = Order(
             symbol=symbol,
@@ -115,6 +116,7 @@ class OrderManager:
         return self.submit_order(
             order,
             estimated_price=price,
+            daily_realized_pnl=daily_realized_pnl,
         )
 
     def sell_market(

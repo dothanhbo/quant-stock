@@ -297,6 +297,29 @@ def save_price_data(df):
                 f"Missing column: {col}"
             )
 
+    numeric_columns = ["open", "high", "low", "close", "volume"]
+    for column in numeric_columns:
+        data[column] = pd.to_numeric(data[column], errors="coerce")
+
+    invalid_ohlc = (
+        data[numeric_columns].isna().any(axis=1)
+        | (data[["open", "high", "low", "close"]] <= 0).any(axis=1)
+        | (data["volume"] < 0)
+        | (data["high"] < data["low"])
+        | (data["open"] > data["high"])
+        | (data["open"] < data["low"])
+        | (data["close"] > data["high"])
+        | (data["close"] < data["low"])
+    )
+    if invalid_ohlc.any():
+        bad = data.loc[invalid_ohlc, ["symbol", "time"]]
+        sample = ", ".join(
+            f"{row.symbol}@{row.time}" for row in bad.head(5).itertuples()
+        )
+        raise ValueError(
+            f"Có {int(invalid_ohlc.sum())} dòng OHLC không hợp lệ: {sample}"
+        )
+
     records = data[
         required
     ].to_dict(

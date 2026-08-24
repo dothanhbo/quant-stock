@@ -158,6 +158,18 @@ class PaperTradingStore:
                     created_at TEXT NOT NULL
                 );
 
+                CREATE TABLE IF NOT EXISTS paper_pending_signals (
+                    id INTEGER PRIMARY KEY AUTOINCREMENT,
+                    signal_date TEXT NOT NULL,
+                    symbol TEXT NOT NULL,
+                    payload TEXT NOT NULL,
+                    status TEXT NOT NULL DEFAULT 'PENDING',
+                    processed_date TEXT,
+                    reason TEXT,
+                    created_at TEXT NOT NULL,
+                    UNIQUE(signal_date, symbol)
+                );
+
                 CREATE INDEX IF NOT EXISTS
                     idx_paper_orders_status
                 ON paper_orders(status);
@@ -169,7 +181,61 @@ class PaperTradingStore:
                 CREATE INDEX IF NOT EXISTS
                     idx_paper_snapshots_created_at
                 ON paper_portfolio_snapshots(created_at);
+
+                CREATE INDEX IF NOT EXISTS idx_pending_signals_status
+                ON paper_pending_signals(status, signal_date);
                 """
+            )
+
+    def queue_signal(self, signal: dict) -> bool:
+        signal_date = str(signal.get("date", ""))[:10]
+        symbol = str(signal.get("symbol", "")).strip().upper()
+        if not signal_date or not symbol:
+            raise ValueError("Pending signal cần date và symbol.")
+        with self._connection() as connection:
+            cursor = connection.execute(
+                """
+                INSERT OR IGNORE INTO paper_pending_signals(
+                    signal_date, symbol, payload, status, created_at
+                ) VALUES (?, ?, ?, 'PENDING', ?)
+                """,
+                (
+                    signal_date,
+                    symbol,
+                    json.dumps(signal, ensure_ascii=False, default=str),
+                    datetime.now().astimezone().isoformat(),
+                ),
+            )
+        return cursor.rowcount > 0
+
+    def load_pending_signals(self, before_date: str) -> list[dict]:
+        with self._connection() as connection:
+            rows = connection.execute(
+                """
+                SELECT id, payload FROM paper_pending_signals
+                WHERE status = 'PENDING' AND signal_date < ?
+                ORDER BY signal_date, id
+                """,
+                (before_date,),
+            ).fetchall()
+        result = []
+        for row in rows:
+            payload = json.loads(row["payload"])
+            payload["_pending_id"] = int(row["id"])
+            result.append(payload)
+        return result
+
+    def complete_pending_signal(
+        self, pending_id: int, *, processed_date: str, status: str, reason: str = ""
+    ) -> None:
+        with self._connection() as connection:
+            connection.execute(
+                """
+                UPDATE paper_pending_signals
+                SET status = ?, processed_date = ?, reason = ?
+                WHERE id = ? AND status = 'PENDING'
+                """,
+                (status, processed_date, reason, int(pending_id)),
             )
 
 
@@ -806,6 +872,9 @@ class PaperTradingStore:
                 DELETE FROM paper_orders;
                 DELETE FROM paper_positions;
                 DELETE FROM paper_portfolio_snapshots;
+                DELETE FROM paper_position_lifecycle;
+                DELETE FROM paper_closed_trades;
+                DELETE FROM paper_pending_signals;
                 DELETE FROM paper_metadata;
                 """
             )

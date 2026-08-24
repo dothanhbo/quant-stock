@@ -34,6 +34,7 @@ class PaperBroker(BrokerInterface):
         initial_cash: float = 100_000_000,
         commission_rate: float = 0.0015,
         slippage_bps: float = 5.0,
+        sell_tax_rate: float = 0.0,
         database_path: str | Path | None = None,
         restore_state: bool = True,
     ) -> None:
@@ -51,11 +52,14 @@ class PaperBroker(BrokerInterface):
             raise ValueError(
                 "slippage_bps không được âm."
             )
+        if not 0 <= sell_tax_rate < 1:
+            raise ValueError("sell_tax_rate phải nằm trong [0, 1).")
 
         self.commission_rate = (
             commission_rate
         )
         self.slippage_bps = slippage_bps
+        self.sell_tax_rate = sell_tax_rate
         self._store = (
             PaperTradingStore(
                 database_path
@@ -205,11 +209,13 @@ class PaperBroker(BrokerInterface):
                 )
                 return None
 
+            sell_tax = gross_value * self.sell_tax_rate
             net_cash_flow = self._apply_sell(
                 order=order,
                 fill_price=fill_price,
-                commission=commission,
+                commission=commission + sell_tax,
             )
+            commission += sell_tax
 
         order.status = OrderStatus.FILLED
         order.filled_quantity = (
@@ -415,6 +421,28 @@ class PaperBroker(BrokerInterface):
             return []
 
         return self._store.load_closed_trades()
+
+    def queue_signal(self, signal: dict) -> bool:
+        if self._store is None:
+            raise RuntimeError("PaperBroker chưa cấu hình database.")
+        return self._store.queue_signal(signal)
+
+    def load_pending_signals(self, before_date: str) -> list[dict]:
+        if self._store is None:
+            return []
+        return self._store.load_pending_signals(before_date)
+
+    def complete_pending_signal(
+        self, pending_id: int, *, processed_date: str, status: str, reason: str = ""
+    ) -> None:
+        if self._store is None:
+            raise RuntimeError("PaperBroker chưa cấu hình database.")
+        self._store.complete_pending_signal(
+            pending_id,
+            processed_date=processed_date,
+            status=status,
+            reason=reason,
+        )
 
     def persist_portfolio_state(
         self,

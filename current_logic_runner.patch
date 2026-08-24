@@ -1,0 +1,392 @@
+diff --git a/backtesting/engine.py b/backtesting/engine.py
+index bfc2547..e5db5ce 100644
+--- a/backtesting/engine.py
++++ b/backtesting/engine.py
+@@ -725,6 +725,11 @@ def run_backtest(
+         PortfolioAllocator | None
+     ) = None,
+     exit_model: BaseExitModel = DEFAULT_EXIT_MODEL,
++    max_positions: int = 5,
++    lot_size: int = 100,
++    max_new_positions_per_day: int | None = None,
++    maximum_gross_exposure_pct: float | None = None,
++    minimum_cash_buffer_pct: float = 0.0,
+ ) -> tuple[list[Trade], dict[str, Any], pd.DataFrame]:
+     config = BacktestConfig(
+         stop_loss_pct=stop_loss_pct,
+@@ -810,6 +815,17 @@ def run_backtest(
+             max_portfolio_heat_pct
+         ),
+         regime_policy=regime_policy,
++        max_positions=max_positions,
++        lot_size=lot_size,
++        max_new_positions_per_day=(
++            max_new_positions_per_day
++        ),
++        maximum_gross_exposure_pct=(
++            maximum_gross_exposure_pct
++        ),
++        minimum_cash_buffer_pct=(
++            minimum_cash_buffer_pct
++        ),
+     )
+ 
+     result = simulator.simulate(all_trades)
+diff --git a/backtesting/portfolio_simulator.py b/backtesting/portfolio_simulator.py
+index 9b40e48..c2338ce 100644
+--- a/backtesting/portfolio_simulator.py
++++ b/backtesting/portfolio_simulator.py
+@@ -85,6 +85,9 @@ class PortfolioSimulator:
+         ) = None,
+         max_portfolio_heat_pct: float | None = None,
+         regime_policy: RegimePortfolioPolicy | None = None,
++        max_new_positions_per_day: int | None = None,
++        maximum_gross_exposure_pct: float | None = None,
++        minimum_cash_buffer_pct: float = 0.0,
+     ) -> None:
+         if initial_cash <= 0:
+             raise ValueError(
+@@ -107,6 +110,27 @@ class PortfolioSimulator:
+                 "lot_size must be at least 1"
+             )
+ 
++        if (
++            max_new_positions_per_day is not None
++            and max_new_positions_per_day < 1
++        ):
++            raise ValueError(
++                "max_new_positions_per_day must be at least 1"
++            )
++
++        if (
++            maximum_gross_exposure_pct is not None
++            and not 0 < maximum_gross_exposure_pct <= 100
++        ):
++            raise ValueError(
++                "maximum_gross_exposure_pct must be in (0, 100]"
++            )
++
++        if not 0 <= minimum_cash_buffer_pct < 100:
++            raise ValueError(
++                "minimum_cash_buffer_pct must be in [0, 100)"
++            )
++
+         self.transaction_cost_config = (
+             transaction_cost_config
+             or TransactionCostConfig(
+@@ -161,6 +185,16 @@ class PortfolioSimulator:
+             regime_policy
+         )
+ 
++        self.max_new_positions_per_day = (
++            max_new_positions_per_day
++        )
++        self.maximum_gross_exposure_pct = (
++            maximum_gross_exposure_pct
++        )
++        self.minimum_cash_buffer_pct = float(
++            minimum_cash_buffer_pct
++        )
++
+     def _calculate_quantity(
+         self,
+         candidate: Trade,
+@@ -677,6 +711,56 @@ class PortfolioSimulator:
+ 
+             return
+ 
++        equity = self.portfolio.equity()
++        proposed_value = (
++            candidate.entry_price
++            * quantity
++        )
++        current_exposure = sum(
++            trade.entry_price * trade.quantity
++            for trade in self.portfolio.open_positions
++        )
++
++        if (
++            self.maximum_gross_exposure_pct is not None
++            and equity > 0
++            and (
++                current_exposure + proposed_value
++            ) / equity * 100
++            > self.maximum_gross_exposure_pct
++        ):
++            self._reject_trade(
++                rejected_trades=rejected_trades,
++                candidate=candidate,
++                reason="maximum_gross_exposure",
++            )
++            return
++
++        estimated_buy_cost_pct = (
++            self.transaction_cost_config.buy_commission_pct
++            + self.transaction_cost_config.buy_slippage_pct
++        )
++        estimated_cash_required = proposed_value * (
++            1 + estimated_buy_cost_pct / 100
++        )
++        minimum_cash = (
++            equity
++            * self.minimum_cash_buffer_pct
++            / 100
++        )
++
++        if (
++            self.portfolio.cash
++            - estimated_cash_required
++            < minimum_cash
++        ):
++            self._reject_trade(
++                rejected_trades=rejected_trades,
++                candidate=candidate,
++                reason="minimum_cash_buffer",
++            )
++            return
++
+         stop_price = (
+             resolve_candidate_stop_price(
+                 candidate,
+@@ -1068,6 +1152,22 @@ class PortfolioSimulator:
+                 )
+             )
+ 
++            if self.max_new_positions_per_day is not None:
++                allowed = self.max_new_positions_per_day
++                rejected_for_daily_limit = (
++                    allocated_candidates[allowed:]
++                )
++                allocated_candidates = (
++                    allocated_candidates[:allowed]
++                )
++
++                for candidate in rejected_for_daily_limit:
++                    self._reject_trade(
++                        rejected_trades=rejected_trades,
++                        candidate=candidate,
++                        reason="maximum_orders_per_scan",
++                    )
++
+             # Các candidate cùng ngày được xếp hạng
+             # trước khi danh mục mở vị thế.
+             for candidate in (
+
+diff --git a/backtesting/current_logic.py b/backtesting/current_logic.py
+new file mode 100644
+index 0000000..4733e42
+--- /dev/null
++++ b/backtesting/current_logic.py
+@@ -0,0 +1,53 @@
++from __future__ import annotations
++
++from typing import Any
++
++from backtesting.exit_models import BaseExitModel
++from config.strategy_loader import REGIME_CONFIGS
++
++
++class CurrentScannerExitModel(BaseExitModel):
++    """Stop/target rules used by TrendStrategyV1 in the daily scanner."""
++
++    def calculate_levels(
++        self,
++        entry_price: float,
++        entry_row: Any,
++        config: Any,
++    ) -> tuple[float, float]:
++        regime = str(
++            entry_row.get("Market_Regime", "UNKNOWN")
++        ).upper()
++        market_config = REGIME_CONFIGS.get(
++            regime,
++            REGIME_CONFIGS["UNKNOWN"],
++        )
++
++        atr = float(entry_row["ATR14"])
++        ema20 = float(entry_row["EMA20"])
++        multiplier = float(
++            market_config["atr_stop_multiplier"]
++        )
++        rr_ratio = float(
++            market_config["rr_ratio"]
++        )
++
++        atr_stop = entry_price - multiplier * atr
++        ema_stop = ema20 * 0.99
++        valid_stops = [
++            value
++            for value in (atr_stop, ema_stop)
++            if 0 < value < entry_price
++        ]
++        stop_price = (
++            max(valid_stops)
++            if valid_stops
++            else entry_price * 0.95
++        )
++        risk_per_share = entry_price - stop_price
++        target_price = (
++            entry_price
++            + risk_per_share * rr_ratio
++        )
++
++        return stop_price, target_price
+
+diff --git a/research/run_current_logic_walk_forward.py b/research/run_current_logic_walk_forward.py
+new file mode 100644
+index 0000000..acad254
+--- /dev/null
++++ b/research/run_current_logic_walk_forward.py
+@@ -0,0 +1,123 @@
++from __future__ import annotations
++
++import argparse
++from pathlib import Path
++
++try:
++    from dotenv import load_dotenv
++except ImportError:  # pragma: no cover - project requirements normally provide it.
++    def load_dotenv() -> bool:
++        return False
++
++from backtesting.current_logic import CurrentScannerExitModel
++from backtesting.engine import run_backtest
++from backtesting.paper_parity import BacktestPaperParityConfig
++from backtesting.walk_forward import (
++    WalkForwardConfig,
++    print_walk_forward_report,
++    run_walk_forward,
++)
++from execution.signal_executor import PaperExecutionConfig
++from research.universes import HOLDOUT20_SYMBOLS
++from strategy.trend_strategy_v1 import TrendStrategyV1
++
++
++DEFAULT_OUTPUT_DIR = Path(
++    "research_results/current_logic_walk_forward"
++)
++
++
++def build_parser() -> argparse.ArgumentParser:
++    parser = argparse.ArgumentParser(
++        description=(
++            "Walk-forward using the current daily scanner "
++            "and paper-execution configuration."
++        )
++    )
++    parser.add_argument("--symbols", nargs="*", default=None)
++    parser.add_argument("--start", default="2018-08-07")
++    parser.add_argument("--end", default="2026-08-21")
++    parser.add_argument("--train-months", type=int, default=24)
++    parser.add_argument("--test-months", type=int, default=6)
++    parser.add_argument("--step-months", type=int, default=6)
++    parser.add_argument("--hold", type=int, default=30)
++    parser.add_argument("--sell-tax-rate", type=float, default=0.001)
++    parser.add_argument("--output", default=str(DEFAULT_OUTPUT_DIR))
++    return parser
++
++
++def main() -> None:
++    load_dotenv()
++    args = build_parser().parse_args()
++
++    paper = PaperExecutionConfig.from_env()
++    parity = BacktestPaperParityConfig.from_paper_config(
++        paper,
++        sell_tax_rate=args.sell_tax_rate,
++    )
++    symbols = (
++        list(HOLDOUT20_SYMBOLS)
++        if args.symbols is None
++        else [
++            value.strip().upper()
++            for value in args.symbols
++            if value.strip()
++        ]
++    )
++
++    config = WalkForwardConfig(
++        start_date=args.start,
++        end_date=args.end,
++        train_months=args.train_months,
++        test_months=args.test_months,
++        step_months=args.step_months,
++    )
++
++    backtest_kwargs = {
++        "symbols": symbols,
++        "max_holding_days": args.hold,
++        "entry_model": TrendStrategyV1(),
++        "exit_model": CurrentScannerExitModel(),
++        "ranking_method": "signal_score",
++        "position_sizer": parity.build_position_sizer(),
++        "buy_commission_pct": parity.commission_pct,
++        "sell_commission_pct": parity.commission_pct,
++        "sell_tax_pct": parity.sell_tax_pct,
++        "buy_slippage_pct": parity.slippage_pct,
++        "sell_slippage_pct": parity.slippage_pct,
++        "max_positions": parity.maximum_open_positions,
++        "lot_size": parity.lot_size,
++        "max_new_positions_per_day": (
++            paper.maximum_orders_per_scan
++        ),
++        "maximum_gross_exposure_pct": (
++            parity.maximum_gross_exposure_pct
++        ),
++        "minimum_cash_buffer_pct": (
++            parity.minimum_cash_buffer_pct
++        ),
++    }
++
++    result = run_walk_forward(
++        config=config,
++        initial_capital=parity.initial_cash,
++        run_backtest_fn=run_backtest,
++        backtest_kwargs=backtest_kwargs,
++    )
++    print_walk_forward_report(result)
++
++    output_dir = Path(args.output)
++    output_dir.mkdir(parents=True, exist_ok=True)
++    folds_path = output_dir / "folds.csv"
++    summary_path = output_dir / "summary.csv"
++    result.save(
++        folds_path=str(folds_path),
++        summary_path=str(summary_path),
++    )
++
++    print(f"Đã xuất: {folds_path}")
++    print(f"Đã xuất: {summary_path}")
++
++
++if __name__ == "__main__":
++    main()
+
+diff --git a/tests/test_current_logic.py b/tests/test_current_logic.py
+new file mode 100644
+index 0000000..9691fb7
+--- /dev/null
++++ b/tests/test_current_logic.py
+@@ -0,0 +1,21 @@
++import math
++from types import SimpleNamespace
++
++from backtesting.current_logic import CurrentScannerExitModel
++
++
++def test_current_logic_exit_uses_regime_config() -> None:
++    row = {
++        "Market_Regime": "BULL",
++        "ATR14": 2.0,
++        "EMA20": 98.0,
++    }
++
++    stop, target = CurrentScannerExitModel().calculate_levels(
++        entry_price=100.0,
++        entry_row=row,
++        config=SimpleNamespace(),
++    )
++
++    assert math.isclose(stop, 97.02)
++    assert math.isclose(target, 107.45)
+

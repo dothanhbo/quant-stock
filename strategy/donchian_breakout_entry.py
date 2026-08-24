@@ -25,6 +25,7 @@ class DonchianBreakoutEntryModel(
         use_distance_filter: bool = True,
         use_overheated_filter: bool = True,
         use_volume_breakout_score: bool = True,
+        use_regime_thresholds: bool = False,
     ) -> None:
         if min_adx < 0:
             raise ValueError(
@@ -97,6 +98,7 @@ class DonchianBreakoutEntryModel(
         self.use_volume_breakout_score = bool(
             use_volume_breakout_score
         )
+        self.use_regime_thresholds = bool(use_regime_thresholds)
 
     @property
     def name(
@@ -196,25 +198,46 @@ class DonchianBreakoutEntryModel(
             latest["EMA20"]
         )
 
+        min_volume_ratio = (
+            float(market_config.get("min_volume_ratio", self.min_volume_ratio))
+            if self.use_regime_thresholds else self.min_volume_ratio
+        )
+        min_adx = (
+            float(market_config.get("min_adx", self.min_adx))
+            if self.use_regime_thresholds else self.min_adx
+        )
+        min_relative_strength = (
+            float(market_config.get("min_relative_strength", self.min_relative_strength))
+            if self.use_regime_thresholds else self.min_relative_strength
+        )
+        max_distance_ema20 = (
+            float(market_config.get("max_distance_ema20", self.max_distance_ema20))
+            if self.use_regime_thresholds else self.max_distance_ema20
+        )
+        max_return_3d = (
+            float(market_config.get("max_return_3d", self.max_return_3d))
+            if self.use_regime_thresholds else self.max_return_3d
+        )
+
         conditions = {
             "breakout_20d": (
                 breakout_20d
             ),
             "volume": (
                 volume_ratio
-                >= self.min_volume_ratio
+                >= min_volume_ratio
                 if self.use_volume
                 else True
             ),
             "adx": (
                 adx
-                >= self.min_adx
+                >= min_adx
                 if self.use_adx
                 else True
             ),
             "relative_strength": (
                 relative_strength
-                >= self.min_relative_strength
+                >= min_relative_strength
                 if self.use_relative_strength
                 else True
             ),
@@ -227,14 +250,14 @@ class DonchianBreakoutEntryModel(
                 (
                     0
                     <= distance_ema20
-                    <= self.max_distance_ema20
+                    <= max_distance_ema20
                 )
                 if self.use_distance_filter
                 else True
             ),
             "overheated": (
                 return_3d
-                <= self.max_return_3d
+                <= max_return_3d
                 if self.use_overheated_filter
                 else True
             ),

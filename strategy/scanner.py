@@ -5,8 +5,10 @@ from typing import Optional
 
 import pandas as pd
 from sqlalchemy import text
+from dotenv import load_dotenv
 
 from config.strategy_loader import COMMON_CONFIG
+from config.trading_policy import TradingPolicy
 from core.database import engine, get_reference_market_date, get_symbol_latest_dates, load_price_data
 from core.signal_database import save_signal
 from core.scan_telemetry import (
@@ -25,6 +27,7 @@ from strategy.filters import REQUIRED_INDICATORS, trend_passes
 from strategy.market_regime import get_market_regime
 from strategy.relative_strength import calculate_relative_strength
 from strategy.trend_strategy_v1 import TrendStrategyV1
+from core.universe import get_vn100_symbols
 
 MIN_DATA_ROWS = int(COMMON_CONFIG["min_data_rows"])
 TOP_RESULTS = int(COMMON_CONFIG["top_results"])
@@ -32,13 +35,10 @@ TOP_WATCHLIST = int(COMMON_CONFIG["top_watchlist"])
 RS_PERIOD = int(COMMON_CONFIG.get("rs_period", 20))
 from strategy.base_strategy import BaseStrategy
 
-strategy = TrendStrategyV1()
-
-import os
-
-from dotenv import load_dotenv
-
 load_dotenv()
+
+TRADING_POLICY = TradingPolicy.from_env()
+strategy = TRADING_POLICY.build_entry_model()
 
 telegram_client = TelegramClient.from_env()
 paper_signal_executor = PaperSignalExecutor.from_env()
@@ -99,7 +99,7 @@ def evaluate_prepared_row(
 ) -> dict:
     entry_model = (
         entry_model
-        or TrendStrategyV1()
+        or strategy
     )
     base = {
         "symbol": symbol,
@@ -156,6 +156,22 @@ def evaluate_prepared_row(
         ),
         market_config=market_config,
     )
+
+    # Entry models may expose legacy regime-based risk levels. Production
+    # always overwrites them with the frozen policy used by paper/research.
+    stop_loss, take_profit = TRADING_POLICY.calculate_levels(
+        entry_price=float(latest["close"]),
+        atr=float(latest["ATR14"]),
+    )
+    decision.update({
+        "entry": round(float(latest["close"]), 2),
+        "stop_loss": round(stop_loss, 2),
+        "take_profit": round(take_profit, 2),
+        "stop_atr_multiplier": TRADING_POLICY.stop_atr_multiplier,
+        "target_atr_multiplier": TRADING_POLICY.target_atr_multiplier,
+        "maximum_holding_days": TRADING_POLICY.maximum_holding_days,
+        "execution_timing": TRADING_POLICY.execution_timing,
+    })
 
     return {
         **base,
@@ -230,7 +246,7 @@ def evaluate_symbol(
 ) -> dict:
     entry_model = (
         entry_model
-        or TrendStrategyV1()
+        or strategy
     )
     market_config = market_config or get_market_regime(end_date=end_date)
 
@@ -349,7 +365,9 @@ def check_signal(
 
 def scan_all_symbols(market_config=None):
     market_config = market_config or get_market_regime()
-    symbols = [symbol for symbol in get_all_symbols() if symbol != "VNINDEX"]
+    symbols = [str(symbol).strip().upper() for symbol in get_vn100_symbols()]
+    if not symbols:
+        raise RuntimeError("Không lấy được snapshot VN100; dừng scan để tránh sai universe.")
     reference_date = get_reference_market_date()
     latest_dates = get_symbol_latest_dates()
     fresh_symbols = [symbol for symbol in symbols if latest_dates.get(symbol) == reference_date]
@@ -475,7 +493,7 @@ def run_scan() -> tuple[list[dict], dict]:
     print(f"Lỗi lưu: {save_failed_count}")
 
     paper_result = (
-        paper_signal_executor.execute_signals(
+        paper_signal_executor.queue_signals(
             results,
             report_date=(
                 scan_stats["reference_date"]
@@ -486,6 +504,10 @@ def run_scan() -> tuple[list[dict], dict]:
     if paper_result.enabled:
         print("\n" + "-" * 60)
         print("PAPER TRADING")
+        print(
+            f"Queued for next open: "
+            f"{paper_result.queued_count}"
+        )
         print(
             f"Filled: "
             f"{paper_result.filled_count}"
