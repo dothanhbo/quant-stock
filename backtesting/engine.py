@@ -373,6 +373,7 @@ def generate_candidate_trades(
     price_df = prepare_backtest_dataset(
         symbol,
         end_date=end_date,
+        db_path=db_path,
     )
 
     if price_df.empty:

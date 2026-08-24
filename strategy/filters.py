@@ -28,6 +28,9 @@ REQUIRED_INDICATORS = [
     "Close_Upper_Half",
     "Body_Ratio",
     "Breakout_20D",
+    "Recent_Breakout_10D",
+    "Touched_EMA10",
+    "Reclaimed_EMA10",
     "Volume_Breakout_5D",
 ]
 

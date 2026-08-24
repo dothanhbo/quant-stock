@@ -64,6 +64,8 @@ class HybridTrendDonchianEntryModel(
         trend_weight: float = 0.4,
         donchian_weight: float = 0.6,
         min_hybrid_score: int = 60,
+        use_regime_thresholds: bool = True,
+        require_hybrid_score: bool = True,
     ) -> None:
         supported_modes = {
             "strict",
@@ -118,7 +120,16 @@ class HybridTrendDonchianEntryModel(
 
         self.donchian_model = (
             donchian_model
-            or DonchianBreakoutEntryModel(use_regime_thresholds=True)
+            or DonchianBreakoutEntryModel(
+                use_regime_thresholds=use_regime_thresholds,
+            )
+        )
+
+        self.use_regime_thresholds = bool(
+            use_regime_thresholds
+        )
+        self.require_hybrid_score = bool(
+            require_hybrid_score
         )
 
         self.trend_weight = (
@@ -139,10 +150,21 @@ class HybridTrendDonchianEntryModel(
     def name(
         self,
     ) -> str:
-        return (
+        name = (
             "hybrid_trend_donchian_v1"
             f"__{self.mode}"
         )
+
+        if not self.use_regime_thresholds:
+            name += "__legacy_thresholds"
+
+        if (
+            self.mode == "trend_context"
+            and not self.require_hybrid_score
+        ):
+            name += "__no_hard_score"
+
+        return name
 
     def evaluate(
         self,
@@ -271,7 +293,11 @@ class HybridTrendDonchianEntryModel(
             entry_passed = (
                 trend_context_passed
                 and donchian_passed
-                and hybrid_score >= self.min_hybrid_score
+                and (
+                    not self.require_hybrid_score
+                    or hybrid_score
+                    >= self.min_hybrid_score
+                )
             )
 
         else:
@@ -425,6 +451,11 @@ class HybridTrendDonchianEntryModel(
                 "trend_context",
                 "donchian_passed",
             ]
+
+            if self.require_hybrid_score:
+                required_conditions.append(
+                    "hybrid_score"
+                )
 
         else:
             required_conditions = [

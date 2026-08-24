@@ -1,5 +1,8 @@
 from __future__ import annotations
 
+import sqlite3
+from pathlib import Path
+
 import pandas as pd
 
 from core.database import load_price_data
@@ -10,6 +13,42 @@ from strategy.market_regime import (
 
 DEFAULT_BENCHMARK = "VNINDEX"
 DEFAULT_RS_PERIOD = 20
+
+
+def load_backtest_price_data(
+    symbol: str,
+    *,
+    db_path: str | None = None,
+) -> pd.DataFrame:
+    """Load explicit research DB; production keeps the shared loader."""
+    if db_path is None:
+        return load_price_data(symbol)
+
+    path = Path(db_path)
+    if not path.exists():
+        raise FileNotFoundError(
+            f"Không tìm thấy database: {path.resolve()}"
+        )
+    query = """
+        SELECT symbol, time, open, high, low, close, volume
+        FROM prices
+        WHERE UPPER(symbol) = UPPER(?)
+        ORDER BY time ASC
+    """
+    with sqlite3.connect(path) as connection:
+        data = pd.read_sql_query(query, connection, params=(symbol,))
+    if data.empty:
+        return data
+
+    data["time"] = pd.to_datetime(data["time"], errors="coerce")
+    for column in ("open", "high", "low", "close", "volume"):
+        data[column] = pd.to_numeric(data[column], errors="coerce")
+    return (
+        data.dropna(subset=["time", "open", "high", "low", "close"])
+        .drop_duplicates(subset=["time"], keep="last")
+        .sort_values("time")
+        .reset_index(drop=True)
+    )
 
 
 def add_relative_strength_columns(
@@ -133,6 +172,7 @@ def prepare_backtest_dataset(
     benchmark: str = DEFAULT_BENCHMARK,
     rs_period: int = DEFAULT_RS_PERIOD,
     end_date=None,
+    db_path: str | None = None,
 ) -> pd.DataFrame:
     """
     Chuẩn bị dữ liệu dùng chung cho toàn bộ backtest:
@@ -142,13 +182,17 @@ def prepare_backtest_dataset(
     - Tính indicators một lần
     - Tính Relative Strength cho toàn lịch sử một lần
     """
-    stock_df = load_price_data(symbol)
+    stock_df = load_backtest_price_data(
+        symbol,
+        db_path=db_path,
+    )
 
     if stock_df.empty:
         return stock_df
 
-    benchmark_df = load_price_data(
-        benchmark
+    benchmark_df = load_backtest_price_data(
+        benchmark,
+        db_path=db_path,
     )
     market_history = (
         prepare_market_regime_history(

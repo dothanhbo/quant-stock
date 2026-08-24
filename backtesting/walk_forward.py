@@ -101,6 +101,31 @@ def _safe_float(
     return result
 
 
+def calculate_chained_drawdown_pct(
+    equity_curves: list[pd.DataFrame],
+) -> float:
+    """Calculate drawdown across the complete chained OOS equity path."""
+    values: list[pd.Series] = []
+    for curve in equity_curves:
+        if curve is None or curve.empty or "equity" not in curve.columns:
+            continue
+        equity = pd.to_numeric(
+            curve["equity"],
+            errors="coerce",
+        ).dropna()
+        if not equity.empty:
+            values.append(equity)
+    if not values:
+        return 0.0
+
+    chained = pd.concat(values, ignore_index=True)
+    chained = chained[chained > 0]
+    if chained.empty:
+        return 0.0
+    running_peak = chained.cummax()
+    return float(((chained / running_peak) - 1.0).min() * 100.0)
+
+
 def build_walk_forward_folds(
     config: WalkForwardConfig,
 ) -> list[WalkForwardFold]:
@@ -210,6 +235,7 @@ def run_walk_forward(
     )
 
     rows: list[dict[str, Any]] = []
+    test_equity_curves: list[pd.DataFrame] = []
 
     current_capital = float(
         initial_capital
@@ -254,7 +280,7 @@ def run_walk_forward(
             current_capital
         )
 
-        test_trades, test_metrics, _ = (
+        test_trades, test_metrics, test_equity = (
             run_backtest_fn(
                 **backtest_kwargs,
                 start_date=str(
@@ -269,6 +295,9 @@ def run_walk_forward(
                 verbose=False,
             )
         )
+
+        if isinstance(test_equity, pd.DataFrame):
+            test_equity_curves.append(test_equity.copy())
 
         test_final_equity = _safe_float(
             test_metrics.get(
@@ -493,6 +522,9 @@ def run_walk_forward(
             folds_df[
                 "test_max_drawdown_pct"
             ].min()
+        ),
+        "chained_max_drawdown_pct": (
+            calculate_chained_drawdown_pct(test_equity_curves)
         ),
         "average_return_degradation_pct": float(
             folds_df[

@@ -307,6 +307,31 @@ def add_indicators(
         > data["Previous_20D_High"]
     )
 
+    # Retest context: only prior sessions are eligible. The current
+    # session is shifted out so an Entry V2 signal cannot call today's
+    # breakout a historical breakout.
+    data["Recent_Breakout_10D"] = (
+        data["Breakout_20D"]
+        .shift(1)
+        .rolling(
+            window=10,
+            min_periods=1,
+        )
+        .max()
+        .fillna(False)
+        .astype(bool)
+    )
+
+    data["Touched_EMA10"] = (
+        data["low"]
+        <= data["EMA10"] * 1.01
+    )
+
+    data["Reclaimed_EMA10"] = (
+        data["close"]
+        >= data["EMA10"]
+    )
+
     # ==========================
     # TRÁNH MUA ĐUỔI
     # ==========================
