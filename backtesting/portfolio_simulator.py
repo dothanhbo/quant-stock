@@ -85,6 +85,9 @@ class PortfolioSimulator:
         ) = None,
         max_portfolio_heat_pct: float | None = None,
         regime_policy: RegimePortfolioPolicy | None = None,
+        max_new_positions_per_day: int | None = None,
+        maximum_gross_exposure_pct: float | None = None,
+        minimum_cash_buffer_pct: float = 0.0,
     ) -> None:
         if initial_cash <= 0:
             raise ValueError(
@@ -105,6 +108,27 @@ class PortfolioSimulator:
         if lot_size < 1:
             raise ValueError(
                 "lot_size must be at least 1"
+            )
+
+        if (
+            max_new_positions_per_day is not None
+            and max_new_positions_per_day < 1
+        ):
+            raise ValueError(
+                "max_new_positions_per_day must be at least 1"
+            )
+
+        if (
+            maximum_gross_exposure_pct is not None
+            and not 0 < maximum_gross_exposure_pct <= 100
+        ):
+            raise ValueError(
+                "maximum_gross_exposure_pct must be in (0, 100]"
+            )
+
+        if not 0 <= minimum_cash_buffer_pct < 100:
+            raise ValueError(
+                "minimum_cash_buffer_pct must be in [0, 100)"
             )
 
         self.transaction_cost_config = (
@@ -159,6 +183,16 @@ class PortfolioSimulator:
 
         self.regime_policy = (
             regime_policy
+        )
+
+        self.max_new_positions_per_day = (
+            max_new_positions_per_day
+        )
+        self.maximum_gross_exposure_pct = (
+            maximum_gross_exposure_pct
+        )
+        self.minimum_cash_buffer_pct = float(
+            minimum_cash_buffer_pct
         )
 
     def _calculate_quantity(
@@ -677,6 +711,56 @@ class PortfolioSimulator:
 
             return
 
+        equity = self.portfolio.equity()
+        proposed_value = (
+            candidate.entry_price
+            * quantity
+        )
+        current_exposure = sum(
+            trade.entry_price * trade.quantity
+            for trade in self.portfolio.open_positions
+        )
+
+        if (
+            self.maximum_gross_exposure_pct is not None
+            and equity > 0
+            and (
+                current_exposure + proposed_value
+            ) / equity * 100
+            > self.maximum_gross_exposure_pct
+        ):
+            self._reject_trade(
+                rejected_trades=rejected_trades,
+                candidate=candidate,
+                reason="maximum_gross_exposure",
+            )
+            return
+
+        estimated_buy_cost_pct = (
+            self.transaction_cost_config.buy_commission_pct
+            + self.transaction_cost_config.buy_slippage_pct
+        )
+        estimated_cash_required = proposed_value * (
+            1 + estimated_buy_cost_pct / 100
+        )
+        minimum_cash = (
+            equity
+            * self.minimum_cash_buffer_pct
+            / 100
+        )
+
+        if (
+            self.portfolio.cash
+            - estimated_cash_required
+            < minimum_cash
+        ):
+            self._reject_trade(
+                rejected_trades=rejected_trades,
+                candidate=candidate,
+                reason="minimum_cash_buffer",
+            )
+            return
+
         stop_price = (
             resolve_candidate_stop_price(
                 candidate,
@@ -1067,6 +1151,22 @@ class PortfolioSimulator:
                     ranked_candidates
                 )
             )
+
+            if self.max_new_positions_per_day is not None:
+                allowed = self.max_new_positions_per_day
+                rejected_for_daily_limit = (
+                    allocated_candidates[allowed:]
+                )
+                allocated_candidates = (
+                    allocated_candidates[:allowed]
+                )
+
+                for candidate in rejected_for_daily_limit:
+                    self._reject_trade(
+                        rejected_trades=rejected_trades,
+                        candidate=candidate,
+                        reason="maximum_orders_per_scan",
+                    )
 
             # Các candidate cùng ngày được xếp hạng
             # trước khi danh mục mở vị thế.

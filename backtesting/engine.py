@@ -725,6 +725,11 @@ def run_backtest(
         PortfolioAllocator | None
     ) = None,
     exit_model: BaseExitModel = DEFAULT_EXIT_MODEL,
+    max_positions: int = 5,
+    lot_size: int = 100,
+    max_new_positions_per_day: int | None = None,
+    maximum_gross_exposure_pct: float | None = None,
+    minimum_cash_buffer_pct: float = 0.0,
 ) -> tuple[list[Trade], dict[str, Any], pd.DataFrame]:
     config = BacktestConfig(
         stop_loss_pct=stop_loss_pct,
@@ -810,6 +815,17 @@ def run_backtest(
             max_portfolio_heat_pct
         ),
         regime_policy=regime_policy,
+        max_positions=max_positions,
+        lot_size=lot_size,
+        max_new_positions_per_day=(
+            max_new_positions_per_day
+        ),
+        maximum_gross_exposure_pct=(
+            maximum_gross_exposure_pct
+        ),
+        minimum_cash_buffer_pct=(
+            minimum_cash_buffer_pct
+        ),
     )
 
     result = simulator.simulate(all_trades)

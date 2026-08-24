@@ -475,9 +475,16 @@ class PaperSignalExecutor:
                 ),
             )
 
+        inferred_report_date = report_date
+
+        if inferred_report_date is None and signals:
+            signal_date = signals[0].get("date")
+            if signal_date:
+                inferred_report_date = str(signal_date)[:10]
+
         resolved_report_date = (
             self._resolve_report_date(
-                report_date
+                inferred_report_date
             )
         )
 

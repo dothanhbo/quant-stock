@@ -35,7 +35,11 @@ def _get_average_price(item: object) -> float | None:
 
 
 def build_holdings_section(result: LifecycleRunResult) -> list[str]:
-    lines = ["<b>🟡 DANH MỤC ĐANG NẮM GIỮ</b>", ""]
+    lines = [
+        "<b>🟡 DANH MỤC ĐANG NẮM GIỮ</b>",
+        "Tiếp tục nắm giữ các vị thế dưới đây.",
+        "",
+    ]
 
     if not result.held:
         return [*lines, "Không có vị thế đang mở.", ""]
@@ -72,7 +76,11 @@ def build_exited_positions_section(
     if not result.exited:
         return []
 
-    lines = ["<b>🔴 VỊ THẾ ĐÃ ĐÓNG HÔM NAY</b>", ""]
+    lines = [
+        "<b>🔴 VỊ THẾ ĐÃ ĐÓNG HÔM NAY</b>",
+        "Đã đóng vị thế:",
+        "",
+    ]
 
     for item in result.exited:
         reason = _REASON.get(

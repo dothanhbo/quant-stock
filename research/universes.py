@@ -10,3 +10,27 @@ TOP10_SYMBOLS = [
     "HCM",
     "HDB",
 ]
+
+
+HOLDOUT20_SYMBOLS = [
+    "VCB",
+    "MBB",
+    "CTG",
+    "TCB",
+    "VPB",
+    "SSI",
+    "VCI",
+    "HPG",
+    "HSG",
+    "GVR",
+    "DCM",
+    "DPM",
+    "MWG",
+    "PNJ",
+    "VNM",
+    "MSN",
+    "REE",
+    "GEX",
+    "KDH",
+    "NLG",
+]
