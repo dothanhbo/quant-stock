@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 import os
 import sqlite3
 from dataclasses import dataclass, field
@@ -101,6 +102,7 @@ class PaperExecutionConfig:
     maximum_daily_loss_pct: float = 3.0
     minimum_cash_buffer_pct: float = 5.0
     sell_tax_rate: float = 0.001
+    maximum_order_adtv20_pct: float = 1.0
 
     @classmethod
     def from_env(
@@ -177,6 +179,10 @@ class PaperExecutionConfig:
                 "PAPER_SELL_TAX_RATE",
                 0.001,
             ),
+            maximum_order_adtv20_pct=_read_float(
+                "PAPER_MAX_ORDER_ADTV20_PCT",
+                1.0,
+            ),
         )
         config.validate()
         return config
@@ -241,6 +247,10 @@ class PaperExecutionConfig:
             raise ValueError("PAPER_MIN_CASH_BUFFER_PCT phải nằm trong [0, 100).")
         if not 0 <= self.sell_tax_rate < 1:
             raise ValueError("PAPER_SELL_TAX_RATE phải nằm trong [0, 1).")
+        if not 0 < self.maximum_order_adtv20_pct <= 100:
+            raise ValueError(
+                "PAPER_MAX_ORDER_ADTV20_PCT phải nằm trong (0, 100]."
+            )
 
 
 @dataclass(slots=True)
@@ -482,39 +492,132 @@ class PaperSignalExecutor:
         valuation_date: str | date,
         market_database_path: str | Path = "data/market.db",
     ) -> PaperExecutionBatchResult:
-        """Fill prior-session signals from the exact open of valuation_date."""
+        """Fill signals only at the first VNINDEX session after signal date."""
         resolved_date = self._resolve_report_date(valuation_date)
         pending = self.broker.load_pending_signals(resolved_date.isoformat())
         if not pending:
             return self.execute_signals([], report_date=resolved_date)
 
-        symbols = sorted({str(item["symbol"]).strip().upper() for item in pending})
-        placeholders = ",".join("?" for _ in symbols)
-        query = f"""
-            SELECT symbol, open FROM prices
-            WHERE date(time) = ? AND symbol IN ({placeholders})
-        """
+        due: list[dict[str, Any]] = []
+        freshness_results: list[PaperSignalExecution] = []
         with sqlite3.connect(market_database_path) as connection:
-            rows = connection.execute(
-                query,
-                (resolved_date.isoformat(), *symbols),
-            ).fetchall()
+            for signal in pending:
+                symbol = str(signal["symbol"]).strip().upper()
+                pending_id = int(signal["_pending_id"])
+                signal_date = str(signal.get("date", ""))[:10]
+                expected_date = self._load_next_market_session(
+                    connection,
+                    signal_date=signal_date,
+                )
+
+                if expected_date is None:
+                    reason = (
+                        "Không xác định được phiên VNINDEX kế tiếp "
+                        f"sau signal {signal_date}."
+                    )
+                    self.broker.complete_pending_signal(
+                        pending_id,
+                        processed_date=resolved_date.isoformat(),
+                        status="REJECTED",
+                        reason=reason,
+                    )
+                    freshness_results.append(PaperSignalExecution(
+                        symbol=symbol,
+                        status="REJECTED",
+                        position_sizer=self.position_sizer.name,
+                        reason=reason,
+                    ))
+                    continue
+
+                if resolved_date.isoformat() < expected_date:
+                    # The next actual market session has not arrived yet.
+                    continue
+
+                if resolved_date.isoformat() > expected_date:
+                    reason = (
+                        "MISSED_EXECUTION: signal "
+                        f"{signal_date} chỉ hợp lệ tại open {expected_date}; "
+                        f"không khớp bù tại {resolved_date.isoformat()}."
+                    )
+                    self.broker.complete_pending_signal(
+                        pending_id,
+                        processed_date=resolved_date.isoformat(),
+                        status="MISSED_EXECUTION",
+                        reason=reason,
+                    )
+                    freshness_results.append(PaperSignalExecution(
+                        symbol=symbol,
+                        status="SKIPPED",
+                        position_sizer=self.position_sizer.name,
+                        reason=reason,
+                    ))
+                    continue
+
+                adtv20 = self._load_adtv20_at_signal(
+                    connection,
+                    symbol=symbol,
+                    signal_date=signal_date,
+                )
+                if adtv20 is None:
+                    reason = (
+                        "Thiếu 20 phiên close/volume hợp lệ để tính ADTV20 "
+                        f"tại ngày signal {signal_date}."
+                    )
+                    self.broker.complete_pending_signal(
+                        pending_id,
+                        processed_date=resolved_date.isoformat(),
+                        status="REJECTED",
+                        reason=reason,
+                    )
+                    freshness_results.append(PaperSignalExecution(
+                        symbol=symbol,
+                        status="REJECTED",
+                        position_sizer=self.position_sizer.name,
+                        reason=reason,
+                    ))
+                    continue
+
+                signal["adtv20"] = adtv20
+                due.append(signal)
+
+            symbols = sorted({
+                str(item["symbol"]).strip().upper()
+                for item in due
+            })
+            rows: list[tuple[Any, Any]] = []
+            if symbols:
+                placeholders = ",".join("?" for _ in symbols)
+                query = f"""
+                    SELECT symbol, open FROM prices
+                    WHERE date(time) = ? AND symbol IN ({placeholders})
+                """
+                rows = connection.execute(
+                    query,
+                    (resolved_date.isoformat(), *symbols),
+                ).fetchall()
         opens = {str(symbol).upper(): float(value) for symbol, value in rows}
 
         executable: list[dict[str, Any]] = []
         executable_ids: list[int] = []
-        for signal in pending:
+        for signal in due:
             symbol = str(signal["symbol"]).strip().upper()
             pending_id = int(signal.pop("_pending_id"))
             open_price = opens.get(symbol)
             atr = self._read_positive_float(signal, ("atr",))
             if open_price is None or open_price <= 0 or atr is None:
+                reason = "Thiếu open hoặc ATR của phiên khớp."
                 self.broker.complete_pending_signal(
                     pending_id,
                     processed_date=resolved_date.isoformat(),
                     status="REJECTED",
-                    reason="Thiếu open hoặc ATR của phiên khớp.",
+                    reason=reason,
                 )
+                freshness_results.append(PaperSignalExecution(
+                    symbol=symbol,
+                    status="REJECTED",
+                    position_sizer=self.position_sizer.name,
+                    reason=reason,
+                ))
                 continue
             stop, target = self.policy.calculate_levels(
                 entry_price=open_price,
@@ -530,15 +633,71 @@ class PaperSignalExecutor:
             executable.append(signal)
             executable_ids.append(pending_id)
 
-        result = self.execute_signals(executable, report_date=resolved_date)
-        for pending_id, execution in zip(executable_ids, result.executions):
+        execution_result = self.execute_signals(
+            executable,
+            report_date=resolved_date,
+        )
+        for pending_id, execution in zip(
+            executable_ids,
+            execution_result.executions,
+        ):
             self.broker.complete_pending_signal(
                 pending_id,
                 processed_date=resolved_date.isoformat(),
                 status=execution.status,
                 reason=execution.reason,
             )
-        return result
+        execution_result.executions = (
+            freshness_results + execution_result.executions
+        )
+        return execution_result
+
+    @staticmethod
+    def _load_next_market_session(
+        connection: sqlite3.Connection,
+        *,
+        signal_date: str,
+    ) -> str | None:
+        row = connection.execute(
+            """
+            SELECT date(time)
+            FROM prices
+            WHERE symbol = 'VNINDEX' AND date(time) > date(?)
+            GROUP BY date(time)
+            ORDER BY date(time)
+            LIMIT 1
+            """,
+            (signal_date,),
+        ).fetchone()
+        return str(row[0]) if row is not None else None
+
+    @classmethod
+    def _load_adtv20_at_signal(
+        cls,
+        connection: sqlite3.Connection,
+        *,
+        symbol: str,
+        signal_date: str,
+    ) -> float | None:
+        rows = connection.execute(
+            """
+            SELECT close, volume
+            FROM prices
+            WHERE symbol = ?
+              AND date(time) <= date(?)
+              AND close > 0
+              AND volume > 0
+            ORDER BY date(time) DESC
+            LIMIT 20
+            """,
+            (symbol, signal_date),
+        ).fetchall()
+        if len(rows) < 20:
+            return None
+        values = [float(close) * float(volume) for close, volume in rows]
+        if not all(math.isfinite(value) and value > 0 for value in values):
+            return None
+        return sum(values) / len(values) * cls.PRICE_SCALE
 
     def _clip_quantity_to_exposure(
         self,
@@ -588,6 +747,24 @@ class PaperSignalExecutor:
             ),
             0,
         )
+
+    def _clip_quantity_to_liquidity(
+        self,
+        *,
+        quantity: int,
+        price: float,
+        adtv20: float,
+    ) -> int:
+        if quantity <= 0 or price <= 0 or adtv20 <= 0:
+            return 0
+        maximum_order_value = (
+            adtv20 * self.config.maximum_order_adtv20_pct / 100
+        )
+        maximum_quantity = int(maximum_order_value / price)
+        maximum_quantity = (
+            maximum_quantity // self.config.lot_size
+        ) * self.config.lot_size
+        return max(min(quantity, maximum_quantity), 0)
 
     def execute_signals(
         self,
@@ -752,6 +929,15 @@ class PaperSignalExecutor:
                 price=broker_price,
             )
 
+            quantity_before_liquidity = quantity
+            adtv20 = self._read_positive_float(signal, ("adtv20",))
+            if adtv20 is not None:
+                quantity = self._clip_quantity_to_liquidity(
+                    quantity=quantity,
+                    price=broker_price,
+                    adtv20=adtv20,
+                )
+
             (
                 estimated_position_pct,
                 estimated_risk_amount,
@@ -783,8 +969,12 @@ class PaperSignalExecutor:
                             estimated_risk_pct
                         ),
                         reason=(
-                            "PositionSizer trả về dưới "
-                            "một lô giao dịch."
+                            "Giới hạn thanh khoản "
+                            f"{self.config.maximum_order_adtv20_pct:g}% "
+                            "ADTV20 không đủ một lô giao dịch."
+                            if quantity_before_liquidity > 0
+                            and adtv20 is not None
+                            else "PositionSizer trả về dưới một lô giao dịch."
                         ),
                     )
                 )
