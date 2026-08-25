@@ -119,6 +119,8 @@ def test_signal_is_queued_then_filled_at_next_open(tmp_path: Path) -> None:
     )
     assert filled.filled_count == 1
     assert filled.executions[0].requested_price == 51.0
+    assert filled.executions[0].signal_rank == 1
+    assert filled.executions[0].signal_score == 90
     lifecycle = executor.broker.get_position_lifecycle("AAA")
     assert lifecycle is not None
     assert lifecycle.maximum_holding_days == 30

@@ -6,6 +6,7 @@ from execution.signal_executor import (
     PaperClosedTradeSummary,
     PaperExecutionBatchResult,
     PaperPositionSummary,
+    PaperSignalExecution,
 )
 
 
@@ -35,9 +36,7 @@ def format_skip_reason(
         )
 
     if "giới hạn lệnh" in normalized_reason:
-        return (
-            "Đã đạt số lệnh tối đa trong phiên quét."
-        )
+        return reason
 
     if "entry" in normalized_reason:
         return "Không xác định được giá mua."
@@ -167,8 +166,195 @@ def _build_position_lines(
     ]
 
 
+def _build_signal_priority_lines(
+    execution: PaperSignalExecution,
+) -> list[str]:
+    rank = execution.signal_rank
+    score = execution.signal_score
+
+    if rank is not None and score is not None:
+        return [
+            f"Ưu tiên: <b>Hạng #{rank}</b> | "
+            f"Điểm: <b>{score:g}/100</b>"
+        ]
+
+    if rank is not None:
+        return [f"Ưu tiên: <b>Hạng #{rank}</b>"]
+
+    if score is not None:
+        return [f"Điểm tín hiệu: <b>{score:g}/100</b>"]
+
+    return []
+
+
+def _build_execution_lines(
+    execution: PaperSignalExecution,
+) -> list[str]:
+    symbol = html.escape(
+        execution.symbol
+    )
+    priority_lines = (
+        _build_signal_priority_lines(
+            execution
+        )
+    )
+
+    if execution.status == "QUEUED":
+        return [
+            f"🕘 <b>{symbol}</b> — "
+            "<b>CHỜ OPEN PHIÊN KẾ TIẾP</b>",
+            *priority_lines,
+            html.escape(execution.reason),
+            "",
+        ]
+
+    if execution.status == "FILLED":
+        fill_price = (
+            execution.fill_price
+            if execution.fill_price is not None
+            else 0.0
+        )
+
+        return [
+            f"🟢 <b>{symbol}</b> — "
+            "<b>ĐÃ MỞ VỊ THẾ</b>",
+            *priority_lines,
+            (
+                "Số lượng: "
+                f"<b>{execution.quantity:,} cổ</b>"
+            ),
+            (
+                "Giá open tham chiếu: "
+                f"{execution.requested_price:,.0f} đ"
+            ),
+            f"Giá khớp: {fill_price:,.0f} đ",
+            (
+                "Giá trị lệnh: "
+                f"{execution.gross_value:,.0f} đ"
+            ),
+            (
+                "Phí giao dịch: "
+                f"{execution.commission:,.0f} đ"
+            ),
+            "",
+        ]
+
+    if execution.status == "SKIPPED":
+        return [
+            f"⏭ <b>{symbol}</b> — <b>BỎ QUA</b>",
+            *priority_lines,
+            (
+                "Lý do: "
+                + html.escape(
+                    format_skip_reason(
+                        execution.reason
+                    )
+                )
+            ),
+            "",
+        ]
+
+    return [
+        f"❌ <b>{symbol}</b> — <b>TỪ CHỐI</b>",
+        *priority_lines,
+        "Lý do: " + html.escape(execution.reason),
+        "",
+    ]
+
+
+def build_processed_buy_orders_section(
+    result: PaperExecutionBatchResult | None,
+) -> list[str]:
+    executions = (
+        [
+            execution
+            for execution in result.executions
+            if execution.status != "QUEUED"
+        ]
+        if result is not None
+        else []
+    )
+
+    filled_count = sum(
+        execution.status == "FILLED"
+        for execution in executions
+    )
+    skipped_count = sum(
+        execution.status == "SKIPPED"
+        for execution in executions
+    )
+    rejected_count = sum(
+        execution.status == "REJECTED"
+        for execution in executions
+    )
+
+    lines = [
+        "<b>📈 LỆNH MUA ĐÃ XỬ LÝ TẠI OPEN HÔM NAY</b>",
+        "",
+        (
+            f"✅ Đã khớp: <b>{filled_count}</b> | "
+            f"⏭ Bỏ qua: <b>{skipped_count}</b> | "
+            f"❌ Từ chối: <b>{rejected_count}</b>"
+        ),
+        "",
+    ]
+
+    if not executions:
+        return [
+            *lines,
+            "Không có lệnh chờ được xử lý trong lần chạy này.",
+            "",
+        ]
+
+    for execution in executions:
+        lines.extend(
+            _build_execution_lines(
+                execution
+            )
+        )
+
+    return lines
+
+
+def build_queued_signals_section(
+    result: PaperExecutionBatchResult,
+) -> list[str]:
+    executions = list(
+        result.executions
+    )
+
+    lines = [
+        "<b>🕘 TÍN HIỆU MỚI CHỜ OPEN PHIÊN KẾ TIẾP</b>",
+        "",
+        (
+            f"🕘 Chờ open: <b>{result.queued_count}</b> | "
+            f"⏭ Bỏ qua: <b>{result.skipped_count}</b> | "
+            f"❌ Từ chối: <b>{result.rejected_count}</b>"
+        ),
+        "",
+    ]
+
+    if not executions:
+        return [
+            *lines,
+            "Không có tín hiệu mua mới cuối phiên.",
+            "",
+        ]
+
+    for execution in executions:
+        lines.extend(
+            _build_execution_lines(
+                execution
+            )
+        )
+
+    return lines
+
+
 def build_paper_execution_message(
     result: PaperExecutionBatchResult,
+    *,
+    processed_result: PaperExecutionBatchResult | None = None,
 ) -> str:
     if not result.enabled:
         return ""
@@ -232,111 +418,19 @@ def build_paper_execution_message(
         .replace("_", " ")
         .title()
     )
-
-    lines.extend(
-        [
-            "<b>📈 LỆNH MUA HÔM NAY</b>",
-            "",
-            (
-                "📌 Bộ tính khối lượng: "
-                f"<b>{html.escape(position_sizer_name)}</b>"
-            ),
-            (
-                f"🕘 Chờ open: <b>{result.queued_count}</b> | "
-                f"✅ Đã khớp: <b>{result.filled_count}</b> | "
-                f"⏭ Bỏ qua: <b>{result.skipped_count}</b> | "
-                f"❌ Từ chối: <b>{result.rejected_count}</b>"
-            ),
-            "",
-        ]
-    )
-
-    if not result.executions:
-        lines.extend(
-            [
-                "Không có lệnh mua phát sinh hôm nay.",
-                "",
-            ]
-        )
-
-    for execution in result.executions:
-        symbol = html.escape(
-            execution.symbol
-        )
-
-        if execution.status == "QUEUED":
-            lines.extend([
-                f"🕘 <b>{symbol}</b> — <b>CHỜ OPEN PHIÊN KẾ TIẾP</b>",
-                html.escape(execution.reason),
-                "",
-            ])
-            continue
-
-        if execution.status == "FILLED":
-            fill_price = (
-                execution.fill_price
-                if execution.fill_price is not None
-                else 0.0
-            )
-
-            lines.extend(
-                [
-                    (
-                        f"🟢 <b>{symbol}</b> — "
-                        "<b>ĐÃ MỞ VỊ THẾ</b>"
-                    ),
-                    (
-                        "Số lượng: "
-                        f"<b>{execution.quantity:,} cổ</b>"
-                    ),
-                    (
-                        "Giá tín hiệu: "
-                        f"{execution.requested_price:,.0f} đ"
-                    ),
-                    (
-                        "Giá khớp: "
-                        f"{fill_price:,.0f} đ"
-                    ),
-                    (
-                        "Giá trị lệnh: "
-                        f"{execution.gross_value:,.0f} đ"
-                    ),
-                    (
-                        "Phí giao dịch: "
-                        f"{execution.commission:,.0f} đ"
-                    ),
-                    "",
-                ]
-            )
-            continue
-
-        if execution.status == "SKIPPED":
-            lines.extend(
-                [
-                    (
-                        f"⏭ <b>{symbol}</b> — "
-                        "<b>BỎ QUA</b>"
-                    ),
-                    format_skip_reason(
-                        execution.reason
-                    ),
-                    "",
-                ]
-            )
-            continue
-
-        lines.extend(
-            [
-                (
-                    f"❌ <b>{symbol}</b> — "
-                    "<b>TỪ CHỐI</b>"
-                ),
-                html.escape(
-                    execution.reason
-                ),
-                "",
-            ]
-        )
+    lines.extend([
+        (
+            "📌 Bộ tính khối lượng: "
+            f"<b>{html.escape(position_sizer_name)}</b>"
+        ),
+        "",
+        *build_processed_buy_orders_section(
+            processed_result
+        ),
+        *build_queued_signals_section(
+            result
+        ),
+    ])
 
     net_pnl = (
         result.realized_pnl

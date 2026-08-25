@@ -71,35 +71,56 @@ def update_market_data(
     )
 
 
-def run_paper_lifecycle() -> None:
+def run_paper_lifecycle():
     from scripts.run_paper_lifecycle import (
         main,
     )
 
-    main()
+    return main()
 
 
-def run_strategy_scanner():
+def run_strategy_scanner(
+    pending_execution_result=None,
+):
     from strategy.scanner import (
         run_scan,
     )
 
-    return run_scan()
+    return run_scan(
+        pending_execution_result=(
+            pending_execution_result
+        )
+    )
 
 
 def main() -> int:
     load_dotenv()
     args = build_parser().parse_args()
 
+    pending_execution_result = None
+
+    def lifecycle_stage():
+        nonlocal pending_execution_result
+        pending_execution_result = (
+            run_paper_lifecycle()
+        )
+
+    def scanner_stage():
+        return run_strategy_scanner(
+            pending_execution_result=(
+                pending_execution_result
+            )
+        )
+
     pipeline = DailyPipeline(
         update_market_data=(
             update_market_data
         ),
         run_lifecycle=(
-            run_paper_lifecycle
+            lifecycle_stage
         ),
         run_scanner=(
-            run_strategy_scanner
+            scanner_stage
         ),
     )
 

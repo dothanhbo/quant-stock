@@ -21,7 +21,10 @@ from execution.risk_guard import (
     RiskGuard,
     RiskLimits,
 )
-from execution.signal_executor import PaperSignalExecutor
+from execution.signal_executor import (
+    PaperExecutionBatchResult,
+    PaperSignalExecutor,
+)
 from config.trading_policy import TradingPolicy
 
 
@@ -49,7 +52,7 @@ def env_int(
     )
 
 
-def main() -> None:
+def main() -> PaperExecutionBatchResult | None:
     load_dotenv()
 
     market_database_path = os.getenv(
@@ -60,6 +63,7 @@ def main() -> None:
         latest_value = connection.execute(
             "SELECT MAX(date(time)) FROM prices WHERE symbol = 'VNINDEX'"
         ).fetchone()[0]
+    pending_result = None
     if latest_value:
         pending_result = PaperSignalExecutor.from_env().execute_pending_signals(
             valuation_date=str(latest_value),
@@ -212,6 +216,8 @@ def main() -> None:
 
     print("\nℹ️ Lifecycle chỉ ghi log terminal; "
           "báo cáo danh mục được gửi sau scanner.")
+
+    return pending_result
 
 
 

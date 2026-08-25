@@ -11,8 +11,11 @@ from services.paper_notification_formatter import (
 )
 
 
-def build_preview_result() -> PaperExecutionBatchResult:
-    return PaperExecutionBatchResult(
+def build_preview_result() -> tuple[
+    PaperExecutionBatchResult,
+    PaperExecutionBatchResult,
+]:
+    daily_result = PaperExecutionBatchResult(
         enabled=True,
         position_sizer="atr_risk",
         cash=62_345_210,
@@ -63,6 +66,22 @@ def build_preview_result() -> PaperExecutionBatchResult:
         ],
         executions=[
             PaperSignalExecution(
+                symbol="DBC",
+                status="QUEUED",
+                position_sizer="atr_risk",
+                signal_rank=1,
+                signal_score=81,
+                reason=(
+                    "Chờ khớp tại open phiên kế tiếp."
+                ),
+            ),
+        ],
+    )
+    processed_result = PaperExecutionBatchResult(
+        enabled=True,
+        position_sizer="atr_risk",
+        executions=[
+            PaperSignalExecution(
                 symbol="MWG",
                 status="FILLED",
                 quantity=300,
@@ -71,11 +90,15 @@ def build_preview_result() -> PaperExecutionBatchResult:
                 gross_value=24_612_300,
                 commission=36_918,
                 position_sizer="atr_risk",
+                signal_rank=1,
+                signal_score=88,
             ),
             PaperSignalExecution(
                 symbol="HPG",
                 status="SKIPPED",
                 position_sizer="atr_risk",
+                signal_rank=4,
+                signal_score=79,
                 reason="Đã có vị thế paper.",
             ),
             PaperSignalExecution(
@@ -84,16 +107,22 @@ def build_preview_result() -> PaperExecutionBatchResult:
                 quantity=500,
                 requested_price=36_500,
                 position_sizer="atr_risk",
+                signal_rank=5,
+                signal_score=77,
                 reason="Vượt giới hạn tỷ trọng danh mục.",
             ),
         ],
     )
+    return daily_result, processed_result
 
 
 def main() -> None:
-    result = build_preview_result()
+    result, processed_result = (
+        build_preview_result()
+    )
     message = build_paper_execution_message(
-        result
+        result,
+        processed_result=processed_result,
     )
 
     print(

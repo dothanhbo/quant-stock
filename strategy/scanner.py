@@ -15,7 +15,10 @@ from core.scan_telemetry import (
     persist_scan_telemetry,
     print_scan_diagnostics,
 )
-from execution.signal_executor import PaperSignalExecutor
+from execution.signal_executor import (
+    PaperExecutionBatchResult,
+    PaperSignalExecutor,
+)
 from reporting.dashboard import print_end_of_day_dashboard, print_scan_results
 from services.notification_formatter import build_scan_message
 from services.paper_notification_formatter import (
@@ -432,7 +435,12 @@ def scan_all_symbols(market_config=None):
     return signals, scan_stats
 
 
-def run_scan() -> tuple[list[dict], dict]:
+def run_scan(
+    *,
+    pending_execution_result: (
+        PaperExecutionBatchResult | None
+    ) = None,
+) -> tuple[list[dict], dict]:
     """Run the production scan, persist passed signals and notify Telegram."""
     market_config = get_market_regime()
     print("\n" + "=" * 65)
@@ -557,7 +565,10 @@ def run_scan() -> tuple[list[dict], dict]:
 
         paper_message = (
             build_paper_execution_message(
-                paper_result
+                paper_result,
+                processed_result=(
+                    pending_execution_result
+                ),
             )
         )
 

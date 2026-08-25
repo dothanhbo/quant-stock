@@ -1,6 +1,7 @@
 from app.daily_pipeline import (
     DailyPipeline,
 )
+from scripts import run_daily
 
 
 def test_pipeline_runs_in_correct_order() -> None:
@@ -156,4 +157,40 @@ def test_pipeline_stops_after_lifecycle_failure() -> None:
     assert calls == [
         "update",
         "lifecycle",
+    ]
+
+
+def test_run_daily_passes_pending_result_to_scanner(
+    monkeypatch,
+) -> None:
+    pending_result = object()
+    scanner_inputs: list[object] = []
+
+    monkeypatch.setattr(
+        run_daily,
+        "update_market_data",
+        lambda: (101, []),
+    )
+    monkeypatch.setattr(
+        run_daily,
+        "run_paper_lifecycle",
+        lambda: pending_result,
+    )
+    monkeypatch.setattr(
+        run_daily,
+        "run_strategy_scanner",
+        lambda pending_execution_result=None: (
+            scanner_inputs.append(
+                pending_execution_result
+            )
+        ),
+    )
+    monkeypatch.setattr(
+        "sys.argv",
+        ["run_daily"],
+    )
+
+    assert run_daily.main() == 0
+    assert scanner_inputs == [
+        pending_result
     ]

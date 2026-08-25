@@ -266,6 +266,8 @@ class PaperSignalExecution:
     estimated_position_pct: float = 0.0
     estimated_risk_amount: float = 0.0
     estimated_risk_pct: float = 0.0
+    signal_rank: int | None = None
+    signal_score: float | None = None
     reason: str = ""
 
 
@@ -459,15 +461,29 @@ class PaperSignalExecutor:
         result = self.execute_signals([], report_date=report_date)
         if not self.config.enabled:
             return result
-        for signal in signals:
+        for signal_rank, signal in enumerate(
+            signals,
+            start=1,
+        ):
             symbol = str(signal.get("symbol", "")).strip().upper()
             try:
-                inserted = self.broker.queue_signal(dict(signal))
+                queued_signal = dict(signal)
+                queued_signal.setdefault(
+                    "signal_rank",
+                    signal_rank,
+                )
+                inserted = self.broker.queue_signal(
+                    queued_signal
+                )
                 result.executions.append(
                     PaperSignalExecution(
                         symbol=symbol or "-",
                         status="QUEUED" if inserted else "SKIPPED",
                         position_sizer=self.position_sizer.name,
+                        signal_rank=signal_rank,
+                        signal_score=self._safe_float(
+                            signal.get("score")
+                        ),
                         reason=(
                             "Chờ khớp tại open phiên kế tiếp."
                             if inserted
@@ -481,6 +497,10 @@ class PaperSignalExecutor:
                         symbol=symbol or "-",
                         status="REJECTED",
                         position_sizer=self.position_sizer.name,
+                        signal_rank=signal_rank,
+                        signal_score=self._safe_float(
+                            signal.get("score")
+                        ),
                         reason=f"Không queue được signal: {error}",
                     )
                 )
@@ -501,8 +521,15 @@ class PaperSignalExecutor:
         due: list[dict[str, Any]] = []
         freshness_results: list[PaperSignalExecution] = []
         with sqlite3.connect(market_database_path) as connection:
-            for signal in pending:
+            for signal_rank, signal in enumerate(
+                pending,
+                start=1,
+            ):
                 symbol = str(signal["symbol"]).strip().upper()
+                signal.setdefault(
+                    "signal_rank",
+                    signal_rank,
+                )
                 pending_id = int(signal["_pending_id"])
                 signal_date = str(signal.get("date", ""))[:10]
                 expected_date = self._load_next_market_session(
@@ -525,6 +552,12 @@ class PaperSignalExecutor:
                         symbol=symbol,
                         status="REJECTED",
                         position_sizer=self.position_sizer.name,
+                        signal_rank=self._safe_int(
+                            signal.get("signal_rank")
+                        ),
+                        signal_score=self._safe_float(
+                            signal.get("score")
+                        ),
                         reason=reason,
                     ))
                     continue
@@ -549,6 +582,12 @@ class PaperSignalExecutor:
                         symbol=symbol,
                         status="SKIPPED",
                         position_sizer=self.position_sizer.name,
+                        signal_rank=self._safe_int(
+                            signal.get("signal_rank")
+                        ),
+                        signal_score=self._safe_float(
+                            signal.get("score")
+                        ),
                         reason=reason,
                     ))
                     continue
@@ -573,6 +612,12 @@ class PaperSignalExecutor:
                         symbol=symbol,
                         status="REJECTED",
                         position_sizer=self.position_sizer.name,
+                        signal_rank=self._safe_int(
+                            signal.get("signal_rank")
+                        ),
+                        signal_score=self._safe_float(
+                            signal.get("score")
+                        ),
                         reason=reason,
                     ))
                     continue
@@ -616,6 +661,12 @@ class PaperSignalExecutor:
                     symbol=symbol,
                     status="REJECTED",
                     position_sizer=self.position_sizer.name,
+                    signal_rank=self._safe_int(
+                        signal.get("signal_rank")
+                    ),
+                    signal_score=self._safe_float(
+                        signal.get("score")
+                    ),
                     reason=reason,
                 ))
                 continue
@@ -807,6 +858,12 @@ class PaperSignalExecutor:
                     "",
                 )
             ).strip().upper()
+            signal_rank = self._safe_int(
+                signal.get("signal_rank")
+            )
+            signal_score = self._safe_float(
+                signal.get("score")
+            )
 
             if not symbol:
                 executions.append(
@@ -816,6 +873,8 @@ class PaperSignalExecutor:
                         position_sizer=(
                             self.position_sizer.name
                         ),
+                        signal_rank=signal_rank,
+                        signal_score=signal_score,
                         reason=(
                             "Signal không có symbol."
                         ),
@@ -834,9 +893,12 @@ class PaperSignalExecutor:
                         position_sizer=(
                             self.position_sizer.name
                         ),
+                        signal_rank=signal_rank,
+                        signal_score=signal_score,
                         reason=(
-                            "Đã đạt giới hạn lệnh "
-                            "trong một lần scan."
+                            "Đã đạt giới hạn lệnh mua mới "
+                            "trong ngày "
+                            f"(tối đa {self.config.maximum_orders_per_scan} lệnh)."
                         ),
                     )
                 )
@@ -859,6 +921,8 @@ class PaperSignalExecutor:
                         position_sizer=(
                             self.position_sizer.name
                         ),
+                        signal_rank=signal_rank,
+                        signal_score=signal_score,
                         reason="Đã có vị thế paper.",
                     )
                 )
@@ -883,6 +947,8 @@ class PaperSignalExecutor:
                         position_sizer=(
                             self.position_sizer.name
                         ),
+                        signal_rank=signal_rank,
+                        signal_score=signal_score,
                         reason=(
                             "Signal không có entry hợp lệ."
                         ),
@@ -968,6 +1034,8 @@ class PaperSignalExecutor:
                         estimated_risk_pct=(
                             estimated_risk_pct
                         ),
+                        signal_rank=signal_rank,
+                        signal_score=signal_score,
                         reason=(
                             "Giới hạn thanh khoản "
                             f"{self.config.maximum_order_adtv20_pct:g}% "
@@ -1031,6 +1099,8 @@ class PaperSignalExecutor:
                         estimated_risk_pct=(
                             estimated_risk_pct
                         ),
+                        signal_rank=signal_rank,
+                        signal_score=signal_score,
                         reason=(
                             reason
                             or "Lệnh bị từ chối."
@@ -1072,6 +1142,8 @@ class PaperSignalExecutor:
                     estimated_risk_pct=(
                         estimated_risk_pct
                     ),
+                    signal_rank=signal_rank,
+                    signal_score=signal_score,
                 )
             )
 
@@ -1549,5 +1621,14 @@ class PaperSignalExecutor:
     ) -> float | None:
         try:
             return float(value)
+        except (TypeError, ValueError):
+            return None
+
+    @staticmethod
+    def _safe_int(
+        value: object,
+    ) -> int | None:
+        try:
+            return int(value)
         except (TypeError, ValueError):
             return None
