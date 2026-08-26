@@ -46,10 +46,6 @@ strategy = TRADING_POLICY.build_entry_model()
 telegram_client = TelegramClient.from_env()
 paper_signal_executor = PaperSignalExecutor.from_env()
 
-# Backward-compatible aliases for earlier imports.
-_trend_passes = trend_passes
-
-
 def get_all_symbols() -> list[str]:
     query = text("SELECT DISTINCT symbol FROM prices ORDER BY symbol ASC")
     with engine.connect() as connection:
@@ -172,6 +168,7 @@ def evaluate_prepared_row(
         "take_profit": round(take_profit, 2),
         "stop_atr_multiplier": TRADING_POLICY.stop_atr_multiplier,
         "target_atr_multiplier": TRADING_POLICY.target_atr_multiplier,
+        "trailing_atr_multiplier": TRADING_POLICY.trailing_atr_multiplier,
         "maximum_holding_days": TRADING_POLICY.maximum_holding_days,
         "execution_timing": TRADING_POLICY.execution_timing,
     })

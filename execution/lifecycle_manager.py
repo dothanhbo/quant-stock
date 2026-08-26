@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
+from bisect import bisect_right
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -94,6 +95,10 @@ class PaperLifecycleManager:
             "data/market.db"
         ),
         price_scale: float = 1000.0,
+        atr_period: int = 14,
+        default_trailing_atr_multiplier: (
+            float | None
+        ) = None,
     ) -> None:
         self.broker = broker
         self.order_manager = order_manager
@@ -102,10 +107,30 @@ class PaperLifecycleManager:
             market_database_path
         )
         self.price_scale = price_scale
+        self.atr_period = int(atr_period)
+        self.default_trailing_atr_multiplier = (
+            default_trailing_atr_multiplier
+        )
 
         if self.price_scale <= 0:
             raise ValueError(
                 "price_scale phải lớn hơn 0."
+            )
+
+        if self.atr_period <= 0:
+            raise ValueError(
+                "atr_period phải lớn hơn 0."
+            )
+
+        if (
+            self.default_trailing_atr_multiplier
+            is not None
+            and self.default_trailing_atr_multiplier
+            <= 0
+        ):
+            raise ValueError(
+                "default_trailing_atr_multiplier "
+                "phải lớn hơn 0 hoặc None."
             )
 
     def run(
@@ -137,6 +162,11 @@ class PaperLifecycleManager:
                 for position in positions
             ],
             valuation_date=resolved_date,
+        )
+        market_sessions = (
+            self._load_market_sessions(
+                valuation_date=resolved_date,
+            )
         )
 
         for position in positions:
@@ -220,6 +250,21 @@ class PaperLifecycleManager:
                 persist_snapshot=False,
             )
 
+            holding_sessions = (
+                self._count_holding_sessions(
+                    sessions=market_sessions,
+                    entry_date=lifecycle.entry_date,
+                    valuation_date=resolved_date,
+                )
+            )
+            trailing_atr_multiplier = (
+                lifecycle.trailing_atr_multiplier
+                if lifecycle.trailing_atr_multiplier
+                is not None
+                else self
+                .default_trailing_atr_multiplier
+            )
+
             decision = self.exit_engine.evaluate(
                 state=PositionExitState(
                     symbol=symbol,
@@ -245,8 +290,7 @@ class PaperLifecycleManager:
                         .trailing_stop_price
                     ),
                     trailing_atr_multiplier=(
-                        lifecycle
-                        .trailing_atr_multiplier
+                        trailing_atr_multiplier
                     ),
                     maximum_holding_days=(
                         lifecycle
@@ -257,6 +301,7 @@ class PaperLifecycleManager:
                 exit_signal=(
                     symbol in exit_signals
                 ),
+                holding_sessions=holding_sessions,
             )
 
             if not decision.should_exit:
@@ -288,8 +333,7 @@ class PaperLifecycleManager:
                             .trailing_stop_price
                         ),
                         trailing_atr_multiplier=(
-                            lifecycle
-                            .trailing_atr_multiplier
+                            trailing_atr_multiplier
                         ),
                         maximum_holding_days=(
                             lifecycle
@@ -527,17 +571,19 @@ class PaperLifecycleManager:
         query = f"""
             SELECT
                 symbol,
+                time,
                 open,
                 high,
                 low,
                 close
             FROM prices
             WHERE symbol IN ({placeholders})
-              AND substr(time, 1, 10) = ?
+              AND date(time) <= date(?)
               AND open IS NOT NULL
               AND high IS NOT NULL
               AND low IS NOT NULL
               AND close IS NOT NULL
+            ORDER BY symbol, time
         """
 
         with sqlite3.connect(
@@ -551,37 +597,166 @@ class PaperLifecycleManager:
                 ],
             ).fetchall()
 
-        return {
-            str(symbol).strip().upper(): ExitBar(
-                symbol=str(symbol),
-                valuation_date=valuation_date,
-                open_price=(
-                    float(open_price)
-                    * self.price_scale
-                ),
-                high_price=(
-                    float(high_price)
-                    * self.price_scale
-                ),
-                low_price=(
-                    float(low_price)
-                    * self.price_scale
-                ),
-                close_price=(
-                    float(close_price)
-                    * self.price_scale
-                ),
-                # ATR is not stored in the raw prices table.
-                # Existing trailing levels remain active; creating
-                # a new ATR trailing level will be wired to prepared
-                # indicator data in the next step.
-                atr=None,
+        history_by_symbol: dict[
+            str,
+            dict[str, tuple[float, float, float, float]],
+        ] = {}
+
+        for (
+            symbol,
+            time_value,
+            open_price,
+            high_price,
+            low_price,
+            close_price,
+        ) in rows:
+            normalized_symbol = (
+                str(symbol).strip().upper()
             )
-            for (
-                symbol,
+            trading_date = str(time_value)[:10]
+            history_by_symbol.setdefault(
+                normalized_symbol,
+                {},
+            )[trading_date] = (
+                float(open_price),
+                float(high_price),
+                float(low_price),
+                float(close_price),
+            )
+
+        bars: dict[str, ExitBar] = {}
+        valuation_text = valuation_date.isoformat()
+
+        for symbol, daily_rows in (
+            history_by_symbol.items()
+        ):
+            current = daily_rows.get(
+                valuation_text
+            )
+
+            if current is None:
+                continue
+
+            ordered_history = [
+                daily_rows[trading_date]
+                for trading_date in sorted(
+                    daily_rows
+                )
+            ]
+            atr = self._calculate_wilder_atr(
+                ordered_history,
+                period=self.atr_period,
+            )
+            (
                 open_price,
                 high_price,
                 low_price,
                 close_price,
-            ) in rows
-        }
+            ) = current
+
+            bars[symbol] = ExitBar(
+                symbol=symbol,
+                valuation_date=valuation_date,
+                open_price=(
+                    open_price * self.price_scale
+                ),
+                high_price=(
+                    high_price * self.price_scale
+                ),
+                low_price=(
+                    low_price * self.price_scale
+                ),
+                close_price=(
+                    close_price * self.price_scale
+                ),
+                atr=(
+                    atr * self.price_scale
+                    if atr is not None
+                    else None
+                ),
+            )
+
+        return bars
+
+    def _load_market_sessions(
+        self,
+        *,
+        valuation_date: date,
+    ) -> list[date]:
+        with sqlite3.connect(
+            self.market_database_path
+        ) as connection:
+            rows = connection.execute(
+                """
+                SELECT DISTINCT date(time)
+                FROM prices
+                WHERE symbol = 'VNINDEX'
+                  AND date(time) <= date(?)
+                ORDER BY date(time)
+                """,
+                (valuation_date.isoformat(),),
+            ).fetchall()
+
+        return [
+            date.fromisoformat(str(row[0]))
+            for row in rows
+            if row[0] is not None
+        ]
+
+    @staticmethod
+    def _count_holding_sessions(
+        *,
+        sessions: list[date],
+        entry_date: date,
+        valuation_date: date,
+    ) -> int:
+        return max(
+            0,
+            bisect_right(
+                sessions,
+                valuation_date,
+            )
+            - bisect_right(
+                sessions,
+                entry_date,
+            ),
+        )
+
+    @staticmethod
+    def _calculate_wilder_atr(
+        rows: list[
+            tuple[float, float, float, float]
+        ],
+        *,
+        period: int,
+    ) -> float | None:
+        if len(rows) < period:
+            return None
+
+        previous_close: float | None = None
+        atr: float | None = None
+
+        for (
+            _open_price,
+            high_price,
+            low_price,
+            close_price,
+        ) in rows:
+            true_range = high_price - low_price
+
+            if previous_close is not None:
+                true_range = max(
+                    true_range,
+                    abs(high_price - previous_close),
+                    abs(low_price - previous_close),
+                )
+
+            atr = (
+                true_range
+                if atr is None
+                else atr
+                + (true_range - atr) / period
+            )
+            previous_close = close_price
+
+        return atr

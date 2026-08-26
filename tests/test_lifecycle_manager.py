@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 import sqlite3
-from datetime import date
+from datetime import date, timedelta
 from pathlib import Path
 
 from execution.exit_engine import (
@@ -242,4 +242,196 @@ def test_missing_state_does_not_sell(
     assert (
         broker.get_position("VNM")
         is not None
+    )
+
+
+def test_lifecycle_calculates_atr_and_backfills_trailing_policy(
+    tmp_path: Path,
+) -> None:
+    paper_db = tmp_path / "paper.db"
+    market_db = tmp_path / "market.db"
+    create_market_db(market_db)
+    first_date = date(2026, 7, 20)
+
+    with sqlite3.connect(market_db) as connection:
+        for offset in range(14):
+            trading_date = (
+                first_date
+                + timedelta(days=offset)
+            )
+            is_last = offset == 13
+            connection.execute(
+                """
+                INSERT INTO prices(
+                    symbol, time, open, high,
+                    low, close, volume
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "AAA",
+                    trading_date.isoformat(),
+                    108.0 if is_last else 100.0,
+                    110.0 if is_last else 101.0,
+                    107.0 if is_last else 99.0,
+                    109.0 if is_last else 100.0,
+                    1_000_000,
+                ),
+            )
+            connection.execute(
+                """
+                INSERT INTO prices(
+                    symbol, time, open, high,
+                    low, close, volume
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "VNINDEX",
+                    trading_date.isoformat(),
+                    1_300.0,
+                    1_305.0,
+                    1_295.0,
+                    1_300.0,
+                    1_000_000,
+                ),
+            )
+
+    broker, order_manager, _ = build_runtime(
+        paper_db=paper_db,
+        market_db=market_db,
+    )
+    fill = order_manager.buy_market(
+        symbol="AAA",
+        quantity=100,
+        price=100_000,
+    )
+    assert fill is not None
+    broker.save_position_lifecycle(
+        PositionLifecycleState(
+            symbol="AAA",
+            entry_date=first_date,
+            entry_price=fill.price,
+            initial_quantity=fill.quantity,
+            stop_price=90_000,
+            highest_price=fill.price,
+            trailing_atr_multiplier=None,
+        )
+    )
+    lifecycle = PaperLifecycleManager(
+        broker=broker,
+        order_manager=order_manager,
+        exit_engine=ExitEngine(),
+        market_database_path=market_db,
+        default_trailing_atr_multiplier=2.0,
+    )
+
+    result = lifecycle.run(
+        valuation_date=(
+            first_date + timedelta(days=13)
+        )
+    )
+
+    assert len(result.held) == 1
+    assert result.held[0].trailing_stop_price is not None
+    assert result.held[0].trailing_stop_price > 90_000
+    saved = broker.get_position_lifecycle("AAA")
+    assert saved is not None
+    assert saved.trailing_atr_multiplier == 2.0
+    assert saved.trailing_stop_price == (
+        result.held[0].trailing_stop_price
+    )
+
+
+def test_time_exit_counts_vnindex_sessions_not_calendar_days(
+    tmp_path: Path,
+) -> None:
+    paper_db = tmp_path / "paper.db"
+    market_db = tmp_path / "market.db"
+    create_market_db(market_db)
+    entry_date = date(2026, 8, 7)
+    monday = date(2026, 8, 10)
+    tuesday = date(2026, 8, 11)
+
+    with sqlite3.connect(market_db) as connection:
+        for trading_date in (
+            entry_date,
+            monday,
+            tuesday,
+        ):
+            connection.execute(
+                """
+                INSERT INTO prices(
+                    symbol, time, open, high,
+                    low, close, volume
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "VNINDEX",
+                    trading_date.isoformat(),
+                    1_300.0,
+                    1_305.0,
+                    1_295.0,
+                    1_300.0,
+                    1_000_000,
+                ),
+            )
+
+        for trading_date in (monday, tuesday):
+            connection.execute(
+                """
+                INSERT INTO prices(
+                    symbol, time, open, high,
+                    low, close, volume
+                ) VALUES (?, ?, ?, ?, ?, ?, ?)
+                """,
+                (
+                    "AAA",
+                    trading_date.isoformat(),
+                    100.0,
+                    101.0,
+                    99.0,
+                    100.0,
+                    1_000_000,
+                ),
+            )
+
+    broker, order_manager, lifecycle = build_runtime(
+        paper_db=paper_db,
+        market_db=market_db,
+    )
+    fill = order_manager.buy_market(
+        symbol="AAA",
+        quantity=100,
+        price=100_000,
+    )
+    assert fill is not None
+    broker.save_position_lifecycle(
+        PositionLifecycleState(
+            symbol="AAA",
+            entry_date=entry_date,
+            entry_price=fill.price,
+            initial_quantity=fill.quantity,
+            stop_price=90_000,
+            maximum_holding_days=2,
+        )
+    )
+
+    after_weekend = lifecycle.run(
+        valuation_date=monday
+    )
+
+    assert len(after_weekend.held) == 1
+    assert len(after_weekend.exited) == 0
+
+    at_second_session = lifecycle.run(
+        valuation_date=tuesday
+    )
+
+    assert len(at_second_session.exited) == 1
+    assert (
+        at_second_session.exited[0].reason
+        == "TIME_EXIT"
+    )
+    assert (
+        at_second_session.exited[0].holding_days
+        == 2
     )

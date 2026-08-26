@@ -95,6 +95,7 @@ def queue_aaa(
         "entry": 50.0,
         "atr": 1.0,
         "score": 90,
+        "regime": "BULL",
     }], report_date=signal_date)
     assert queued.queued_count == 1
 
@@ -124,6 +125,7 @@ def test_signal_is_queued_then_filled_at_next_open(tmp_path: Path) -> None:
     lifecycle = executor.broker.get_position_lifecycle("AAA")
     assert lifecycle is not None
     assert lifecycle.maximum_holding_days == 30
+    assert lifecycle.trailing_atr_multiplier == 2.0
     assert lifecycle.stop_price == 49_000.0
     assert lifecycle.take_profit_price == 56_000.0
 
@@ -221,6 +223,128 @@ def test_pending_order_is_capped_at_one_percent_of_signal_date_adtv20(
 def test_execution_config_rejects_invalid_adtv20_limit() -> None:
     with pytest.raises(ValueError, match="PAPER_MAX_ORDER_ADTV20_PCT"):
         PaperExecutionConfig(maximum_order_adtv20_pct=0).validate()
+
+
+def test_bear_signal_is_not_queued(tmp_path: Path) -> None:
+    executor = build_executor(
+        tmp_path / "paper.db"
+    )
+    signal_date = date(2026, 8, 5)
+
+    result = executor.queue_signals(
+        [{
+            "symbol": "AAA",
+            "date": signal_date.isoformat(),
+            "entry": 50.0,
+            "atr": 1.0,
+            "score": 90,
+            "regime": "BEAR",
+        }],
+        report_date=signal_date,
+    )
+
+    assert result.queued_count == 0
+    assert result.skipped_count == 1
+    assert "Regime BEAR" in result.executions[0].reason
+
+    with sqlite3.connect(
+        tmp_path / "paper.db"
+    ) as connection:
+        pending_count = connection.execute(
+            "SELECT COUNT(*) FROM paper_pending_signals"
+        ).fetchone()[0]
+
+    assert pending_count == 0
+
+
+def test_sideway_caps_paper_portfolio_at_three_positions(
+    tmp_path: Path,
+) -> None:
+    executor = PaperSignalExecutor(
+        PaperExecutionConfig(
+            enabled=True,
+            database_path=tmp_path / "paper.db",
+            initial_cash=100_000_000,
+            position_sizer="fixed_fraction",
+            fixed_fraction_pct=10.0,
+            maximum_orders_per_scan=10,
+            maximum_position_pct=20.0,
+            maximum_gross_exposure_pct=90.0,
+            maximum_open_positions=10,
+            minimum_cash_buffer_pct=0.0,
+        )
+    )
+    signals = [
+        {
+            "symbol": symbol,
+            "date": "2026-08-05",
+            "entry": 50.0,
+            "stop_loss": 49.0,
+            "take_profit": 55.0,
+            "atr": 1.0,
+            "regime": "SIDEWAY",
+        }
+        for symbol in (
+            "AAA",
+            "BBB",
+            "CCC",
+            "DDD",
+        )
+    ]
+
+    result = executor.execute_signals(
+        signals,
+        report_date="2026-08-05",
+    )
+
+    assert [
+        item.status
+        for item in result.executions
+    ] == [
+        "FILLED",
+        "FILLED",
+        "FILLED",
+        "SKIPPED",
+    ]
+    assert "giới hạn 3 vị thế" in (
+        result.executions[3].reason
+    )
+
+
+def test_bull_portfolio_heat_blocks_oversized_risk(
+    tmp_path: Path,
+) -> None:
+    executor = PaperSignalExecutor(
+        PaperExecutionConfig(
+            enabled=True,
+            database_path=tmp_path / "paper.db",
+            initial_cash=100_000_000,
+            position_sizer="fixed_fraction",
+            fixed_fraction_pct=100.0,
+            maximum_orders_per_scan=10,
+            maximum_position_pct=100.0,
+            maximum_gross_exposure_pct=100.0,
+            maximum_open_positions=10,
+            minimum_cash_buffer_pct=0.0,
+        )
+    )
+
+    result = executor.execute_signals(
+        [{
+            "symbol": "AAA",
+            "date": "2026-08-05",
+            "entry": 100.0,
+            "stop_loss": 90.0,
+            "take_profit": 120.0,
+            "atr": 5.0,
+            "regime": "BULL",
+        }],
+        report_date="2026-08-05",
+    )
+
+    assert result.filled_count == 0
+    assert result.skipped_count == 1
+    assert "portfolio heat" in result.executions[0].reason
 
 
 def test_daily_loss_is_passed_to_risk_guard(tmp_path: Path) -> None:

@@ -257,6 +257,33 @@ def test_time_exit() -> None:
     )
 
 
+def test_time_exit_uses_explicit_trading_sessions() -> None:
+    decision = ExitEngine().evaluate(
+        state=make_state(
+            maximum_holding_days=4,
+        ),
+        bar=make_bar(),
+        holding_sessions=2,
+    )
+
+    assert not decision.should_exit
+    assert decision.holding_days == 2
+
+
+def test_time_exit_triggers_at_session_limit() -> None:
+    decision = ExitEngine().evaluate(
+        state=make_state(
+            maximum_holding_days=2,
+        ),
+        bar=make_bar(),
+        holding_sessions=2,
+    )
+
+    assert decision.should_exit
+    assert decision.reason == ExitReason.TIME_EXIT
+    assert decision.holding_days == 2
+
+
 def test_exit_signal() -> None:
     decision = ExitEngine().evaluate(
         state=make_state(),

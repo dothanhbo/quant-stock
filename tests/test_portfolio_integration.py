@@ -30,6 +30,7 @@ def signal(
         "take_profit": target,
         "score": 90,
         "atr": 1.0,
+        "regime": "BULL",
     }
 
 

@@ -12,7 +12,7 @@ Quant Stock is an **end-to-end quantitative investment research framework** desi
 
 Unlike many retail trading projects that focus solely on finding profitable entry signals, Quant Stock emphasizes **research quality, statistical validation, portfolio simulation, and systematic strategy development**.
 
-The project provides a complete workflow—from historical market data and technical indicators to portfolio-level backtesting, advanced research diagnostics, and persistent paper execution. Validated signals can be passed through shared position sizing, portfolio risk controls, a simulated broker, SQLite state persistence, and Telegram notifications before any live deployment is considered.
+The project provides a complete workflow—from historical market data and technical indicators to portfolio-level backtesting, advanced research diagnostics, and persistent paper execution. Validated signals can be queued for next-session execution, passed through shared position sizing, regime-aware portfolio risk controls, liquidity limits, a simulated broker, SQLite state persistence, lifecycle management, and Telegram notifications before any live deployment is considered.
 
 ---
 
@@ -114,7 +114,7 @@ Supported exit mechanisms:
 - Time-based Exit
 - Maximum Holding Period
 - Gap-aware Execution
-- Trailing ATR logic in research and portfolio simulation
+- Trailing ATR logic in research, portfolio simulation, and paper-position lifecycle
 
 ---
 
@@ -144,14 +144,20 @@ The paper-trading layer extends validated research into a simulated execution en
 
 - Shared `PositionSizer` implementations with backtesting
 - ATR-based risk sizing by default
+- Pending-signal queue with execution at the next valid VNINDEX session open
 - Order Manager
 - Risk Guard
 - Maximum position and portfolio exposure limits
 - Maximum open positions
+- Regime-aware allocation limits for BULL, SIDEWAY, and BEAR markets
+- ADTV20-based order-liquidity cap using signal-date information only
 - Daily loss limit
 - Kill switch support
 - Commission and slippage simulation
-- Persistent orders, fills, positions, and snapshots in SQLite
+- Persistent orders, fills, positions, pending signals, lifecycle state, closed trades, and snapshots in SQLite
+- Automated stop-loss, profit-target, trailing-ATR, and maximum-holding-period exits
+- Maximum holding period measured in VNINDEX trading sessions
+- Paper performance analytics for return, win rate, profit factor, expectancy, drawdown, CAGR, volatility, Sharpe, Sortino, and Calmar
 - Duplicate-position prevention
 - Telegram execution summaries
 - Paper mode disabled by configuration when not required
@@ -165,6 +171,7 @@ No live broker API is called by the paper-trading workflow.
 - Daily scanner summaries
 - Signal and watchlist reporting
 - Paper-order execution results
+- Pending-signal and lifecycle execution results
 - Portfolio cash, equity, exposure, and open-position summaries
 - Retry handling for temporary Telegram API failures
 - Safe message splitting and HTML escaping
@@ -185,6 +192,11 @@ Current research modules include:
 - Portfolio Benchmarking
 - Portfolio Stress Testing
 - Robustness Scoring
+- Research Integrity Baseline
+- Structural Entry / Exit Matrix
+- Candidate Ranking and Competition Analysis
+- Monthly Momentum Baseline
+- Breadth and Execution Robustness Testing
 - Automated HTML Research Report
 
 These modules help distinguish robust strategies from those that simply fit historical data.
@@ -194,17 +206,17 @@ These modules help distinguish robust strategies from those that simply fit hist
 # 🏗️ System Architecture
 
 ```mermaid
-flowchart LR
-    A[(Historical Market Database)]
-    A --> B[Indicator Engine]
+flowchart TD
+    A[(Historical Market Database)] --> B[Indicator Engine]
     B --> C[Strategy Scanner]
-    C --> D[Portfolio Allocation]
-    D --> E[Shared Position Sizer]
-    E --> F[Risk Guard]
-    F --> G[Order Manager]
-    G --> H[Paper Broker]
-    H --> I[(Paper Trading SQLite)]
-    H --> J[Telegram Notifications]
+    C --> D[Pending Signal Queue]
+    D --> E[Next-Session Open Execution]
+    E --> F[Position Sizer and Risk Guard]
+    F --> G[Paper Broker]
+    G --> H[(Paper Trading SQLite)]
+    H --> I[Position Lifecycle Manager]
+    I --> G
+    G --> J[Telegram Notifications]
 
     C --> K[Backtesting Engine]
     K --> L[Walk Forward / Monte Carlo / Stress Tests]
@@ -213,7 +225,7 @@ flowchart LR
 
 The project now separates research, portfolio construction, execution, persistence, and notification responsibilities.
 
-The same position-sizing abstractions can be reused by portfolio backtests and paper execution, reducing the risk that simulated production behavior diverges from the research configuration.
+The same position-sizing abstractions and centralized `TradingPolicy` can be reused by portfolio backtests, scanner logic, and paper execution, reducing the risk that simulated production behavior diverges from the validated research configuration.
 
 ---
 
@@ -249,13 +261,22 @@ Automated Research Report
 Shared Position Sizing
           │
           ▼
+Pending Signal Queue
+          │
+          ▼
+Next VNINDEX Session Open
+          │
+          ▼
 Risk Guard
           │
           ▼
 Paper Broker
           │
           ▼
-SQLite Persistence and Telegram
+Position Lifecycle Management
+          │
+          ▼
+SQLite Persistence, Analytics, and Telegram
 ```
 
 The objective is not simply to discover profitable trades, but to understand **why a strategy works, when it works, under which conditions it may fail, and how it behaves in a simulated execution environment**.
@@ -269,12 +290,15 @@ Paper trading is a validation stage—not evidence that a strategy is suitable f
 ```text
 quant-stock/
 │
+├── analysis/                    # Paper and backtest performance analytics
+├── app/                         # Daily pipeline orchestration
 ├── backtesting/                 # Backtest, portfolio simulation and diagnostics
 │   └── position_sizers/         # Shared sizing interfaces and implementations
 ├── config/                      # Strategy and research configuration
 ├── core/                        # Database and shared infrastructure
+├── dashboard/                   # Paper portfolio dashboard
 ├── data/                        # Local generated databases (ignored by Git)
-├── execution/                   # Paper broker, risk guard and order management
+├── execution/                   # Paper broker, risk guard, orders and lifecycle
 ├── reporting/                   # Terminal dashboards and reporting helpers
 ├── research/                    # Walk forward, Monte Carlo, stress and reports
 ├── scripts/                     # Operational and data-update scripts
@@ -307,7 +331,9 @@ The project has evolved through multiple research stages.
 | v0.8 | Monte Carlo Simulation |
 | v0.9 | Market Regime Analysis |
 | v1.0 | Documentation Release |
-| vNext | Signal Quality Model |
+| v1.1 | Paper Execution Foundation |
+| Current | Paper Lifecycle, Next-Session Execution and Analytics |
+| Future | Signal Intelligence Research |
 
 Rather than continuously adding new indicators, development has focused on improving the **quality of research methodology**.
 
@@ -462,6 +488,15 @@ PAPER_POSITION_SIZER=atr_risk
 PAPER_RISK_PER_TRADE_PCT=1.0
 PAPER_ATR_STOP_MULTIPLIER=2.0
 PAPER_MAX_POSITION_PCT=20.0
+PAPER_MAX_ORDER_ADTV20_PCT=1.0
+
+TRADING_ENTRY_MODEL=hybrid
+TRADING_EXIT_MODEL=atr
+TRADING_EXECUTION_TIMING=next_open
+TRADING_STOP_ATR_MULTIPLIER=2.0
+TRADING_TARGET_ATR_MULTIPLIER=5.0
+TRADING_TRAILING_ATR_MULTIPLIER=2.0
+TRADING_MAX_HOLDING_DAYS=30
 
 PAPER_MAX_ORDERS_PER_SCAN=3
 PAPER_LOT_SIZE=100
@@ -527,13 +562,37 @@ After the tests pass, update:
 PAPER_TRADING_ENABLED=true
 ```
 
-Then run:
+Then run the complete daily pipeline:
+
+```bash
+python -m scripts.run_daily
+```
+
+For a scan-only run without updating market data or processing the existing paper portfolio:
 
 ```bash
 python -m strategy.scanner
 ```
 
-Paper execution will use the configured shared position sizer, pass orders through `RiskGuard`, persist account state in SQLite, and send a separate Telegram portfolio update.
+The complete pipeline updates market data, processes pending entries and existing-position exits, then scans the latest valid market session and queues new signals. New entries are filled only at the open of the next valid VNINDEX session; missed executions are not backfilled at a later price.
+
+Paper execution uses the configured shared position sizer, passes orders through regime, liquidity, and portfolio risk controls, persists account state in SQLite, and sends a consolidated Telegram portfolio update.
+
+`TRADING_MAX_HOLDING_DAYS` is counted in VNINDEX trading sessions. The production regime policy also caps new allocation at 5 positions / 5% portfolio heat in BULL, 3 positions / 4% heat in SIDEWAY, and blocks new positions in BEAR.
+
+## 10. Generate the paper performance report
+
+```bash
+python -m scripts.report_paper_performance --database data/paper_trading.db
+```
+
+The report reads closed trades and daily snapshots from SQLite and calculates realized performance, win rate, profit factor, expectancy, drawdown, CAGR, volatility, Sharpe, Sortino, and Calmar.
+
+## 11. Run the paper dashboard
+
+```bash
+python -m streamlit run dashboard/app.py
+```
 
 ---
 
@@ -698,8 +757,16 @@ Market regime is used by
 
 - Hybrid Strategy
 - Signal Evaluation
+- Portfolio exposure policy
+- Paper entry authorization
 - Research Diagnostics
 - Trade Quality Analysis
+
+Current production allocation policy
+
+- BULL: maximum 5 positions and 5% portfolio heat
+- SIDEWAY: maximum 3 positions and 4% portfolio heat
+- BEAR: no new positions
 
 Future versions may include
 
@@ -873,6 +940,11 @@ Current research modules include
 - Portfolio Backtesting
 - Trade Quality Diagnostics
 - Strategy Ablation Study
+- Research Integrity Baseline
+- Structural Entry / Exit Matrix
+- Candidate Ranking and Competition Analysis
+- Monthly Momentum Baseline
+- Breadth and Execution Robustness Testing
 
 Together, these modules form the core research workflow of Quant Stock.
 
@@ -1203,6 +1275,24 @@ Hybrid strategies generally exhibit more stable behavior across different market
 
 ---
 
+### Finding 8
+
+Candidate ranking changes the selected portfolio on only approximately 3% of trading days under the current constraints.
+
+---
+
+### Finding 9
+
+Replacement opportunities occur in only approximately 2% of candidate trades, so automatic position replacement is not justified under the current assumptions.
+
+---
+
+### Finding 10
+
+Trend Strategy V1 did not survive the current research-integrity baseline and is not used as the production entry policy. The validated paper policy currently uses Hybrid Trend Context.
+
+---
+
 # 🏆 Current Research and Execution Status
 
 | Module | Status |
@@ -1222,14 +1312,23 @@ Hybrid strategies generally exhibit more stable behavior across different market
 | Parameter Stability | ✅ |
 | Portfolio Stress Testing | ✅ |
 | Robustness Scoring | ✅ |
+| Research Integrity Baseline | ✅ |
+| Structural Entry / Exit Matrix | ✅ |
+| Candidate Ranking and Competition | ✅ |
+| Monthly Momentum Baseline | ✅ |
+| Breadth and Execution Robustness | ✅ |
 | Automated HTML Research Report | ✅ |
 | Telegram Scanner Notification | ✅ |
 | Paper Broker | ✅ |
 | Risk Guard | ✅ |
 | SQLite Paper Persistence | ✅ |
+| Next-Session Open Execution | ✅ |
+| ADTV20 Liquidity Guard | ✅ |
+| Regime Portfolio Exposure Policy | ✅ |
 | Paper Execution Telegram Summary | ✅ |
-| Order Exit Lifecycle | 🚧 |
-| Paper Performance Analytics | 📅 Planned |
+| Order Exit Lifecycle | ✅ |
+| Paper Performance Analytics | ✅ |
+| Forward Paper Validation | 🚧 |
 | Live Broker Integration | 📅 Planned |
 | Machine Learning Ranking | 📅 Planned |
 
@@ -1299,20 +1398,33 @@ Completed:
 - Duplicate-position prevention
 - Portfolio cash, equity, and exposure reporting
 
-## 🚧 Phase 4 — Validation & Paper Trading — Order Lifecycle and Paper Analytics
+## 🚧 Phase 4 — Paper Trading Validation and Analytics
 
-Current focus:
+Implemented:
 
 - Mark-to-market updates
 - Stop-loss and take-profit execution
-- Trailing stop handling
-- Exit-signal processing
+- Working ATR trailing stop with persisted ATR and highest-price state
+- Maximum holding period based on VNINDEX trading sessions
+- Pending-signal queue and next-session open execution
+- Missed-execution protection without late backfilling
+- ADTV20 order-liquidity cap using signal-date data
+- BULL, SIDEWAY, and BEAR portfolio-exposure policy
+- Exit-signal processing and position lifecycle persistence
 - Order and position reconciliation
 - Daily portfolio snapshots
 - Realized and unrealized performance analytics
 - Paper equity curve
-- Win rate, profit factor, expectancy, and drawdown reporting
-- Daily and weekly Telegram summaries
+- Win rate, profit factor, expectancy, drawdown, CAGR, Sharpe, Sortino, and Calmar reporting
+- Consolidated lifecycle, execution, and portfolio Telegram reporting
+
+Current validation focus:
+
+- Accumulate a sufficiently long forward paper-trading sample
+- Monitor execution drift, rejected orders, and missed sessions
+- Review lifecycle behavior across different market regimes
+- Validate portfolio analytics after enough trades and daily snapshots exist
+- Improve daily and weekly operational summaries where evidence justifies it
 
 ## 📅 Phase 5 — Controlled Live-Execution Preparation
 
@@ -1579,7 +1691,7 @@ Special thanks to everyone who contributes to open financial research.
 Current Version
 
 ```text
-v1.1 — Research Framework with Paper Execution Foundation
+v1.1 — Research Framework with Paper Execution and Lifecycle Validation
 ```
 
 Status
@@ -1591,7 +1703,7 @@ Active Development
 Primary Focus
 
 ```text
-Paper Trading Validation, Portfolio Analytics and Execution Monitoring
+Forward Paper Trading Validation, Portfolio Analytics and Execution Monitoring
 ```
 
 Current Stage
@@ -1612,7 +1724,7 @@ Every module—from data collection and indicator calculation to portfolio simul
 
 > **Research first. Evidence second. Execution last.**
 
-The framework will continue evolving toward a more robust, transparent, and reproducible environment, with near-term work focused on position lifecycle management, paper-performance analytics, reconciliation, and operational safety before live-broker integration is considered.
+The framework will continue evolving toward a more robust, transparent, and reproducible environment. The near-term priority is now to accumulate forward paper-trading evidence, monitor execution and lifecycle behavior, validate portfolio analytics over a meaningful sample, and strengthen operational safety before live-broker integration is considered.
 
 If this repository helps your own research or learning journey, consider giving it a ⭐ and sharing your ideas through discussions or pull requests.
 

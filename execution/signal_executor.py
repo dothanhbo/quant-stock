@@ -3,6 +3,7 @@ from __future__ import annotations
 import math
 import os
 import sqlite3
+from bisect import bisect_right
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
 from pathlib import Path
@@ -13,6 +14,14 @@ from backtesting.position_sizers import (
     FixedFractionSizer,
     PositionSizer,
     PositionSizingContext,
+)
+from backtesting.portfolio_heat import (
+    PortfolioHeat,
+    PositionRisk,
+)
+from backtesting.regime_policy import (
+    RegimePortfolioDecision,
+    RegimePortfolioPolicy,
 )
 from backtesting.trade import Trade
 from backtesting.transaction_cost import (
@@ -373,9 +382,16 @@ class PaperSignalExecutor:
         config: PaperExecutionConfig,
         *,
         position_sizer: PositionSizer | None = None,
+        regime_policy: (
+            RegimePortfolioPolicy | None
+        ) = None,
     ) -> None:
         self.config = config
         self.policy = TradingPolicy.from_env()
+        self.regime_policy = (
+            regime_policy
+            or RegimePortfolioPolicy()
+        )
 
         self.broker = PaperBroker(
             initial_cash=config.initial_cash,
@@ -467,6 +483,34 @@ class PaperSignalExecutor:
         ):
             symbol = str(signal.get("symbol", "")).strip().upper()
             try:
+                regime_decision = (
+                    self.regime_policy.resolve(
+                        signal.get("regime")
+                    )
+                )
+                regime_reason = (
+                    self._regime_entry_rejection_reason(
+                        regime_decision
+                    )
+                )
+
+                if regime_reason is not None:
+                    result.executions.append(
+                        PaperSignalExecution(
+                            symbol=symbol or "-",
+                            status="SKIPPED",
+                            position_sizer=(
+                                self.position_sizer.name
+                            ),
+                            signal_rank=signal_rank,
+                            signal_score=self._safe_float(
+                                signal.get("score")
+                            ),
+                            reason=regime_reason,
+                        )
+                    )
+                    continue
+
                 queued_signal = dict(signal)
                 queued_signal.setdefault(
                     "signal_rank",
@@ -687,6 +731,9 @@ class PaperSignalExecutor:
         execution_result = self.execute_signals(
             executable,
             report_date=resolved_date,
+            market_database_path=(
+                market_database_path
+            ),
         )
         for pending_id, execution in zip(
             executable_ids,
@@ -824,6 +871,9 @@ class PaperSignalExecutor:
         ],
         *,
         report_date: str | date | None = None,
+        market_database_path: (
+            str | Path | None
+        ) = None,
     ) -> PaperExecutionBatchResult:
         if not self.config.enabled:
             return PaperExecutionBatchResult(
@@ -843,6 +893,16 @@ class PaperSignalExecutor:
         resolved_report_date = (
             self._resolve_report_date(
                 inferred_report_date
+            )
+        )
+        market_sessions = (
+            self._load_market_sessions(
+                valuation_date=(
+                    resolved_report_date
+                ),
+                market_database_path=(
+                    market_database_path
+                ),
             )
         )
 
@@ -878,6 +938,32 @@ class PaperSignalExecutor:
                         reason=(
                             "Signal không có symbol."
                         ),
+                    )
+                )
+                continue
+
+            regime_decision = (
+                self.regime_policy.resolve(
+                    signal.get("regime")
+                )
+            )
+            regime_reason = (
+                self._regime_entry_rejection_reason(
+                    regime_decision
+                )
+            )
+
+            if regime_reason is not None:
+                executions.append(
+                    PaperSignalExecution(
+                        symbol=symbol,
+                        status="SKIPPED",
+                        position_sizer=(
+                            self.position_sizer.name
+                        ),
+                        signal_rank=signal_rank,
+                        signal_score=signal_score,
+                        reason=regime_reason,
                     )
                 )
                 continue
@@ -924,6 +1010,32 @@ class PaperSignalExecutor:
                         signal_rank=signal_rank,
                         signal_score=signal_score,
                         reason="Đã có vị thế paper.",
+                    )
+                )
+                continue
+
+            if (
+                regime_decision.max_positions
+                < self.config.maximum_open_positions
+                and self.broker
+                .get_portfolio_snapshot()
+                .open_positions
+                >= regime_decision.max_positions
+            ):
+                executions.append(
+                    PaperSignalExecution(
+                        symbol=symbol,
+                        status="SKIPPED",
+                        position_sizer=(
+                            self.position_sizer.name
+                        ),
+                        signal_rank=signal_rank,
+                        signal_score=signal_score,
+                        reason=(
+                            f"Regime {regime_decision.normalized_regime}: "
+                            "đã đạt giới hạn "
+                            f"{regime_decision.max_positions} vị thế."
+                        ),
                     )
                 )
                 continue
@@ -1048,6 +1160,43 @@ class PaperSignalExecutor:
                 )
                 continue
 
+            regime_heat_reason = (
+                self._regime_heat_rejection_reason(
+                    candidate=candidate,
+                    quantity=quantity,
+                    decision=regime_decision,
+                    portfolio_equity=(
+                        sizing_context.equity
+                    ),
+                )
+            )
+
+            if regime_heat_reason is not None:
+                executions.append(
+                    PaperSignalExecution(
+                        symbol=symbol,
+                        status="SKIPPED",
+                        quantity=quantity,
+                        requested_price=broker_price,
+                        position_sizer=(
+                            self.position_sizer.name
+                        ),
+                        estimated_position_pct=(
+                            estimated_position_pct
+                        ),
+                        estimated_risk_amount=(
+                            estimated_risk_amount
+                        ),
+                        estimated_risk_pct=(
+                            estimated_risk_pct
+                        ),
+                        signal_rank=signal_rank,
+                        signal_score=signal_score,
+                        reason=regime_heat_reason,
+                    )
+                )
+                continue
+
             daily_realized_pnl = sum(
                 trade.realized_pnl
                 for trade in self.broker.get_closed_trades()
@@ -1155,6 +1304,7 @@ class PaperSignalExecutor:
             self._build_position_summary(
                 position=position,
                 report_date=resolved_report_date,
+                market_sessions=market_sessions,
             )
             for position
             in self.broker.get_positions()
@@ -1185,6 +1335,110 @@ class PaperSignalExecutor:
             closed_today=closed_today,
             realized_pnl=snapshot.realized_pnl,
             unrealized_pnl=snapshot.unrealized_pnl,
+        )
+
+    @staticmethod
+    def _regime_entry_rejection_reason(
+        decision: RegimePortfolioDecision,
+    ) -> str | None:
+        if decision.normalized_regime == "UNKNOWN":
+            return (
+                "Không mở lệnh: signal thiếu hoặc "
+                "không nhận diện được market regime."
+            )
+
+        if not decision.allow_new_positions:
+            return (
+                f"Regime {decision.normalized_regime}: "
+                "policy không cho mở vị thế mới."
+            )
+
+        return None
+
+    def _regime_heat_rejection_reason(
+        self,
+        *,
+        candidate: Trade,
+        quantity: int,
+        decision: RegimePortfolioDecision,
+        portfolio_equity: float,
+    ) -> str | None:
+        heat_limit = (
+            decision.max_portfolio_heat_pct
+        )
+
+        if heat_limit is None:
+            return None
+
+        if (
+            candidate.stop_price is None
+            or candidate.stop_price <= 0
+        ):
+            return (
+                f"Regime {decision.normalized_regime}: "
+                "không tính được portfolio heat vì "
+                "signal thiếu stop hợp lệ."
+            )
+
+        position_risks: list[PositionRisk] = []
+
+        for position in self.broker.get_positions():
+            if position.quantity <= 0:
+                continue
+
+            lifecycle = (
+                self.broker
+                .get_position_lifecycle(
+                    position.symbol
+                )
+            )
+
+            if lifecycle is None:
+                return (
+                    f"Regime {decision.normalized_regime}: "
+                    "không tính được portfolio heat vì "
+                    f"{position.symbol} thiếu lifecycle."
+                )
+
+            position_risks.append(
+                PositionRisk.from_prices(
+                    symbol=position.symbol,
+                    entry_price=(
+                        lifecycle.entry_price
+                    ),
+                    stop_price=(
+                        lifecycle.stop_price
+                    ),
+                    quantity=position.quantity,
+                    portfolio_equity=(
+                        portfolio_equity
+                    ),
+                )
+            )
+
+        proposed_risk = PositionRisk.from_prices(
+            symbol=candidate.symbol,
+            entry_price=candidate.entry_price,
+            stop_price=candidate.stop_price,
+            quantity=quantity,
+            portfolio_equity=portfolio_equity,
+        )
+        heat_decision = PortfolioHeat(
+            max_heat_pct=heat_limit
+        ).decide(
+            portfolio_equity=portfolio_equity,
+            position_risks=position_risks,
+            proposed_risk=proposed_risk,
+        )
+
+        if heat_decision.allowed:
+            return None
+
+        return (
+            f"Regime {decision.normalized_regime}: "
+            "portfolio heat dự kiến "
+            f"{heat_decision.projected_heat_pct:.2f}% "
+            f"vượt giới hạn {heat_limit:.2f}%."
         )
 
     def _initialize_filled_position(
@@ -1246,6 +1500,10 @@ class PaperSignalExecutor:
                 float(fill.price),
                 float(broker_price),
             ),
+            trailing_atr_multiplier=(
+                self.policy
+                .trailing_atr_multiplier
+            ),
             maximum_holding_days=(
                 self.policy.maximum_holding_days
             ),
@@ -1272,6 +1530,7 @@ class PaperSignalExecutor:
         *,
         position,
         report_date: date,
+        market_sessions: list[date] | None = None,
     ) -> PaperPositionSummary:
         lifecycle = (
             self.broker.get_position_lifecycle(
@@ -1309,13 +1568,26 @@ class PaperSignalExecutor:
                     lifecycle.take_profit_price
                 )
 
-            holding_days = max(
-                0,
-                (
-                    report_date
-                    - lifecycle.entry_date
-                ).days,
-            )
+            if market_sessions:
+                holding_days = max(
+                    0,
+                    bisect_right(
+                        market_sessions,
+                        report_date,
+                    )
+                    - bisect_right(
+                        market_sessions,
+                        lifecycle.entry_date,
+                    ),
+                )
+            else:
+                holding_days = max(
+                    0,
+                    (
+                        report_date
+                        - lifecycle.entry_date
+                    ).days,
+                )
 
         return PaperPositionSummary(
             symbol=position.symbol,
@@ -1334,6 +1606,48 @@ class PaperSignalExecutor:
             ),
             holding_days=holding_days,
         )
+
+    @staticmethod
+    def _load_market_sessions(
+        *,
+        valuation_date: date,
+        market_database_path: (
+            str | Path | None
+        ),
+    ) -> list[date] | None:
+        database_path = Path(
+            market_database_path
+            or os.getenv(
+                "MARKET_DATABASE_PATH",
+                "data/market.db",
+            )
+        )
+
+        if not database_path.exists():
+            return None
+
+        try:
+            with sqlite3.connect(
+                database_path
+            ) as connection:
+                rows = connection.execute(
+                    """
+                    SELECT DISTINCT date(time)
+                    FROM prices
+                    WHERE symbol = 'VNINDEX'
+                      AND date(time) <= date(?)
+                    ORDER BY date(time)
+                    """,
+                    (valuation_date.isoformat(),),
+                ).fetchall()
+        except sqlite3.Error:
+            return None
+
+        return [
+            date.fromisoformat(str(row[0]))
+            for row in rows
+            if row[0] is not None
+        ] or None
 
     def _load_closed_trade_summaries(
         self,

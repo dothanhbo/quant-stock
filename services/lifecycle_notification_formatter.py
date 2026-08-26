@@ -97,7 +97,7 @@ def build_exited_positions_section(
                 f"{money(item.realized_pnl)} "
                 f"({pct(item.return_pct)})"
             ),
-            f"Thời gian nắm giữ: {item.holding_days} ngày",
+            f"Thời gian nắm giữ: {item.holding_days} phiên",
             f"Lý do thoát: <b>{html.escape(reason)}</b>",
             "",
         ])

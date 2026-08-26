@@ -36,6 +36,7 @@ class TradingPolicy:
     execution_timing: ExecutionTiming = "next_open"
     stop_atr_multiplier: float = 2.0
     target_atr_multiplier: float = 5.0
+    trailing_atr_multiplier: float = 2.0
     maximum_holding_days: int = 30
     position_sizer: str = "atr_risk"
     risk_per_trade_pct: float = 1.0
@@ -52,6 +53,10 @@ class TradingPolicy:
             ).strip().lower(),
             stop_atr_multiplier=_float("TRADING_STOP_ATR_MULTIPLIER", 2.0),
             target_atr_multiplier=_float("TRADING_TARGET_ATR_MULTIPLIER", 5.0),
+            trailing_atr_multiplier=_float(
+                "TRADING_TRAILING_ATR_MULTIPLIER",
+                2.0,
+            ),
             maximum_holding_days=_int("TRADING_MAX_HOLDING_DAYS", 30),
             position_sizer=os.getenv(
                 "PAPER_POSITION_SIZER", "atr_risk"
@@ -70,7 +75,11 @@ class TradingPolicy:
             raise ValueError("TRADING_EXIT_MODEL hiện chỉ hỗ trợ atr.")
         if self.execution_timing != "next_open":
             raise ValueError("Production chỉ hỗ trợ execution next_open.")
-        if self.stop_atr_multiplier <= 0 or self.target_atr_multiplier <= 0:
+        if (
+            self.stop_atr_multiplier <= 0
+            or self.target_atr_multiplier <= 0
+            or self.trailing_atr_multiplier <= 0
+        ):
             raise ValueError("ATR multipliers phải lớn hơn 0.")
         if self.maximum_holding_days <= 0:
             raise ValueError("TRADING_MAX_HOLDING_DAYS phải lớn hơn 0.")

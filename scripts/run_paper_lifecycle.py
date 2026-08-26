@@ -132,6 +132,9 @@ def main() -> PaperExecutionBatchResult | None:
         order_manager=order_manager,
         exit_engine=ExitEngine(),
         market_database_path=market_database_path,
+        default_trailing_atr_multiplier=(
+            policy.trailing_atr_multiplier
+        ),
     )
 
     result = manager.run()

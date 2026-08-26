@@ -46,6 +46,7 @@ class ExitEngine:
         state: PositionExitState,
         bar: ExitBar,
         exit_signal: bool = False,
+        holding_sessions: int | None = None,
     ) -> ExitDecision:
         self._validate_symbols(
             state=state,
@@ -61,10 +62,22 @@ class ExitEngine:
                 "entry_date."
             )
 
+        if (
+            holding_sessions is not None
+            and holding_sessions < 0
+        ):
+            raise ValueError(
+                "holding_sessions không được âm."
+            )
+
         holding_days = (
-            bar.valuation_date
-            - state.entry_date
-        ).days
+            holding_sessions
+            if holding_sessions is not None
+            else (
+                bar.valuation_date
+                - state.entry_date
+            ).days
+        )
 
         highest_price = max(
             state.current_highest_price,
@@ -284,7 +297,7 @@ class ExitEngine:
                 ),
                 holding_days=holding_days,
                 details=(
-                    "Đã đạt số ngày nắm giữ tối đa."
+                    "Đã đạt số phiên nắm giữ tối đa."
                 ),
             )
 

@@ -105,7 +105,7 @@ def _build_closed_trade_lines(
         ),
         (
             "Thời gian nắm giữ: "
-            f"{trade.holding_days} ngày"
+            f"{trade.holding_days} phiên"
         ),
         (
             "Lý do thoát: "
@@ -119,7 +119,7 @@ def _build_position_lines(
     position: PaperPositionSummary,
 ) -> list[str]:
     holding_days = (
-        f"{position.holding_days} ngày"
+        f"{position.holding_days} phiên"
         if position.holding_days is not None
         else "N/A"
     )
