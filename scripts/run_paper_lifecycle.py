@@ -113,7 +113,7 @@ def main() -> PaperExecutionBatchResult | None:
                 ),
                 maximum_open_positions=env_int(
                     "PAPER_MAX_OPEN_POSITIONS",
-                    10,
+                    5,
                 ),
                 maximum_daily_loss_pct=env_float(
                     "PAPER_MAX_DAILY_LOSS_PCT",

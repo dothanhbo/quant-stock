@@ -5,7 +5,7 @@ import math
 import sqlite3
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 from backtesting.exit import ExitResult
 from backtesting.trade import ExitExecution, ExitReason, Trade
 from backtesting.exit_models import (
@@ -82,6 +82,8 @@ class BacktestConfig:
     sell_commission_pct: float = 0.15
     sell_tax_pct: float = 0.10
     ranking_method: str = "first_come"
+    # Convert raw market-db prices to the VND unit used by cash.
+    market_price_scale: float = 1.0
 
     def validate(self) -> None:
         if self.stop_loss_pct <= 0:
@@ -508,10 +510,14 @@ def generate_candidate_trades(
             exit_model=exit_model,
         )
 
+        price_scale = float(config.market_price_scale)
+
         trade = Trade(
             symbol=symbol,
             entry_date=exit_info.entry_date,
-            entry_price=exit_info.entry_price,
+            entry_price=(
+                exit_info.entry_price * price_scale
+            ),
             quantity=1,
             signal_score=_safe_float(
                 evaluation.get(
@@ -542,7 +548,7 @@ def generate_candidate_trades(
                default=None,
             ),
             stop_price=_safe_float(
-                exit_info.stop_price,
+                exit_info.initial_stop_price * price_scale,
                 default=None,
             ),
 
@@ -566,10 +572,15 @@ def generate_candidate_trades(
 
         trade.close(
             exit_date=exit_info.exit_date,
-            exit_price=exit_info.exit_price,
+            exit_price=(
+                exit_info.exit_price * price_scale
+            ),
             reason=exit_info.exit_reason,
             execution=exit_info.execution,
         )
+
+        if trade.atr is not None:
+            trade.atr *= price_scale
 
         trades.append(trade)
         
