@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from datetime import datetime
+from datetime import date, datetime
 from time import perf_counter
 from typing import Callable
 
@@ -70,12 +70,16 @@ class DailyPipeline:
             [],
             object,
         ],
+        get_market_date: Callable[[], str | None] | None = None,
+        get_today: Callable[[], date] = date.today,
     ) -> None:
         self.update_market_data = (
             update_market_data
         )
         self.run_lifecycle = run_lifecycle
         self.run_scanner = run_scanner
+        self.get_market_date = get_market_date
+        self.get_today = get_today
 
     def run(
         self,
@@ -132,6 +136,27 @@ class DailyPipeline:
                 )
             )
 
+        # Sau khi update, chỉ chạy lifecycle/scanner khi market DB đã có
+        # phiên của ngày hiện tại. Nhờ vậy weekend/ngày lễ/nghỉ bù được
+        # phát hiện từ dữ liệu thực tế thay vì hard-code calendar.
+        # Các lệnh --skip-update giữ nguyên hành vi vận hành thủ công cũ.
+        if (
+            not skip_update
+            and self.get_market_date is not None
+        ):
+            session_stage = self._check_current_market_session()
+            result.stages.append(session_stage)
+
+            if session_stage.warning:
+                result.finished_at = datetime.now()
+                self._print_summary(result)
+                return result
+
+            if not session_stage.success:
+                result.finished_at = datetime.now()
+                self._print_summary(result)
+                return result
+
         if not skip_lifecycle:
             lifecycle_stage = (
                 self._run_stage(
@@ -185,6 +210,49 @@ class DailyPipeline:
             result
         )
         return result
+
+
+    def _check_current_market_session(self) -> PipelineStageResult:
+        started = perf_counter()
+
+        try:
+            latest_market_date = self.get_market_date()
+            today = self.get_today().isoformat()
+
+            if latest_market_date != today:
+                latest_text = latest_market_date or "không có"
+                warning = (
+                    f"Không có phiên thị trường mới cho {today} "
+                    f"(market DB mới nhất: {latest_text}). "
+                    "Bỏ qua lifecycle và scanner."
+                )
+                print(f"\n⏭️ {warning}")
+                return PipelineStageResult(
+                    name="Trading Session Guard",
+                    success=True,
+                    duration_seconds=perf_counter() - started,
+                    warning=warning,
+                )
+
+            print(
+                f"\n✅ Trading Session Guard: "
+                f"market DB đã có phiên {today}."
+            )
+            return PipelineStageResult(
+                name="Trading Session Guard",
+                success=True,
+                duration_seconds=perf_counter() - started,
+            )
+
+        except KeyboardInterrupt:
+            raise
+        except Exception as error:
+            return PipelineStageResult(
+                name="Trading Session Guard",
+                success=False,
+                duration_seconds=perf_counter() - started,
+                error=f"{type(error).__name__}: {error}",
+            )
 
     def _run_data_stage(
         self,

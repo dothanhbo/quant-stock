@@ -1,3 +1,5 @@
+from datetime import date
+
 from app.daily_pipeline import (
     DailyPipeline,
 )
@@ -186,6 +188,11 @@ def test_run_daily_passes_pending_result_to_scanner(
         ),
     )
     monkeypatch.setattr(
+        run_daily,
+        "get_market_date",
+        lambda: date.today().isoformat(),
+    )
+    monkeypatch.setattr(
         "sys.argv",
         ["run_daily"],
     )
@@ -194,3 +201,80 @@ def test_run_daily_passes_pending_result_to_scanner(
     assert scanner_inputs == [
         pending_result
     ]
+
+
+def test_pipeline_skips_non_trading_day_after_update() -> None:
+    calls: list[str] = []
+
+    def update():
+        calls.append("update")
+        return (101, [])
+
+    def lifecycle():
+        calls.append("lifecycle")
+
+    def scan():
+        calls.append("scan")
+
+    result = DailyPipeline(
+        update_market_data=update,
+        run_lifecycle=lifecycle,
+        run_scanner=scan,
+        get_market_date=lambda: "2026-08-31",
+        get_today=lambda: date(2026, 9, 2),
+    ).run()
+
+    assert result.success
+    assert calls == ["update"]
+    assert result.stages[-1].name == "Trading Session Guard"
+    assert "Bỏ qua lifecycle và scanner" in result.stages[-1].warning
+
+
+def test_pipeline_runs_when_market_has_today_session() -> None:
+    calls: list[str] = []
+
+    def update():
+        calls.append("update")
+        return (101, [])
+
+    def lifecycle():
+        calls.append("lifecycle")
+
+    def scan():
+        calls.append("scan")
+
+    result = DailyPipeline(
+        update_market_data=update,
+        run_lifecycle=lifecycle,
+        run_scanner=scan,
+        get_market_date=lambda: "2026-09-03",
+        get_today=lambda: date(2026, 9, 3),
+    ).run()
+
+    assert result.success
+    assert calls == ["update", "lifecycle", "scan"]
+
+
+def test_pipeline_skip_update_preserves_manual_partial_run() -> None:
+    calls: list[str] = []
+
+    def update():
+        calls.append("update")
+        return (101, [])
+
+    def lifecycle():
+        calls.append("lifecycle")
+
+    def scan():
+        calls.append("scan")
+
+    result = DailyPipeline(
+        update_market_data=update,
+        run_lifecycle=lifecycle,
+        run_scanner=scan,
+        get_market_date=lambda: "2026-08-31",
+        get_today=lambda: date(2026, 9, 2),
+    ).run(skip_update=True)
+
+    assert result.success
+    assert calls == ["lifecycle", "scan"]

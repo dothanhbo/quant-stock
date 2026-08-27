@@ -71,6 +71,14 @@ def update_market_data(
     )
 
 
+def get_market_date() -> str | None:
+    from core.database import (
+        get_reference_market_date,
+    )
+
+    return get_reference_market_date()
+
+
 def run_paper_lifecycle():
     from scripts.run_paper_lifecycle import (
         main,
@@ -121,6 +129,9 @@ def main() -> int:
         ),
         run_scanner=(
             scanner_stage
+        ),
+        get_market_date=(
+            get_market_date
         ),
     )
 
