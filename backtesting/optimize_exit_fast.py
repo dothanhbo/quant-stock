@@ -273,6 +273,7 @@ def replay_symbol(
             price_df,
             entry_index,
             config,
+            initial_level_row=price_df.iloc[signal_index],
         )
 
         trades.append(

@@ -208,13 +208,22 @@ def _simulate_exit(
     entry_index: int,
     config: BacktestConfig,
     exit_model: BaseExitModel = DEFAULT_EXIT_MODEL,
+    initial_level_row: Any | None = None,
 ) -> ExitResult:
     entry_row = price_df.iloc[entry_index]
     entry_price = float(entry_row["open"])
 
+    # Freeze initial ATR-based risk levels using signal-time information.
+    # Actual execution remains the T+1 open.
+    level_row = (
+        entry_row
+        if initial_level_row is None
+        else initial_level_row
+    )
+
     stop_price, target_price = exit_model.calculate_levels(
         entry_price=entry_price,
-        entry_row=entry_row,
+        entry_row=level_row,
         config=config,
     )
 
@@ -236,7 +245,7 @@ def _simulate_exit(
     highest_price = entry_price
 
     final_index = min(
-        entry_index + config.max_holding_days - 1,
+        entry_index + config.max_holding_days,
         len(price_df) - 1,
     )
 
@@ -508,6 +517,7 @@ def generate_candidate_trades(
             entry_index=entry_index,
             config=config,
             exit_model=exit_model,
+            initial_level_row=latest,
         )
 
         price_scale = float(config.market_price_scale)
