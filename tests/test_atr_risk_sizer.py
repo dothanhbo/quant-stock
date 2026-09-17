@@ -167,3 +167,30 @@ def test_atr_risk_sizer_rounds_down_to_lot_size():
         sizer.calculate_quantity(context)
         == 100
     )
+
+def test_atr_risk_sizer_prefers_candidate_stop():
+    sizer = AtrRiskSizer(
+        risk_per_trade_pct=1.0,
+        atr_stop_multiplier=2.0,
+        max_position_size_pct=100.0,
+        use_candidate_stop=True,
+    )
+
+    candidate = create_candidate(
+        entry_price=20.0,
+        atr=1.0,
+    )
+    candidate.stop_price = 15.0
+
+    context = PositionSizingContext(
+        candidate=candidate,
+        cash=100_000_000,
+        equity=100_000_000,
+        lot_size=100,
+        transaction_cost_config=zero_cost_config(),
+    )
+
+    # Candidate stop distance = 20 - 15 = 5.
+    # Risk budget = 1,000,000.
+    # Quantity = 1,000,000 / 5 = 200,000.
+    assert sizer.calculate_quantity(context) == 200_000

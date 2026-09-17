@@ -1,8 +1,10 @@
-"""Single source of truth for production and research trading rules."""
-
 from __future__ import annotations
 
 import os
+from dataclasses import dataclass
+from typing import Literal
+
+from .strategy_config import StrategyConfig
 from dataclasses import dataclass
 from typing import Literal
 
@@ -94,7 +96,10 @@ class TradingPolicy:
 
     def build_entry_model(self) -> BaseStrategy:
         if self.entry_model == "hybrid":
-            return HybridTrendDonchianEntryModel(mode="trend_context")
+            return HybridTrendDonchianEntryModel(
+                mode="trend_context",
+                risk_calculator=self.calculate_levels,
+            )
         return TrendStrategyV1()
 
     def calculate_levels(self, *, entry_price: float, atr: float) -> tuple[float, float]:
@@ -115,3 +120,11 @@ class TradingPolicy:
             max_position_size_pct=maximum_position_pct,
             use_candidate_stop=True,
         )
+
+def apply_strategy_config(config: StrategyConfig) -> None:
+    os.environ["TRADING_STOP_ATR_MULTIPLIER"] = str(
+        config.stop_atr_multiplier
+    )
+    os.environ["TRADING_TARGET_ATR_MULTIPLIER"] = str(
+        config.target_atr_multiplier
+    )

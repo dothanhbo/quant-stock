@@ -525,6 +525,7 @@ def generate_candidate_trades(
         trade = Trade(
             symbol=symbol,
             entry_date=exit_info.entry_date,
+            signal_date=signal_date.to_pydatetime(),
             entry_price=(
                 exit_info.entry_price * price_scale
             ),

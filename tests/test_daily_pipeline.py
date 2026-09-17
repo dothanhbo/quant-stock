@@ -175,7 +175,7 @@ def test_run_daily_passes_pending_result_to_scanner(
     )
     monkeypatch.setattr(
         run_daily,
-        "run_paper_lifecycle",
+        "run_paper_v2_lifecycle",
         lambda: pending_result,
     )
     monkeypatch.setattr(

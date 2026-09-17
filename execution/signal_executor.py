@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from dataclasses import replace
 import math
 import os
 import sqlite3
@@ -99,6 +100,7 @@ class PaperExecutionConfig:
     position_sizer: str = "atr_risk"
     risk_per_trade_pct: float = 1.0
     atr_stop_multiplier: float = 2.0
+    target_atr_multiplier: float = 5.0
     fixed_fraction_pct: float = 10.0
 
     maximum_orders_per_scan: int = 3
@@ -143,6 +145,10 @@ class PaperExecutionConfig:
             atr_stop_multiplier=_read_float(
                 "PAPER_ATR_STOP_MULTIPLIER",
                 2.0,
+            ),
+            target_atr_multiplier=_read_float(
+                "PAPER_ATR_TARGET_MULTIPLIER",
+                5.0,
             ),
             fixed_fraction_pct=_read_float(
                 "PAPER_FIXED_FRACTION_PCT",
@@ -278,6 +284,7 @@ class PaperSignalExecution:
     signal_rank: int | None = None
     signal_score: float | None = None
     reason: str = ""
+    breadth_exposure_multiplier: float = 1.0
 
 
 @dataclass(frozen=True, slots=True)
@@ -366,15 +373,6 @@ class PaperExecutionBatchResult:
 
 
 class PaperSignalExecutor:
-    """
-    Execute scanner signals through the same PositionSizer interface
-    used by the portfolio backtester.
-
-    Scanner prices are stored in thousand VND. Broker and sizing cash
-    calculations use actual VND, so price-like inputs are converted once
-    at this boundary.
-    """
-
     PRICE_SCALE = 1000.0
 
     def __init__(
@@ -387,7 +385,14 @@ class PaperSignalExecutor:
         ) = None,
     ) -> None:
         self.config = config
-        self.policy = TradingPolicy.from_env()
+        env_policy = TradingPolicy.from_env()
+
+        self.policy = replace(
+            env_policy,
+            stop_atr_multiplier=config.atr_stop_multiplier,
+            target_atr_multiplier=config.target_atr_multiplier,
+        )
+
         self.regime_policy = (
             regime_policy
             or RegimePortfolioPolicy()
@@ -1102,6 +1107,18 @@ class PaperSignalExecutor:
                 )
             )
 
+            breadth_exposure_multiplier = self._read_positive_float(
+                signal,
+                ("breadth_exposure_multiplier",),
+            ) or 1.0
+
+            quantity = int(
+                quantity * breadth_exposure_multiplier
+            )
+            quantity = (
+                quantity // self.config.lot_size
+            ) * self.config.lot_size
+
             quantity = self._clip_quantity_to_exposure(
                 quantity=quantity,
                 price=broker_price,
@@ -1285,6 +1302,7 @@ class PaperSignalExecutor:
                     estimated_position_pct=(
                         estimated_position_pct
                     ),
+                    breadth_exposure_multiplier=breadth_exposure_multiplier,
                     estimated_risk_amount=(
                         estimated_risk_amount
                     ),

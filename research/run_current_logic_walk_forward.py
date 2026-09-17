@@ -77,6 +77,7 @@ def main() -> None:
 
     backtest_kwargs = {
         "symbols": symbols,
+            "db_path": "data/market.db",
         "max_holding_days": policy.maximum_holding_days,
         "entry_model": policy.build_entry_model(),
         "exit_model": build_exit_model(
@@ -118,9 +119,11 @@ def main() -> None:
     output_dir.mkdir(parents=True, exist_ok=True)
     folds_path = output_dir / "folds.csv"
     summary_path = output_dir / "summary.csv"
+    trades_path = output_dir / "trade_level_oos.csv"
     result.save(
         folds_path=str(folds_path),
         summary_path=str(summary_path),
+        test_trades_path=str(trades_path),
     )
 
     print(f"Đã xuất: {folds_path}")

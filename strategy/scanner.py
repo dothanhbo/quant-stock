@@ -28,6 +28,7 @@ from services.telegram_client import TelegramClient
 from strategy.cache import get_indicators_cached
 from strategy.filters import REQUIRED_INDICATORS, trend_passes
 from strategy.market_regime import get_market_regime
+from strategy.market_state import get_market_state
 from strategy.relative_strength import calculate_relative_strength
 from strategy.trend_strategy_v1 import TrendStrategyV1
 from core.universe import get_vn100_symbols
@@ -94,6 +95,7 @@ def evaluate_prepared_row(
     symbol: str,
     latest: pd.Series,
     market_config: dict,
+    market_state: dict | None = None,
     entry_model: BaseStrategy | None = None,
 ) -> dict:
     entry_model = (
@@ -173,6 +175,14 @@ def evaluate_prepared_row(
         "execution_timing": TRADING_POLICY.execution_timing,
     })
 
+    if market_state is not None:
+        decision.update({
+            "market_state": market_state["market_state"],
+            "breadth_ema50_pct": round(float(market_state["breadth_ema50_pct"]), 4),
+            "breadth_ema50_change_10d": round(float(market_state["breadth_ema50_change_10d"]), 4),
+            "breadth_universe": int(market_state["breadth_universe"]),
+        })
+
     return {
         **base,
         **decision,
@@ -242,6 +252,7 @@ def evaluate_symbol(
     reference_date: Optional[str] = None,
     end_date=None,
     market_config: Optional[dict] = None,
+    market_state: Optional[dict] = None,
     entry_model: BaseStrategy | None = None,
 ) -> dict:
     entry_model = (
@@ -336,10 +347,14 @@ def evaluate_symbol(
         "Relative_Strength_20D"
     ] = rs["relative_strength"]
 
+    if market_state is None:
+        market_state = get_market_state(date_text)
+
     return evaluate_prepared_row(
         symbol=symbol,
         latest=prepared_latest,
         market_config=market_config,
+        market_state=market_state,
         entry_model=entry_model,
     )
 
@@ -369,6 +384,7 @@ def scan_all_symbols(market_config=None):
     if not symbols:
         raise RuntimeError("Không lấy được snapshot VN100; dừng scan để tránh sai universe.")
     reference_date = get_reference_market_date()
+    market_state = get_market_state(reference_date, symbols=symbols)
     latest_dates = get_symbol_latest_dates()
     fresh_symbols = [symbol for symbol in symbols if latest_dates.get(symbol) == reference_date]
     stale_symbols = [
@@ -398,6 +414,7 @@ def scan_all_symbols(market_config=None):
                 symbol,
                 reference_date=reference_date,
                 market_config=market_config,
+                market_state=market_state,
             )
             evaluations.append(evaluation)
             reject_stats[evaluation["reason"]] += 1
@@ -428,6 +445,7 @@ def scan_all_symbols(market_config=None):
         "watchlist": watchlist,
         "evaluations": evaluations,
         "market_config": market_config,
+        "market_state": market_state,
     }
     return signals, scan_stats
 
@@ -437,6 +455,7 @@ def run_scan(
     pending_execution_result: (
         PaperExecutionBatchResult | None
     ) = None,
+    result_processor=None,
 ) -> tuple[list[dict], dict]:
     """Run the production scan, persist passed signals and notify Telegram."""
     market_config = get_market_regime()
@@ -450,6 +469,10 @@ def run_scan(
     print(f"RS tối thiểu: {market_config['min_relative_strength']:+.2f}%")
 
     results, scan_stats = scan_all_symbols(market_config=market_config)
+
+    if result_processor is not None:
+        results, scan_stats = result_processor(results, scan_stats)
+
     watchlist = scan_stats["watchlist"]
     print_scan_results(
         results,

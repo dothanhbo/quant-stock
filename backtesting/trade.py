@@ -28,6 +28,10 @@ class Trade:
     quantity: int
     quantity_override: int | None = None
 
+    # Date when the signal/decision was generated (T close).
+    # Kept separate from entry_date (execution date, typically T+1).
+    signal_date: datetime | None = None
+
     # ---------- Signal metadata ----------
     signal_score: float | None = None
     relative_strength: float | None = None
@@ -149,6 +153,7 @@ class Trade:
         return {
             "symbol": self.symbol,
             "entry_date": self.entry_date,
+            "signal_date": self.signal_date,
             "entry_price": self.entry_price,
             "quantity": self.quantity,
             "quantity_override": self.quantity_override,

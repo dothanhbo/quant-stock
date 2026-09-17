@@ -79,8 +79,9 @@ def get_market_date() -> str | None:
     return get_reference_market_date()
 
 
-def run_paper_lifecycle():
-    from scripts.run_paper_lifecycle import (
+# Q70_FROZEN_DAILY_PATCH
+def run_paper_v2_lifecycle():
+    from scripts.run_paper_v2_lifecycle import (
         main,
     )
 
@@ -90,6 +91,9 @@ def run_paper_lifecycle():
 def run_strategy_scanner(
     pending_execution_result=None,
 ):
+    from strategy.paper_v2_scanner import (
+        PaperV2Scanner,
+    )
     from strategy.scanner import (
         run_scan,
     )
@@ -97,9 +101,13 @@ def run_strategy_scanner(
     return run_scan(
         pending_execution_result=(
             pending_execution_result
-        )
+        ),
+        result_processor=(
+            PaperV2Scanner(
+                threshold=0.70
+            ).process
+        ),
     )
-
 
 def main() -> int:
     load_dotenv()
@@ -110,8 +118,9 @@ def main() -> int:
     def lifecycle_stage():
         nonlocal pending_execution_result
         pending_execution_result = (
-            run_paper_lifecycle()
+            run_paper_v2_lifecycle()
         )
+
 
     def scanner_stage():
         return run_strategy_scanner(
@@ -119,6 +128,7 @@ def main() -> int:
                 pending_execution_result
             )
         )
+
 
     pipeline = DailyPipeline(
         update_market_data=(

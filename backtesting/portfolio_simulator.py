@@ -866,6 +866,7 @@ class PortfolioSimulator:
             opened_trade = (
                 self.portfolio.open_position(
                     symbol=candidate.symbol,
+                    signal_date=candidate.signal_date,
                     entry_date=(
                         candidate.entry_date
                     ),

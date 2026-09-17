@@ -69,6 +69,7 @@ class Portfolio:
         risk_per_share: float | None = None,
         risk_amount: float | None = None,
         risk_pct: float | None = None,
+        signal_date: datetime | None = None,
     ) -> Trade:
         if not symbol or not symbol.strip():
             raise ValueError("symbol must not be empty")
@@ -111,6 +112,7 @@ class Portfolio:
         trade = Trade(
             symbol=symbol,
             entry_date=entry_date,
+            signal_date=signal_date,
             entry_price=float(
                 effective_entry_price
             ),

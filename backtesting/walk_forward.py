@@ -64,12 +64,14 @@ class WalkForwardFold:
 class WalkForwardResult:
     folds: pd.DataFrame
     summary: dict[str, Any]
+    test_trades: pd.DataFrame
 
     def save(
         self,
         *,
         folds_path: str,
         summary_path: str,
+        test_trades_path: str | None = None,
     ) -> None:
         self.folds.to_csv(
             folds_path,
@@ -84,6 +86,13 @@ class WalkForwardResult:
             index=False,
             encoding="utf-8-sig",
         )
+
+        if test_trades_path is not None:
+            self.test_trades.to_csv(
+                test_trades_path,
+                index=False,
+                encoding="utf-8-sig",
+            )
 
 
 def _safe_float(
@@ -236,12 +245,13 @@ def run_walk_forward(
 
     rows: list[dict[str, Any]] = []
     test_equity_curves: list[pd.DataFrame] = []
+    all_test_trades: list[dict[str, Any]] = []
 
     current_capital = float(
         initial_capital
     )
 
-    for fold in folds:
+    for fold_number, fold in enumerate(folds, start=1):
         print()
         print("=" * 90)
         print(
@@ -295,6 +305,11 @@ def run_walk_forward(
                 verbose=False,
             )
         )
+
+        for trade in test_trades:
+            trade_row = trade.to_dict()
+            trade_row["fold"] = fold_number
+            all_test_trades.append(trade_row)
 
         if isinstance(test_equity, pd.DataFrame):
             test_equity_curves.append(test_equity.copy())
@@ -538,9 +553,12 @@ def run_walk_forward(
         ),
     }
 
+    test_trades_df = pd.DataFrame(all_test_trades)
+
     return WalkForwardResult(
         folds=folds_df,
         summary=summary,
+        test_trades=test_trades_df,
     )
 
 

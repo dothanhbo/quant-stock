@@ -77,6 +77,7 @@ def build_executor(
         initial_cash=initial_cash,
         position_sizer="fixed_fraction",
         fixed_fraction_pct=fixed_fraction_pct,
+        atr_stop_multiplier=2.0,
         maximum_position_pct=20.0,
         maximum_gross_exposure_pct=80.0,
         maximum_open_positions=10,

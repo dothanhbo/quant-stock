@@ -7,6 +7,7 @@ from dotenv import load_dotenv
 
 from execution.exit_engine import (
     ExitEngine,
+    ExitEngineConfig,
 )
 from execution.lifecycle_manager import (
     PaperLifecycleManager,
@@ -127,13 +128,24 @@ def main() -> PaperExecutionBatchResult | None:
         ),
     )
 
+    v2_disable_trailing = (
+        os.getenv("PAPER_V2_DISABLE_TRAILING", "").lower()
+        == "true"
+    )
+
     manager = PaperLifecycleManager(
         broker=broker,
         order_manager=order_manager,
-        exit_engine=ExitEngine(),
+        exit_engine=ExitEngine(
+            ExitEngineConfig(
+                enable_trailing_stop=not v2_disable_trailing,
+            )
+        ),
         market_database_path=market_database_path,
         default_trailing_atr_multiplier=(
-            policy.trailing_atr_multiplier
+            None
+            if v2_disable_trailing
+            else policy.trailing_atr_multiplier
         ),
     )
 

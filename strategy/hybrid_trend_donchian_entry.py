@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from typing import Literal
+from typing import Callable, Literal
 
 import pandas as pd
 
@@ -65,6 +65,7 @@ class HybridTrendDonchianEntryModel(
         donchian_weight: float = 0.6,
         min_hybrid_score: int = 60,
         use_regime_thresholds: bool = True,
+        risk_calculator: Callable[[float, float], tuple[float, float]] | None = None,
         require_hybrid_score: bool = True,
     ) -> None:
         supported_modes = {
@@ -145,6 +146,8 @@ class HybridTrendDonchianEntryModel(
         self.min_hybrid_score = int(
             min_hybrid_score
         )
+
+        self.risk_calculator = risk_calculator
 
     @property
     def name(
@@ -361,12 +364,35 @@ class HybridTrendDonchianEntryModel(
             )
         )
 
-        risk = calculate_risk_levels(
-            latest=latest,
-            market_config=(
-                market_config
-            ),
-        )
+        if self.risk_calculator is not None:
+            stop_loss, take_profit = self.risk_calculator(
+                entry_price=float(latest["close"]),
+                atr=float(latest["ATR14"]),
+            )
+            entry = float(latest["close"])
+            risk = {
+                "entry": round(entry, 2),
+                "stop_loss": round(stop_loss, 2),
+                "take_profit": round(take_profit, 2),
+                "stop_loss_pct": round(
+                    (stop_loss / entry - 1) * 100,
+                    2,
+                ),
+                "take_profit_pct": round(
+                    (take_profit / entry - 1) * 100,
+                    2,
+                ),
+                "rr_ratio": round(
+                    (take_profit - entry)
+                    / (entry - stop_loss),
+                    2,
+                ),
+            }
+        else:
+            risk = calculate_risk_levels(
+                latest=latest,
+                market_config=market_config,
+            )
 
         decision = {
             "status": status,

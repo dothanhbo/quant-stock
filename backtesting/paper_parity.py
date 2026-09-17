@@ -62,41 +62,26 @@ class BacktestPaperParityConfig:
         cls,
         paper: PaperExecutionConfig,
         *,
-        sell_tax_rate: float = 0.0,
+        sell_tax_rate: float | None = None,
     ) -> "BacktestPaperParityConfig":
+        if sell_tax_rate is None:
+            sell_tax_rate = paper.sell_tax_rate
+
         return cls(
             initial_cash=paper.initial_cash,
             position_sizer=paper.position_sizer,
-            risk_per_trade_pct=(
-                paper.risk_per_trade_pct
-            ),
-            atr_stop_multiplier=(
-                paper.atr_stop_multiplier
-            ),
-            fixed_fraction_pct=(
-                paper.fixed_fraction_pct
-            ),
-            lot_size=paper.lot_size,
-            commission_rate=(
-                paper.commission_rate
-            ),
-            slippage_bps=paper.slippage_bps,
-            maximum_position_pct=(
-                paper.maximum_position_pct
-            ),
-            maximum_gross_exposure_pct=(
-                paper.maximum_gross_exposure_pct
-            ),
-            maximum_open_positions=(
-                paper.maximum_open_positions
-            ),
-            maximum_daily_loss_pct=(
-                paper.maximum_daily_loss_pct
-            ),
-            minimum_cash_buffer_pct=(
-                paper.minimum_cash_buffer_pct
-            ),
+            risk_per_trade_pct=paper.risk_per_trade_pct,
+            fixed_fraction_pct=paper.fixed_fraction_pct,
+            maximum_position_pct=paper.maximum_position_pct,
+            maximum_gross_exposure_pct=paper.maximum_gross_exposure_pct,
+            maximum_open_positions=paper.maximum_open_positions,
+            maximum_daily_loss_pct=paper.maximum_daily_loss_pct,
+            minimum_cash_buffer_pct=paper.minimum_cash_buffer_pct,
             sell_tax_rate=sell_tax_rate,
+            atr_stop_multiplier=paper.atr_stop_multiplier,
+            lot_size=paper.lot_size,
+            commission_rate=paper.commission_rate,
+            slippage_bps=paper.slippage_bps,
         )
 
     @classmethod
