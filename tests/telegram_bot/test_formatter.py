@@ -33,7 +33,7 @@ def test_build_symbol_analysis_message_for_passed_signal() -> None:
         evaluation,
         market_config={"regime": "SIDEWAY"},
     )
-    assert "FPT — QUICK ANALYSIS" in message
+    assert "FPT — QUANT ANALYSIS" in message
     assert "PASSED" in message
     assert "82/100" in message
     assert "Donchian" in message

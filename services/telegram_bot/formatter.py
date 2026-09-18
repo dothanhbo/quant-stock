@@ -46,7 +46,7 @@ def build_symbol_analysis_message(
         )
         return "\n".join(
             [
-                f"📊 <b>{symbol} — QUICK ANALYSIS</b>",
+                f"📊 <b>{symbol} — QUANT ANALYSIS</b>",
                 "",
                 f"{status_icon} <b>{status}</b>",
                 f"Lý do: {escape(reason)}",
@@ -58,12 +58,18 @@ def build_symbol_analysis_message(
     min_score = _number(evaluation.get("min_score"), 0)
     date = escape(str(evaluation.get("date", market_config.get("date", "-"))))
 
+    q70 = _number(float(evaluation.get("paper_v2_quality", 0.0)) * 100.0, 1)
+    q70_passed = bool(evaluation.get("q70_passed"))
+    q70_icon = "✅" if q70_passed else "❌"
+
     lines = [
-        f"📊 <b>{symbol} — QUICK ANALYSIS</b>",
+        f"📊 <b>{symbol} — QUANT ANALYSIS</b>",
         f"📅 Phiên dữ liệu: <code>{date}</code>",
         f"🌐 Regime: <b>{regime}</b>",
         "",
         f"{status_icon} <b>{status}</b> — Score <b>{score}/100</b> | ngưỡng <b>{min_score}</b>",
+
+        f"Q70: <b>{q70}/100</b> {q70_icon}",
         "",
         "<b>Chỉ báo chính</b>",
         f"• Giá: <code>{_price(evaluation.get('entry'))}</code>",
@@ -85,6 +91,32 @@ def build_symbol_analysis_message(
             lines.append(f"{icon} {escape(label)}")
     else:
         lines.append("• Không có condition chi tiết.")
+
+    breadth = evaluation.get("breadth_ema50_pct")
+    breadth_change = evaluation.get("breadth_ema50_change_10d")
+    exposure = evaluation.get("breadth_exposure_pct")
+    breadth_gate = str(
+        evaluation.get("paper_v3_breadth_gate", "-")
+    ).upper()
+
+    breadth_icon = {
+        "FULL": "🟢",
+        "HALF": "🟡",
+        "BLOCK": "⛔",
+    }.get(breadth_gate, "⚪")
+
+    lines.extend(
+        [
+            "",
+            "<b>V3 Market Breadth</b>",
+            f"• EMA50 breadth: <code>{_number(breadth, 1)}%</code>",
+            f"• Δ10D: <code>{_signed(breadth_change, 1)}pp</code>",
+            (
+                f"• Exposure: <b>{_number(exposure, 0)}%</b> "
+                f"{breadth_icon} <b>{escape(breadth_gate)}</b>"
+            ),
+        ]
+    )
 
     lines.extend(
         [

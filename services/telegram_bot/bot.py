@@ -37,9 +37,8 @@ class TelegramQueryBot:
         )
 
     def run_forever(self) -> None:
-        from strategy.scanner import get_all_symbols
-
-        allowed_symbols = {str(item).upper() for item in get_all_symbols()}
+        from core.universe import get_vn100_symbols
+        allowed_symbols = {str(item).upper() for item in get_vn100_symbols()}
         offset: int | None = None
         logger.info("Telegram query bot started with %s symbols.", len(allowed_symbols))
 
@@ -104,14 +103,26 @@ class TelegramQueryBot:
             )
             return
 
-        from strategy.market_regime import get_market_regime
-        from strategy.scanner import evaluate_symbol
+        from services.telegram_bot.query import analyze_symbol
 
-        market_config = get_market_regime()
-        evaluation = evaluate_symbol(
-            symbol,
-            market_config=market_config,
+        analysis = analyze_symbol(symbol)
+
+        evaluation = dict(analysis.evaluation)
+        evaluation["paper_v2_quality"] = round(analysis.quality, 6)
+        evaluation["paper_v2_state"] = analysis.gate_state
+        evaluation["paper_v2_gate"] = analysis.gate_reason
+        evaluation["q70_passed"] = analysis.q70_passed
+        evaluation["breadth_exposure_multiplier"] = (
+            analysis.breadth_exposure_multiplier
         )
+        evaluation["breadth_exposure_pct"] = analysis.breadth_exposure_pct
+        evaluation["paper_v3_breadth_gate"] = analysis.breadth_gate
+        evaluation["telegram_universe_size"] = analysis.universe_size
+        evaluation["telegram_fresh_count"] = analysis.fresh_count
+
+        market_config = analysis.market_config
+
+
         ai_analysis = None
         ai_error = None
         if self.analyst is not None:
