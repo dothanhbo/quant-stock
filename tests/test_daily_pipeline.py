@@ -278,3 +278,32 @@ def test_pipeline_skip_update_preserves_manual_partial_run() -> None:
 
     assert result.success
     assert calls == ["lifecycle", "scan"]
+
+
+def test_run_daily_uses_v3_when_configured(monkeypatch):
+    calls = []
+
+    monkeypatch.setenv("PAPER_STRATEGY_VERSION", "V3_BREADTH_40_60")
+    monkeypatch.setattr(run_daily, "update_market_data", lambda: (101, []))
+    monkeypatch.setattr(
+        run_daily,
+        "run_paper_v3_lifecycle",
+        lambda: calls.append("v3_lifecycle") or object(),
+    )
+    monkeypatch.setattr(
+        run_daily,
+        "run_strategy_scanner",
+        lambda pending_execution_result=None: calls.append(
+            ("scan", pending_execution_result is not None)
+        ),
+    )
+    monkeypatch.setattr(
+        run_daily,
+        "get_market_date",
+        lambda: date.today().isoformat(),
+    )
+    monkeypatch.setattr("sys.argv", ["run_daily"])
+
+    assert run_daily.main() == 0
+    assert calls[0] == "v3_lifecycle"
+    assert calls[1] == ("scan", True)

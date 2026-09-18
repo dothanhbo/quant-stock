@@ -79,11 +79,26 @@ def get_market_date() -> str | None:
     return get_reference_market_date()
 
 
-# Q70_FROZEN_DAILY_PATCH
-def run_paper_v2_lifecycle():
-    from scripts.run_paper_v2_lifecycle import (
-        main,
+PAPER_V3_VERSION = "V3_BREADTH_40_60"
+
+
+def _use_v3() -> bool:
+    import os
+
+    return (
+        os.getenv("PAPER_STRATEGY_VERSION", "Q70_FROZEN").strip().upper()
+        == PAPER_V3_VERSION
     )
+
+
+def run_paper_v2_lifecycle():
+    from scripts.run_paper_v2_lifecycle import main
+
+    return main()
+
+
+def run_paper_v3_lifecycle():
+    from scripts.run_paper_v3_lifecycle import main
 
     return main()
 
@@ -91,22 +106,20 @@ def run_paper_v2_lifecycle():
 def run_strategy_scanner(
     pending_execution_result=None,
 ):
-    from strategy.paper_v2_scanner import (
-        PaperV2Scanner,
-    )
-    from strategy.scanner import (
-        run_scan,
-    )
+    from strategy.scanner import run_scan
+
+    if _use_v3():
+        from strategy.paper_v3_scanner import PaperV3Scanner
+
+        processor = PaperV3Scanner(threshold=0.70).process
+    else:
+        from strategy.paper_v2_scanner import PaperV2Scanner
+
+        processor = PaperV2Scanner(threshold=0.70).process
 
     return run_scan(
-        pending_execution_result=(
-            pending_execution_result
-        ),
-        result_processor=(
-            PaperV2Scanner(
-                threshold=0.70
-            ).process
-        ),
+        pending_execution_result=pending_execution_result,
+        result_processor=processor,
     )
 
 def main() -> int:
@@ -117,9 +130,10 @@ def main() -> int:
 
     def lifecycle_stage():
         nonlocal pending_execution_result
-        pending_execution_result = (
-            run_paper_v2_lifecycle()
-        )
+        if _use_v3():
+            pending_execution_result = run_paper_v3_lifecycle()
+        else:
+            pending_execution_result = run_paper_v2_lifecycle()
 
 
     def scanner_stage():

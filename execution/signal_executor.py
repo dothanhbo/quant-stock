@@ -1107,10 +1107,18 @@ class PaperSignalExecutor:
                 )
             )
 
-            breadth_exposure_multiplier = self._read_positive_float(
-                signal,
-                ("breadth_exposure_multiplier",),
-            ) or 1.0
+            raw_breadth_multiplier = signal.get(
+                "breadth_exposure_multiplier"
+            )
+            if raw_breadth_multiplier is None:
+                breadth_exposure_multiplier = 1.0
+            else:
+                try:
+                    breadth_exposure_multiplier = float(
+                        raw_breadth_multiplier
+                    )
+                except (TypeError, ValueError):
+                    breadth_exposure_multiplier = 1.0
 
             quantity = int(
                 quantity * breadth_exposure_multiplier

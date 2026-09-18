@@ -355,3 +355,40 @@ def test_daily_loss_is_passed_to_risk_guard(tmp_path: Path) -> None:
     from execution.order_manager import OrderManager
 
     assert "daily_realized_pnl" in signature(OrderManager.buy_market).parameters
+
+
+def test_breadth_exposure_zero_keeps_quantity_at_zero(
+    tmp_path: Path,
+) -> None:
+    executor = PaperSignalExecutor(
+        PaperExecutionConfig(
+            enabled=True,
+            database_path=tmp_path / "paper.db",
+            initial_cash=100_000_000,
+            position_sizer="fixed_fraction",
+            fixed_fraction_pct=10.0,
+            maximum_orders_per_scan=10,
+            maximum_position_pct=20.0,
+            maximum_gross_exposure_pct=90.0,
+            maximum_open_positions=10,
+            minimum_cash_buffer_pct=0.0,
+        )
+    )
+
+    result = executor.execute_signals(
+        [{
+            "symbol": "AAA",
+            "date": "2026-08-05",
+            "entry": 100.0,
+            "stop_loss": 90.0,
+            "take_profit": 120.0,
+            "atr": 5.0,
+            "regime": "BULL",
+            "breadth_exposure_multiplier": 0.0,
+        }],
+        report_date="2026-08-05",
+    )
+
+    assert result.filled_count == 0
+    assert result.skipped_count == 1
+    assert result.executions[0].status == "SKIPPED"

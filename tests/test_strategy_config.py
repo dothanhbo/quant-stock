@@ -1,5 +1,5 @@
 from config.strategy_config import StrategyConfig, V1_BASELINE
-from config.strategy_config import Q70_FROZEN
+from config.strategy_config import Q70_FROZEN, V3_BREADTH_PAPER
 import pytest
 import os
 from config import trading_policy
@@ -65,3 +65,10 @@ def test_q70_frozen_config():
 
     assert Q70_FROZEN.stop_atr_multiplier == 2.0
     assert Q70_FROZEN.target_atr_multiplier == 5.0
+
+def test_v3_breadth_paper_config():
+    assert V3_BREADTH_PAPER.name == "V3_BREADTH_40_60"
+    assert V3_BREADTH_PAPER.quality_enabled is True
+    assert V3_BREADTH_PAPER.quality_threshold == 0.70
+    assert V3_BREADTH_PAPER.stop_atr_multiplier == 2.0
+    assert V3_BREADTH_PAPER.target_atr_multiplier == 5.0

@@ -1,5 +1,3 @@
-from vnstock import Vnstock
-
 BENCHMARK_SYMBOLS = [
     "VNINDEX",
 ]
