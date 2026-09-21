@@ -5,7 +5,7 @@ import math
 import sqlite3
 from dataclasses import dataclass, asdict
 from pathlib import Path
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Literal
 from backtesting.exit import ExitResult
 from backtesting.trade import ExitExecution, ExitReason, Trade
 from backtesting.exit_models import (
@@ -27,6 +27,10 @@ from backtesting.portfolio_allocation import (
 )
 from collections import Counter
 from core.universe import get_vn100_symbols
+from core.database_coverage import (
+    CoverageUniverseIndex,
+    build_database_coverage_index,
+)
 from backtesting.transaction_cost import TransactionCostConfig
 from backtesting.position_sizers import PositionSizer
 from backtesting.regime_policy import (
@@ -84,6 +88,9 @@ class BacktestConfig:
     ranking_method: str = "first_come"
     # Convert raw market-db prices to the VND unit used by cash.
     market_price_scale: float = 1.0
+    universe_mode: Literal["current_vn100", "database_coverage"] = "current_vn100"
+    minimum_history_sessions: int = 50
+    maximum_staleness_sessions: int = 5
 
     def validate(self) -> None:
         if self.stop_loss_pct <= 0:
@@ -112,6 +119,12 @@ class BacktestConfig:
             raise ValueError(
                 "sell_tax_pct must be greater than or equal to 0"
             )
+        if self.universe_mode not in {"current_vn100", "database_coverage"}:
+            raise ValueError("universe_mode is not supported")
+        if self.minimum_history_sessions < 0:
+            raise ValueError("minimum_history_sessions must be non-negative")
+        if self.maximum_staleness_sessions < 0:
+            raise ValueError("maximum_staleness_sessions must be non-negative")
 
 
 def _connect(db_path: str) -> sqlite3.Connection:
@@ -714,6 +727,31 @@ def calculate_metrics(
         ),
     }
 
+
+def _normalized_backtest_date(value: str) -> str:
+    return pd.Timestamp(value).date().isoformat()
+
+
+def _validate_coverage_index(
+    coverage_index: CoverageUniverseIndex,
+    *,
+    start_date: str,
+    end_date: str,
+    minimum_history_sessions: int,
+    maximum_staleness_sessions: int,
+) -> None:
+    requested_start_date = _normalized_backtest_date(start_date)
+    requested_end_date = _normalized_backtest_date(end_date)
+    if (
+        coverage_index.start_date > requested_start_date
+        or coverage_index.end_date < requested_end_date
+    ):
+        raise ValueError("coverage_index does not cover the requested date range")
+    if coverage_index.minimum_history_sessions != minimum_history_sessions:
+        raise ValueError("coverage_index minimum_history_sessions does not match config")
+    if coverage_index.maximum_staleness_sessions != maximum_staleness_sessions:
+        raise ValueError("coverage_index maximum_staleness_sessions does not match config")
+
 def run_backtest(
     symbols: Iterable[str] | None = None,
     *,
@@ -747,6 +785,10 @@ def run_backtest(
     max_new_positions_per_day: int | None = None,
     maximum_gross_exposure_pct: float | None = None,
     minimum_cash_buffer_pct: float = 0.0,
+    universe_mode: Literal["current_vn100", "database_coverage"] = "current_vn100",
+    minimum_history_sessions: int = 50,
+    maximum_staleness_sessions: int = 5,
+    coverage_index: CoverageUniverseIndex | None = None,
 ) -> tuple[list[Trade], dict[str, Any], pd.DataFrame]:
     config = BacktestConfig(
         stop_loss_pct=stop_loss_pct,
@@ -761,19 +803,49 @@ def run_backtest(
         buy_slippage_pct=buy_slippage_pct,
         sell_slippage_pct=sell_slippage_pct,
         ranking_method=ranking_method,
+        universe_mode=universe_mode,
+        minimum_history_sessions=minimum_history_sessions,
+        maximum_staleness_sessions=maximum_staleness_sessions,
     )
     config.validate()
 
-    if symbols is None:
-        symbols = get_vn100_symbols()
+    explicit_symbols_supplied = symbols is not None
+    effective_universe_mode = "explicit_symbols"
+    active_coverage_index: CoverageUniverseIndex | None = None
 
-    symbols = list(symbols)
-
-    selected_symbols = (
-        get_symbol_list(db_path)
-        if symbols is None
-        else sorted({str(symbol).upper().strip() for symbol in symbols})
-    )
+    if explicit_symbols_supplied:
+        selected_symbols = sorted(
+            {str(symbol).upper().strip() for symbol in symbols}
+        )
+    elif config.universe_mode == "database_coverage":
+        if start_date is None or end_date is None:
+            raise ValueError(
+                "database_coverage universe_mode requires explicit start_date and end_date"
+            )
+        if coverage_index is None:
+            active_coverage_index = build_database_coverage_index(
+                start_date,
+                end_date,
+                minimum_history_sessions=config.minimum_history_sessions,
+                maximum_staleness_sessions=config.maximum_staleness_sessions,
+                database_path=db_path,
+            )
+        else:
+            _validate_coverage_index(
+                coverage_index,
+                start_date=start_date,
+                end_date=end_date,
+                minimum_history_sessions=config.minimum_history_sessions,
+                maximum_staleness_sessions=config.maximum_staleness_sessions,
+            )
+            active_coverage_index = coverage_index
+        selected_symbols = list(active_coverage_index.candidate_symbols)
+        effective_universe_mode = "database_coverage"
+    else:
+        selected_symbols = sorted(
+            {str(symbol).upper().strip() for symbol in get_vn100_symbols()}
+        )
+        effective_universe_mode = "current_vn100"
 
     benchmark_metrics: dict[str, Any] = {
         "benchmark_symbol": None,
@@ -810,6 +882,14 @@ def run_backtest(
 
         if symbol_trades:
            all_trades.extend(symbol_trades)
+
+    if active_coverage_index is not None:
+        all_trades = [
+            trade
+            for trade in all_trades
+            if trade.signal_date is not None
+            and active_coverage_index.is_eligible(trade.symbol, trade.signal_date)
+        ]
 
     transaction_cost_config = TransactionCostConfig(
         buy_commission_pct=config.buy_commission_pct,
@@ -852,6 +932,35 @@ def run_backtest(
     metrics = calculate_metrics(
         trades,
         config,
+    )
+
+    if active_coverage_index is None:
+        eligible_symbol_count_min: int | None = None
+        eligible_symbol_count_max: int | None = None
+        eligible_symbol_count_mean: float | None = None
+    else:
+        eligible_counts = tuple(
+            active_coverage_index.eligible_count_by_session.values()
+        )
+        eligible_symbol_count_min = min(eligible_counts, default=0)
+        eligible_symbol_count_max = max(eligible_counts, default=0)
+        eligible_symbol_count_mean = (
+            float(sum(eligible_counts) / len(eligible_counts))
+            if eligible_counts
+            else 0.0
+        )
+
+    metrics.update(
+        {
+            "requested_universe_mode": config.universe_mode,
+            "effective_universe_mode": effective_universe_mode,
+            "minimum_history_sessions": config.minimum_history_sessions,
+            "maximum_staleness_sessions": config.maximum_staleness_sessions,
+            "candidate_symbol_count": len(selected_symbols),
+            "eligible_symbol_count_min": eligible_symbol_count_min,
+            "eligible_symbol_count_max": eligible_symbol_count_max,
+            "eligible_symbol_count_mean": eligible_symbol_count_mean,
+        }
     )
 
     trade_distribution = calculate_trade_distribution(
@@ -1093,6 +1202,21 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--db", default=DEFAULT_DB_PATH)
     parser.add_argument("--start",type=str,default=None,help="Ngày bắt đầu backtest, định dạng YYYY-MM-DD.",)
     parser.add_argument("--end",type=str,default=None,help="Ngày kết thúc backtest, định dạng YYYY-MM-DD.",)
+    parser.add_argument(
+        "--universe-mode",
+        choices=["current_vn100", "database_coverage"],
+        default="current_vn100",
+    )
+    parser.add_argument(
+        "--minimum-history-sessions",
+        type=int,
+        default=50,
+    )
+    parser.add_argument(
+        "--maximum-staleness-sessions",
+        type=int,
+        default=5,
+    )
     parser.add_argument("--sl", type=float, default=5.0)
     parser.add_argument("--tp", type=float, default=10.0)
     parser.add_argument("--hold", type=int, default=20)
@@ -1199,7 +1323,9 @@ def main() -> None:
         break_even_trigger=args.break_even_trigger,
     )
 
-    if args.all:
+    if args.all and args.universe_mode == "database_coverage":
+        symbols = None
+    elif args.all:
         symbols = list(get_vn100_symbols())
     else:
         symbols = [
@@ -1228,6 +1354,9 @@ def main() -> None:
         max_portfolio_heat_pct=(
             args.max_portfolio_heat
         ),
+        universe_mode=args.universe_mode,
+        minimum_history_sessions=args.minimum_history_sessions,
+        maximum_staleness_sessions=args.maximum_staleness_sessions,
     )
     print("=" * 60)
     print("Trades:", len(trades))
