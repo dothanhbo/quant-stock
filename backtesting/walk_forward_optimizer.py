@@ -3,14 +3,20 @@ from __future__ import annotations
 import itertools
 import math
 from dataclasses import dataclass
-from typing import Any, Callable, Iterable
+from typing import Any, Callable, Iterable, Literal
 
 import pandas as pd
 
 from backtesting.walk_forward import (
     WalkForwardConfig,
     WalkForwardFold,
+    _eligible_count_summary,
+    _validate_coverage_index,
     build_walk_forward_folds,
+)
+from core.database_coverage import (
+    CoverageUniverseIndex,
+    build_database_coverage_index,
 )
 
 
@@ -315,6 +321,10 @@ def run_walk_forward_optimization(
     run_backtest_fn: Callable[..., tuple],
     build_exit_model_fn: Callable[..., Any],
     base_backtest_kwargs: dict[str, Any],
+    universe_mode: Literal["current_vn100", "database_coverage"] = "current_vn100",
+    minimum_history_sessions: int = 50,
+    maximum_staleness_sessions: int = 5,
+    coverage_index: CoverageUniverseIndex | None = None,
 ) -> WalkForwardOptimizationResult:
     walk_forward_config.validate()
     parameter_grid.validate()
@@ -330,6 +340,57 @@ def run_walk_forward_optimization(
             walk_forward_config
         )
     )
+
+    if universe_mode not in {"current_vn100", "database_coverage"}:
+        raise ValueError("universe_mode is not supported")
+    if minimum_history_sessions < 0:
+        raise ValueError("minimum_history_sessions must be non-negative")
+    if maximum_staleness_sessions < 0:
+        raise ValueError("maximum_staleness_sessions must be non-negative")
+
+    explicit_symbols_supplied = base_backtest_kwargs.get("symbols") is not None
+    effective_universe_mode = (
+        "explicit_symbols"
+        if explicit_symbols_supplied
+        else universe_mode
+    )
+    shared_coverage_index: CoverageUniverseIndex | None = None
+    coverage_backtest_kwargs: dict[str, Any] = {}
+
+    if universe_mode == "database_coverage":
+        coverage_backtest_kwargs = {
+            "universe_mode": universe_mode,
+            "minimum_history_sessions": minimum_history_sessions,
+            "maximum_staleness_sessions": maximum_staleness_sessions,
+        }
+
+    if universe_mode == "database_coverage" and not explicit_symbols_supplied:
+        overall_start = min(fold.train_start for fold in folds)
+        overall_end = max(fold.test_end for fold in folds)
+        if coverage_index is None:
+            shared_coverage_index = build_database_coverage_index(
+                overall_start.date().isoformat(),
+                overall_end.date().isoformat(),
+                minimum_history_sessions=minimum_history_sessions,
+                maximum_staleness_sessions=maximum_staleness_sessions,
+                database_path=base_backtest_kwargs.get("db_path"),
+            )
+        else:
+            _validate_coverage_index(
+                coverage_index,
+                start_date=overall_start,
+                end_date=overall_end,
+                minimum_history_sessions=minimum_history_sessions,
+                maximum_staleness_sessions=maximum_staleness_sessions,
+            )
+            shared_coverage_index = coverage_index
+
+        coverage_backtest_kwargs["coverage_index"] = shared_coverage_index
+
+    call_backtest_kwargs = {
+        **base_backtest_kwargs,
+        **coverage_backtest_kwargs,
+    }
 
     fold_rows: list[dict[str, Any]] = []
     search_rows_all: list[dict[str, Any]] = []
@@ -389,7 +450,7 @@ def run_walk_forward_optimization(
 
             _, train_metrics, _ = (
                 run_backtest_fn(
-                    **base_backtest_kwargs,
+                    **call_backtest_kwargs,
                     start_date=str(
                         fold.train_start.date()
                     ),
@@ -549,7 +610,7 @@ def run_walk_forward_optimization(
 
         test_trades, test_metrics, _ = (
             run_backtest_fn(
-                **base_backtest_kwargs,
+                **call_backtest_kwargs,
                 start_date=str(
                     fold.test_start.date()
                 ),
@@ -589,6 +650,29 @@ def run_walk_forward_optimization(
             )
         )
 
+        if shared_coverage_index is None:
+            train_eligible_counts = (
+                None,
+                None,
+                None,
+            )
+            test_eligible_counts = (
+                test_metrics.get("eligible_symbol_count_min"),
+                test_metrics.get("eligible_symbol_count_max"),
+                test_metrics.get("eligible_symbol_count_mean"),
+            )
+        else:
+            train_eligible_counts = _eligible_count_summary(
+                shared_coverage_index,
+                start_date=fold.train_start,
+                end_date=fold.train_end,
+            )
+            test_eligible_counts = _eligible_count_summary(
+                shared_coverage_index,
+                start_date=fold.test_start,
+                end_date=fold.test_end,
+            )
+
         fold_rows.append(
             {
                 "fold": fold.fold,
@@ -604,6 +688,17 @@ def run_walk_forward_optimization(
                 "test_end": (
                     fold.test_end.date()
                 ),
+
+                "requested_universe_mode": universe_mode,
+                "effective_universe_mode": effective_universe_mode,
+                "minimum_history_sessions": minimum_history_sessions,
+                "maximum_staleness_sessions": maximum_staleness_sessions,
+                "train_eligible_symbol_count_min": train_eligible_counts[0],
+                "train_eligible_symbol_count_max": train_eligible_counts[1],
+                "train_eligible_symbol_count_mean": train_eligible_counts[2],
+                "test_eligible_symbol_count_min": test_eligible_counts[0],
+                "test_eligible_symbol_count_max": test_eligible_counts[1],
+                "test_eligible_symbol_count_mean": test_eligible_counts[2],
 
                 "selected_atr_stop_multiplier": (
                     best[
@@ -760,8 +855,31 @@ def run_walk_forward_optimization(
         folds_df
     )
 
+    if shared_coverage_index is None:
+        overall_eligible_counts = (None, None, None)
+    else:
+        all_counts = tuple(
+            shared_coverage_index.eligible_count_by_session.values()
+        )
+        overall_eligible_counts = (
+            min(all_counts, default=0),
+            max(all_counts, default=0),
+            (
+                float(sum(all_counts) / len(all_counts))
+                if all_counts
+                else 0.0
+            ),
+        )
+
     summary: dict[str, Any] = {
         "folds": total_folds,
+        "requested_universe_mode": universe_mode,
+        "effective_universe_mode": effective_universe_mode,
+        "minimum_history_sessions": minimum_history_sessions,
+        "maximum_staleness_sessions": maximum_staleness_sessions,
+        "eligible_symbol_count_min": overall_eligible_counts[0],
+        "eligible_symbol_count_max": overall_eligible_counts[1],
+        "eligible_symbol_count_mean": overall_eligible_counts[2],
         "objective": (
             optimization_config.objective
         ),
