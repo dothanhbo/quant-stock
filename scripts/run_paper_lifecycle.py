@@ -4,6 +4,7 @@ import os
 import sqlite3
 
 from dotenv import load_dotenv
+from core.paths import resolve_market_database_path
 
 from execution.exit_engine import (
     ExitEngine,
@@ -56,10 +57,7 @@ def env_int(
 def main() -> PaperExecutionBatchResult | None:
     load_dotenv()
 
-    market_database_path = os.getenv(
-        "MARKET_DATABASE_PATH",
-        "data/market.db",
-    )
+    market_database_path = resolve_market_database_path()
     with sqlite3.connect(market_database_path) as connection:
         latest_value = connection.execute(
             "SELECT MAX(date(time)) FROM prices WHERE symbol = 'VNINDEX'"

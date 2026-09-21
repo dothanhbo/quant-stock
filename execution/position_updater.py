@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 
 from execution.paper_broker import PaperBroker
+from core.paths import resolve_market_database_path
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,13 +66,11 @@ class PositionUpdateEngine:
         self,
         *,
         broker: PaperBroker,
-        market_database_path: str | Path = (
-            "data/market.db"
-        ),
+        market_database_path: str | Path | None = None,
         price_scale: float = 1000.0,
     ) -> None:
         self.broker = broker
-        self.market_database_path = Path(
+        self.market_database_path = resolve_market_database_path(
             market_database_path
         )
         self.price_scale = price_scale

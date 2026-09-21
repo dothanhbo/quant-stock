@@ -35,6 +35,7 @@ from execution.order_manager import OrderManager
 from execution.paper_broker import PaperBroker
 from execution.risk_guard import RiskGuard, RiskLimits
 from config.trading_policy import TradingPolicy
+from core.paths import resolve_market_database_path
 
 
 def _read_bool(
@@ -559,7 +560,7 @@ class PaperSignalExecutor:
         self,
         *,
         valuation_date: str | date,
-        market_database_path: str | Path = "data/market.db",
+        market_database_path: str | Path | None = None,
     ) -> PaperExecutionBatchResult:
         """Fill signals only at the first VNINDEX session after signal date."""
         resolved_date = self._resolve_report_date(valuation_date)
@@ -569,6 +570,9 @@ class PaperSignalExecutor:
 
         due: list[dict[str, Any]] = []
         freshness_results: list[PaperSignalExecution] = []
+        market_database_path = resolve_market_database_path(
+            market_database_path
+        )
         with sqlite3.connect(market_database_path) as connection:
             for signal_rank, signal in enumerate(
                 pending,
@@ -1641,12 +1645,8 @@ class PaperSignalExecutor:
             str | Path | None
         ),
     ) -> list[date] | None:
-        database_path = Path(
+        database_path = resolve_market_database_path(
             market_database_path
-            or os.getenv(
-                "MARKET_DATABASE_PATH",
-                "data/market.db",
-            )
         )
 
         if not database_path.exists():

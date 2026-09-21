@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 
 from dotenv import load_dotenv
+from core.paths import resolve_market_database_path
 
 from execution.paper_broker import PaperBroker
 from execution.position_updater import (
@@ -51,10 +52,7 @@ def main() -> None:
 
     engine = PositionUpdateEngine(
         broker=broker,
-        market_database_path=os.getenv(
-            "MARKET_DATABASE_PATH",
-            "data/market.db",
-        ),
+        market_database_path=resolve_market_database_path(),
     )
 
     result = engine.update_open_positions()

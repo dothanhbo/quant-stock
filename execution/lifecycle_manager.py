@@ -23,6 +23,7 @@ from execution.order_manager import (
 from execution.paper_broker import (
     PaperBroker,
 )
+from core.paths import resolve_market_database_path
 
 
 @dataclass(frozen=True, slots=True)
@@ -91,9 +92,7 @@ class PaperLifecycleManager:
         broker: PaperBroker,
         order_manager: OrderManager,
         exit_engine: ExitEngine,
-        market_database_path: str | Path = (
-            "data/market.db"
-        ),
+        market_database_path: str | Path | None = None,
         price_scale: float = 1000.0,
         atr_period: int = 14,
         default_trailing_atr_multiplier: (
@@ -103,7 +102,7 @@ class PaperLifecycleManager:
         self.broker = broker
         self.order_manager = order_manager
         self.exit_engine = exit_engine
-        self.market_database_path = Path(
+        self.market_database_path = resolve_market_database_path(
             market_database_path
         )
         self.price_scale = price_scale
