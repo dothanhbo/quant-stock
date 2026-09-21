@@ -4,8 +4,10 @@ import argparse
 import math
 import sqlite3
 from dataclasses import dataclass, asdict
+from datetime import datetime
 from pathlib import Path
 from typing import Any, Callable, Iterable, Literal
+from types import MappingProxyType
 from backtesting.exit import ExitResult
 from backtesting.trade import ExitExecution, ExitReason, Trade
 from backtesting.exit_models import (
@@ -125,6 +127,36 @@ class BacktestConfig:
             raise ValueError("minimum_history_sessions must be non-negative")
         if self.maximum_staleness_sessions < 0:
             raise ValueError("maximum_staleness_sessions must be non-negative")
+
+
+@dataclass(frozen=True, slots=True)
+class HistoricalEvaluationRow:
+    """One existing per-symbol, per-signal-date entry-model evaluation."""
+
+    symbol: str
+    signal_date: datetime
+    score: Any
+    relative_strength_20d: Any
+    adx: Any
+    regime: Any
+    base_entry_passed: bool
+    reason: Any = None
+
+
+@dataclass(frozen=True, slots=True)
+class CandidateGenerationCollection:
+    """Immutable view of historical evaluations and existing Trade candidates."""
+
+    evaluations: tuple[HistoricalEvaluationRow, ...]
+    candidates: tuple[Trade, ...]
+    _evaluations_by_signal_date: MappingProxyType
+
+    def evaluations_for_signal_date(
+        self,
+        signal_date: str | datetime | pd.Timestamp,
+    ) -> tuple[HistoricalEvaluationRow, ...]:
+        normalized_date = pd.Timestamp(signal_date).to_pydatetime()
+        return self._evaluations_by_signal_date.get(normalized_date, ())
 
 
 def _connect(db_path: str) -> sqlite3.Connection:
@@ -375,7 +407,7 @@ def _simulate_exit(
         execution=execution,
     )
 
-def generate_candidate_trades(
+def collect_candidate_generation(
     symbol: str,
     config: BacktestConfig,
     db_path: str = DEFAULT_DB_PATH,
@@ -385,7 +417,7 @@ def generate_candidate_trades(
     exit_model: BaseExitModel = DEFAULT_EXIT_MODEL,
     start_date: str | None = None,
     end_date: str | None = None,
-) -> list[Trade]:
+) -> CandidateGenerationCollection:
 
     config.validate()
     entry_model = (
@@ -401,7 +433,7 @@ def generate_candidate_trades(
     )
 
     if price_df.empty:
-        return []
+        return CandidateGenerationCollection((), (), MappingProxyType({}))
 
     price_df["time"] = pd.to_datetime(
         price_df["time"],
@@ -426,7 +458,7 @@ def generate_candidate_trades(
     )
 
     if len(price_df) <= warmup_bars + 1:
-        return []
+        return CandidateGenerationCollection((), (), MappingProxyType({}))
 
     required_columns = {
         "ATR14",
@@ -456,7 +488,7 @@ def generate_candidate_trades(
         ]
 
         if len(eligible_indices) == 0:
-            return []
+            return CandidateGenerationCollection((), (), MappingProxyType({}))
 
         first_signal_index = max(
             warmup_bars,
@@ -464,6 +496,7 @@ def generate_candidate_trades(
         )
 
     trades: list[Trade] = []
+    evaluations: list[HistoricalEvaluationRow] = []
 
     for signal_index in range(
         first_signal_index,
@@ -493,6 +526,18 @@ def generate_candidate_trades(
         )
 
         status = evaluation.get("status", "UNKNOWN")
+        evaluations.append(
+            HistoricalEvaluationRow(
+                symbol=symbol,
+                signal_date=signal_date.to_pydatetime(),
+                score=evaluation.get("score"),
+                relative_strength_20d=evaluation.get("relative_strength_20d"),
+                adx=evaluation.get("adx"),
+                regime=evaluation.get("regime", market_config.get("regime")),
+                base_entry_passed=status == "PASSED",
+                reason=evaluation.get("reason"),
+            )
+        )
 
         if status != "PASSED":
             if verbose:
@@ -624,7 +669,53 @@ def generate_candidate_trades(
                 f"{trade.return_pct:+.2f}%"
             )
 
-    return trades
+    evaluations_by_signal_date: dict[
+        datetime,
+        list[HistoricalEvaluationRow],
+    ] = {}
+    for evaluation in evaluations:
+        evaluations_by_signal_date.setdefault(
+            evaluation.signal_date,
+            [],
+        ).append(evaluation)
+
+    return CandidateGenerationCollection(
+        evaluations=tuple(evaluations),
+        candidates=tuple(trades),
+        _evaluations_by_signal_date=MappingProxyType(
+            {
+                signal_date: tuple(rows)
+                for signal_date, rows in evaluations_by_signal_date.items()
+            }
+        ),
+    )
+
+
+def generate_candidate_trades(
+    symbol: str,
+    config: BacktestConfig,
+    db_path: str = DEFAULT_DB_PATH,
+    warmup_bars: int = 60,
+    verbose: bool = False,
+    entry_model: BaseStrategy | None = None,
+    exit_model: BaseExitModel = DEFAULT_EXIT_MODEL,
+    start_date: str | None = None,
+    end_date: str | None = None,
+) -> list[Trade]:
+    """Backward-compatible wrapper returning only existing Trade candidates."""
+    return list(
+        collect_candidate_generation(
+            symbol=symbol,
+            config=config,
+            db_path=db_path,
+            warmup_bars=warmup_bars,
+            verbose=verbose,
+            entry_model=entry_model,
+            exit_model=exit_model,
+            start_date=start_date,
+            end_date=end_date,
+        ).candidates
+    )
 
 def backtest_symbol(
     symbol: str,
