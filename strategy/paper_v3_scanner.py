@@ -42,6 +42,7 @@ class PaperV3Scanner:
             multiplier = breadth_exposure_multiplier(breadth)
             enriched["strategy_version"] = self.VERSION
             enriched["breadth_exposure_multiplier"] = multiplier
+            enriched["breadth_exposure_applied"] = True
             enriched["breadth_exposure_pct"] = multiplier * 100.0
             enriched["paper_v3_breadth_gate"] = (
                 "FULL" if multiplier == 1.0
@@ -62,9 +63,9 @@ class PaperV3Scanner:
         for signal in rejected:
             enriched = dict(signal)
             enriched["strategy_version"] = self.VERSION
-            enriched["breadth_exposure_multiplier"] = breadth_exposure_multiplier(
-                enriched.get("breadth_ema50_pct")
-            )
+            enriched["breadth_exposure_applied"] = False
+            enriched["breadth_exposure_multiplier"] = None
+            enriched["breadth_exposure_pct"] = None
             enriched["paper_v3_breadth_gate"] = "NOT_APPLICABLE"
             v3_rejected.append(enriched)
 

@@ -126,6 +126,11 @@ def main() -> int:
     load_dotenv()
     args = build_parser().parse_args()
 
+    if args.skip_lifecycle and _use_v3():
+        from scripts.run_paper_v3_lifecycle import configure_v3_environment
+
+        configure_v3_environment()
+
     pending_execution_result = None
 
     def lifecycle_stage():
