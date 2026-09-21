@@ -2,9 +2,14 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass
-from typing import Any, Callable
+from typing import Any, Callable, Literal
 
 import pandas as pd
+
+from core.database_coverage import (
+    CoverageUniverseIndex,
+    build_database_coverage_index,
+)
 
 
 @dataclass(slots=True, frozen=True)
@@ -226,12 +231,55 @@ def build_walk_forward_folds(
     return folds
 
 
+def _validate_coverage_index(
+    coverage_index: CoverageUniverseIndex,
+    *,
+    start_date: pd.Timestamp,
+    end_date: pd.Timestamp,
+    minimum_history_sessions: int,
+    maximum_staleness_sessions: int,
+) -> None:
+    requested_start_date = start_date.date().isoformat()
+    requested_end_date = end_date.date().isoformat()
+    if (
+        coverage_index.start_date > requested_start_date
+        or coverage_index.end_date < requested_end_date
+    ):
+        raise ValueError("coverage_index does not cover every walk-forward fold")
+    if coverage_index.minimum_history_sessions != minimum_history_sessions:
+        raise ValueError("coverage_index minimum_history_sessions does not match config")
+    if coverage_index.maximum_staleness_sessions != maximum_staleness_sessions:
+        raise ValueError("coverage_index maximum_staleness_sessions does not match config")
+
+
+def _eligible_count_summary(
+    coverage_index: CoverageUniverseIndex,
+    *,
+    start_date: pd.Timestamp,
+    end_date: pd.Timestamp,
+) -> tuple[int, int, float]:
+    start = start_date.date().isoformat()
+    end = end_date.date().isoformat()
+    counts = tuple(
+        coverage_index.eligible_count_by_session[session_date]
+        for session_date in coverage_index.session_dates
+        if start <= session_date <= end
+    )
+    if not counts:
+        return 0, 0, 0.0
+    return min(counts), max(counts), float(sum(counts) / len(counts))
+
+
 def run_walk_forward(
     *,
     config: WalkForwardConfig,
     initial_capital: float,
     run_backtest_fn: Callable[..., tuple],
     backtest_kwargs: dict[str, Any],
+    universe_mode: Literal["current_vn100", "database_coverage"] = "current_vn100",
+    minimum_history_sessions: int = 50,
+    maximum_staleness_sessions: int = 5,
+    coverage_index: CoverageUniverseIndex | None = None,
 ) -> WalkForwardResult:
     """Rolling fixed-policy validation; this function does not optimize train parameters."""
     if initial_capital <= 0:
@@ -242,6 +290,57 @@ def run_walk_forward(
     folds = build_walk_forward_folds(
         config
     )
+
+    if universe_mode not in {"current_vn100", "database_coverage"}:
+        raise ValueError("universe_mode is not supported")
+    if minimum_history_sessions < 0:
+        raise ValueError("minimum_history_sessions must be non-negative")
+    if maximum_staleness_sessions < 0:
+        raise ValueError("maximum_staleness_sessions must be non-negative")
+
+    explicit_symbols_supplied = backtest_kwargs.get("symbols") is not None
+    effective_universe_mode = (
+        "explicit_symbols"
+        if explicit_symbols_supplied
+        else universe_mode
+    )
+    shared_coverage_index: CoverageUniverseIndex | None = None
+    coverage_backtest_kwargs: dict[str, Any] = {}
+
+    if universe_mode == "database_coverage":
+        coverage_backtest_kwargs = {
+            "universe_mode": universe_mode,
+            "minimum_history_sessions": minimum_history_sessions,
+            "maximum_staleness_sessions": maximum_staleness_sessions,
+        }
+
+    if universe_mode == "database_coverage" and not explicit_symbols_supplied:
+        overall_start = min(fold.train_start for fold in folds)
+        overall_end = max(fold.test_end for fold in folds)
+        if coverage_index is None:
+            shared_coverage_index = build_database_coverage_index(
+                overall_start.date().isoformat(),
+                overall_end.date().isoformat(),
+                minimum_history_sessions=minimum_history_sessions,
+                maximum_staleness_sessions=maximum_staleness_sessions,
+                database_path=backtest_kwargs.get("db_path"),
+            )
+        else:
+            _validate_coverage_index(
+                coverage_index,
+                start_date=overall_start,
+                end_date=overall_end,
+                minimum_history_sessions=minimum_history_sessions,
+                maximum_staleness_sessions=maximum_staleness_sessions,
+            )
+            shared_coverage_index = coverage_index
+
+        coverage_backtest_kwargs["coverage_index"] = shared_coverage_index
+
+    call_backtest_kwargs = {
+        **backtest_kwargs,
+        **coverage_backtest_kwargs,
+    }
 
     rows: list[dict[str, Any]] = []
     test_equity_curves: list[pd.DataFrame] = []
@@ -272,7 +371,7 @@ def run_walk_forward(
         # V1: chạy train để đo in-sample.
         _, train_metrics, _ = (
             run_backtest_fn(
-                **backtest_kwargs,
+                **call_backtest_kwargs,
                 start_date=str(
                     fold.train_start.date()
                 ),
@@ -292,7 +391,7 @@ def run_walk_forward(
 
         test_trades, test_metrics, test_equity = (
             run_backtest_fn(
-                **backtest_kwargs,
+                **call_backtest_kwargs,
                 start_date=str(
                     fold.test_start.date()
                 ),
@@ -349,9 +448,48 @@ def run_walk_forward(
             )
         )
 
+        if shared_coverage_index is None:
+            train_eligible_counts = (
+                train_metrics.get("eligible_symbol_count_min"),
+                train_metrics.get("eligible_symbol_count_max"),
+                train_metrics.get("eligible_symbol_count_mean"),
+            )
+            test_eligible_counts = (
+                test_metrics.get("eligible_symbol_count_min"),
+                test_metrics.get("eligible_symbol_count_max"),
+                test_metrics.get("eligible_symbol_count_mean"),
+            )
+        else:
+            train_eligible_counts = _eligible_count_summary(
+                shared_coverage_index,
+                start_date=fold.train_start,
+                end_date=fold.train_end,
+            )
+            test_eligible_counts = _eligible_count_summary(
+                shared_coverage_index,
+                start_date=fold.test_start,
+                end_date=fold.test_end,
+            )
+
         rows.append(
             {
                 **fold.to_dict(),
+
+                "requested_universe_mode": universe_mode,
+                "effective_universe_mode": (
+                    train_metrics.get(
+                        "effective_universe_mode",
+                        effective_universe_mode,
+                    )
+                ),
+                "minimum_history_sessions": minimum_history_sessions,
+                "maximum_staleness_sessions": maximum_staleness_sessions,
+                "train_eligible_symbol_count_min": train_eligible_counts[0],
+                "train_eligible_symbol_count_max": train_eligible_counts[1],
+                "train_eligible_symbol_count_mean": train_eligible_counts[2],
+                "test_eligible_symbol_count_min": test_eligible_counts[0],
+                "test_eligible_symbol_count_max": test_eligible_counts[1],
+                "test_eligible_symbol_count_mean": test_eligible_counts[2],
 
                 "train_trades": int(
                     train_metrics.get(
