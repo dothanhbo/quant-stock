@@ -89,6 +89,7 @@ class FeatureRequest:
 
 ComputeFunction = Callable[[Mapping[str, pd.DataFrame], Mapping[FeatureRequest, Mapping[str, pd.DataFrame]], Mapping[str, Any]], Mapping[str, pd.DataFrame]]
 WarmupResolver = int | Callable[[Mapping[str, Any]], int]
+DependencyResolver = Callable[[FeatureRequest], tuple[FeatureRequest, ...]]
 
 
 @dataclass(frozen=True, slots=True)
@@ -97,7 +98,7 @@ class FeatureDefinition:
     version: str
     scope: FeatureScope
     required_raw_columns: tuple[str, ...]
-    dependencies: tuple[FeatureRequest, ...] = ()
+    dependencies: tuple[FeatureRequest, ...] | DependencyResolver = ()
     direct_warmup_sessions: WarmupResolver = 0
     causal: bool = True
     output_columns: tuple[str, ...] = ()

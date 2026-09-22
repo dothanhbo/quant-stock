@@ -96,3 +96,60 @@ def prepare_historical_per_symbol_subset(
         MappingProxyType(metadata),
         MappingProxyType({symbol: result.frame_for(symbol) for symbol in result.available_symbols}),
     )
+
+
+def prepare_historical_benchmark_relative_subset(
+    snapshot: MarketDataSnapshot,
+    symbols: Iterable[str],
+    *,
+    benchmark_symbol: str,
+    start_date: str,
+    through_date: str,
+    universe_identity: str | None = None,
+    cache: PreparedFeatureCache | None = None,
+    registry: FeatureRegistry | None = None,
+) -> HistoricalPreparedFeatureBundle:
+    """Prepare the v3 partial subset with an explicit local reference series."""
+    if not through_date:
+        raise ValueError("through_date is required for causal historical preparation")
+    benchmark = str(benchmark_symbol).strip().upper()
+    if not benchmark:
+        raise ValueError("benchmark_symbol is required")
+    primary = tuple(sorted({str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()} - {benchmark}))
+    if not primary:
+        raise ValueError("at least one primary equity symbol is required after excluding the benchmark")
+    loaded_symbols = (*primary, benchmark)
+    active_registry = registry or FeatureRegistry(builtin_definitions())
+    result = active_registry.compute(
+        FeatureRequest("historical_candidate_benchmark_relative_subset", "v3", {
+            "benchmark_symbol": benchmark,
+            "period": 20,
+        }),
+        snapshot,
+        loaded_symbols,
+        start_date=start_date,
+        through_date=through_date,
+        universe_identity=universe_identity,
+        cache=cache,
+    )
+    if benchmark not in result.available_symbols:
+        raise ValueError(f"benchmark series is unavailable: {benchmark}")
+    available = tuple(symbol for symbol in primary if symbol in result.available_symbols)
+    missing = tuple(symbol for symbol in primary if symbol not in result.available_symbols)
+    metadata = {
+        **result.metadata,
+        "partial_subset": True,
+        "benchmark_symbol": benchmark,
+        "benchmark_available": True,
+        "primary_symbols": primary,
+        "excluded_feature_groups": (
+            "market_regime", "breadth", "sector_features", "q70_cross_sectional_scoring",
+        ),
+    }
+    return HistoricalPreparedFeatureBundle(
+        result.computation_identity,
+        available,
+        missing,
+        MappingProxyType(metadata),
+        MappingProxyType({symbol: result.frame_for(symbol) for symbol in available}),
+    )

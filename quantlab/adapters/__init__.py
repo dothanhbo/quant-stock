@@ -2,12 +2,14 @@
 
 from .historical_prepared_features import (
     HistoricalPreparedFeatureBundle,
+    prepare_historical_benchmark_relative_subset,
     prepare_historical_core_subset,
     prepare_historical_per_symbol_subset,
 )
 
 __all__ = [
     "HistoricalPreparedFeatureBundle",
+    "prepare_historical_benchmark_relative_subset",
     "prepare_historical_core_subset",
     "prepare_historical_per_symbol_subset",
 ]

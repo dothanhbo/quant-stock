@@ -35,13 +35,28 @@ class FeatureRegistry:
         except KeyError as exc:
             raise KeyError(f"unknown feature definition: {request.name}@{request.version}") from exc
 
+    @staticmethod
+    def _dependency_requests(
+        definition: FeatureDefinition,
+        request: FeatureRequest,
+    ) -> tuple[FeatureRequest, ...]:
+        dependencies = (
+            definition.dependencies(request)
+            if callable(definition.dependencies)
+            else definition.dependencies
+        )
+        if not all(isinstance(item, FeatureRequest) for item in dependencies):
+            raise ValueError(f"invalid dependencies for {request.name}@{request.version}")
+        return tuple(dependencies)
+
     def _resolve(self, request: FeatureRequest, visiting: set[FeatureRequest], resolved: dict[FeatureRequest, tuple[FeatureDefinition, FeatureIdentity, int]]) -> tuple[FeatureDefinition, FeatureIdentity, int]:
         if request in resolved:
             return resolved[request]
         if request in visiting:
             raise ValueError(f"feature dependency cycle detected at {request.name}@{request.version}")
         visiting.add(request); definition = self.definition_for(request)
-        dependencies = tuple(self._resolve(item, visiting, resolved) for item in definition.dependencies)
+        dependency_requests = self._dependency_requests(definition, request)
+        dependencies = tuple(self._resolve(item, visiting, resolved) for item in dependency_requests)
         visiting.remove(request)
         parameters = request.parameter_mapping
         direct = definition.direct_warmup_sessions(parameters) if callable(definition.direct_warmup_sessions) else definition.direct_warmup_sessions
@@ -73,7 +88,10 @@ class FeatureRegistry:
                 missing = set(current_definition.required_raw_columns).difference(frame.columns)
                 if missing:
                     raise ValueError(f"missing raw columns for {current.name}: {', '.join(sorted(missing))}")
-            dependency_outputs = {dependency: outputs[dependency] for dependency in current_definition.dependencies}
+            dependency_outputs = {
+                dependency: outputs[dependency]
+                for dependency in self._dependency_requests(current_definition, current)
+            }
             computed = current_definition.compute(raw_frames, dependency_outputs, current.parameter_mapping)  # type: ignore[misc]
             checked: dict[str, pd.DataFrame] = {}
             for symbol, frame in computed.items():

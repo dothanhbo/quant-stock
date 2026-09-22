@@ -151,6 +151,58 @@ def _historical_candidate_per_symbol_subset(frames, dependencies, _parameters):
     return result
 
 
+def _benchmark_symbol(parameters: Mapping[str, object]) -> str:
+    value = str(parameters.get("benchmark_symbol", "")).strip().upper()
+    if not value:
+        raise ValueError("benchmark_symbol is required")
+    return value
+
+
+def _benchmark_relative_context(frames, _dependencies, parameters):
+    """Match add_relative_strength_columns' exact left-merge alignment."""
+    benchmark_symbol = _benchmark_symbol(parameters)
+    period = _period(parameters)
+    if period != 20:
+        raise ValueError("benchmark_relative_context v1 supports the authoritative 20-session lookback only")
+    benchmark = frames.get(benchmark_symbol)
+    if benchmark is None or benchmark.empty:
+        raise ValueError(f"benchmark series is unavailable: {benchmark_symbol}")
+    reference = benchmark[["time", "close"]].rename(columns={"close": "benchmark_close"})
+    result = {}
+    for symbol, frame in frames.items():
+        aligned = frame[["time", "close"]].merge(reference, on="time", how="left")
+        stock_return = (aligned["close"] / aligned["close"].shift(period) - 1) * 100
+        index_return = (aligned["benchmark_close"] / aligned["benchmark_close"].shift(period) - 1) * 100
+        result[symbol] = pd.DataFrame({
+            "time": aligned["time"],
+            "Stock_Return_20D": stock_return,
+            "Index_Return_20D": index_return,
+            "Relative_Strength_20D": stock_return - index_return,
+        })
+    return result
+
+
+def _benchmark_relative_dependencies(request: FeatureRequest) -> tuple[FeatureRequest, ...]:
+    parameters = request.parameter_mapping
+    benchmark_symbol = _benchmark_symbol(parameters)
+    period = _period(parameters)
+    return (
+        FeatureRequest("historical_candidate_per_symbol_subset", "v2"),
+        FeatureRequest("benchmark_relative_context", "v1", {"benchmark_symbol": benchmark_symbol, "period": period}),
+    )
+
+
+def _historical_candidate_benchmark_relative_subset(frames, dependencies, parameters):
+    core = dependencies[FeatureRequest("historical_candidate_per_symbol_subset", "v2")]
+    context = dependencies[FeatureRequest("benchmark_relative_context", "v1", {
+        "benchmark_symbol": _benchmark_symbol(parameters), "period": _period(parameters),
+    })]
+    return {
+        symbol: pd.concat([frame, context[symbol][["Stock_Return_20D", "Index_Return_20D", "Relative_Strength_20D"]]], axis=1)
+        for symbol, frame in core.items()
+    }
+
+
 def _parameter_warmup(parameters: Mapping[str, object]) -> int:
     return _period(parameters)
 
@@ -169,4 +221,6 @@ def builtin_definitions() -> tuple[FeatureDefinition, ...]:
         FeatureDefinition("atr_percent", "v1", FeatureScope.PER_SYMBOL, ("time", "close"), dependencies=(FeatureRequest("atr", "v1", {"period": 14}),), direct_warmup_sessions=0, output_columns=("time", "ATR_Percent"), compute=_atr_percent),
         FeatureDefinition("price_context", "v1", FeatureScope.PER_SYMBOL, ("time", "open", "high", "low", "close"), dependencies=(FeatureRequest("ema", "v1", {"period": 10}), FeatureRequest("ema", "v1", {"period": 20}), FeatureRequest("donchian", "v1", {"period": 20})), direct_warmup_sessions=0, output_columns=("time", "EMA20_Rising", "Recent_Breakout_10D", "Touched_EMA10", "Reclaimed_EMA10", "Distance_EMA20_Pct", "Return_3D_Pct", "Body_Ratio", "Green_Candle", "Close_Upper_Half"), compute=_price_context),
         FeatureDefinition("historical_candidate_per_symbol_subset", "v2", FeatureScope.PER_SYMBOL, ("time", "open", "high", "low", "close", "volume"), dependencies=(FeatureRequest("historical_candidate_core_subset", "v1"), FeatureRequest("rsi", "v1", {"period": 14}), FeatureRequest("adx", "v1", {"period": 14}), FeatureRequest("volume_context", "v1", {"period": 20}), FeatureRequest("atr_percent", "v1"), FeatureRequest("price_context", "v1")), direct_warmup_sessions=0, output_columns=("time", "open", "high", "low", "close", "volume", "EMA10", "EMA20", "EMA50", "ATR14", "Previous_20D_High", "Breakout_20D", "RSI", "Vol_MA20", "Vol_Ratio", "Previous_5D_Max_Volume", "Volume_Breakout_5D", "ATR_Percent", "ADX14", "EMA20_Rising", "Recent_Breakout_10D", "Touched_EMA10", "Reclaimed_EMA10", "Distance_EMA20_Pct", "Return_3D_Pct", "Body_Ratio", "Green_Candle", "Close_Upper_Half"), compute=_historical_candidate_per_symbol_subset),
+        FeatureDefinition("benchmark_relative_context", "v1", FeatureScope.PER_SYMBOL, ("time", "close"), direct_warmup_sessions=lambda parameters: _period(parameters) + 1, output_columns=("time", "Stock_Return_20D", "Index_Return_20D", "Relative_Strength_20D"), compute=_benchmark_relative_context),
+        FeatureDefinition("historical_candidate_benchmark_relative_subset", "v3", FeatureScope.PER_SYMBOL, ("time", "open", "high", "low", "close", "volume"), dependencies=_benchmark_relative_dependencies, direct_warmup_sessions=0, output_columns=("time", "open", "high", "low", "close", "volume", "EMA10", "EMA20", "EMA50", "ATR14", "Previous_20D_High", "Breakout_20D", "RSI", "Vol_MA20", "Vol_Ratio", "Previous_5D_Max_Volume", "Volume_Breakout_5D", "ATR_Percent", "ADX14", "EMA20_Rising", "Recent_Breakout_10D", "Touched_EMA10", "Reclaimed_EMA10", "Distance_EMA20_Pct", "Return_3D_Pct", "Body_Ratio", "Green_Candle", "Close_Upper_Half", "Stock_Return_20D", "Index_Return_20D", "Relative_Strength_20D"), compute=_historical_candidate_benchmark_relative_subset),
     )
