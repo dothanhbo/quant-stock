@@ -100,3 +100,28 @@ def test_same_key_writer_race_publishes_one_valid_entry(tmp_path: Path) -> None:
     first, second = Thread(target=writer), Thread(target=writer); first.start(); second.start(); first.join(); second.join()
     assert len(outcomes) == 2 and cache.get(result.computation_identity) is not None
     assert sum(not item.hit for item in outcomes) == 1
+
+
+def test_npz_codec_isolated_parity_and_physical_integrity(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    snapshot = _snapshot(tmp_path); registry = _registry(); request = FeatureRequest("ema", "v1", {"period": 10})
+    sqlite_cache = PreparedFeatureCache(tmp_path / "cache")
+    npz_cache = PreparedFeatureCache(tmp_path / "cache", codec="npz_numeric_v1")
+    assert sqlite_cache._entry_path(registry.compute(request, snapshot, ["AAA"]).computation_identity) != npz_cache._entry_path(registry.compute(request, snapshot, ["AAA"]).computation_identity)
+    sqlite = registry.compute(request, snapshot, ["AAA"], cache=sqlite_cache)
+    npz = registry.compute(request, snapshot, ["AAA"], cache=npz_cache)
+    pd.testing.assert_frame_equal(sqlite.frame_for("AAA"), npz.frame_for("AAA"), check_dtype=True)
+    assert sqlite.metadata["cache"]["content_checksum"] == npz.metadata["cache"]["content_checksum"]
+    entry = npz_cache._entry_path(npz.computation_identity)
+    assert (entry / "data.npz").is_file() and not (entry / "data.sqlite").exists()
+    calls = 0
+    original = npz_cache._checksum
+    def forbidden(*args, **kwargs):
+        nonlocal calls; calls += 1; raise AssertionError("warm NPZ must not rebuild logical checksum")
+    monkeypatch.setattr(npz_cache, "_checksum", forbidden)
+    warm = npz_cache.get(npz.computation_identity)
+    assert warm is not None and calls == 0
+    (entry / "data.npz").write_bytes(b"corrupt")
+    with pytest.raises(CacheCorruptionError, match="physical"):
+        npz_cache.get(npz.computation_identity)
+    with pytest.raises(ValueError, match="unknown"):
+        PreparedFeatureCache(tmp_path / "other", codec="unknown")

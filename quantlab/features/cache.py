@@ -27,6 +27,7 @@ from .contracts import FeatureComputationIdentity, FeatureResult, canonical_json
 
 _FORMAT_VERSION = "v1"
 _CODEC = "sqlite-json-v1"
+_NPZ_CODEC = "npz_numeric_v1"
 
 
 class CacheCorruptionError(RuntimeError):
@@ -125,8 +126,11 @@ def _frame_from_payload(payload: Mapping[str, Any]) -> pd.DataFrame:
 class PreparedFeatureCache:
     """Explicit-root, immutable prepared feature cache."""
 
-    def __init__(self, cache_root: str | Path) -> None:
+    def __init__(self, cache_root: str | Path, *, codec: str = _CODEC) -> None:
+        if codec not in {_CODEC, _NPZ_CODEC}:
+            raise ValueError(f"unknown prepared feature cache codec: {codec}")
         self._root = Path(cache_root).expanduser().resolve()
+        self._codec = codec
 
     @property
     def cache_root(self) -> Path:
@@ -134,7 +138,8 @@ class PreparedFeatureCache:
 
     def _entry_path(self, identity: FeatureComputationIdentity) -> Path:
         key = _assert_key(identity.sha256)
-        return self._root / _FORMAT_VERSION / key[:2] / key
+        prefix = () if self._codec == _CODEC else (self._codec,)
+        return self._root.joinpath(*prefix, _FORMAT_VERSION, key[:2], key)
 
     def _relative(self, path: Path) -> str:
         try:
@@ -147,6 +152,8 @@ class PreparedFeatureCache:
         return sha256(canonical_json(payload)).hexdigest(), payload
 
     def _read_entry(self, path: Path, identity: FeatureComputationIdentity) -> FeatureResult:
+        if self._codec == _NPZ_CODEC:
+            return self._read_npz_entry(path, identity)
         manifest_path, data_path = path / "manifest.json", path / "data.sqlite"
         if not manifest_path.is_file() or not data_path.is_file():
             raise CacheCorruptionError(f"incomplete cache entry: {path}")
@@ -154,7 +161,7 @@ class PreparedFeatureCache:
             manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
         except (OSError, json.JSONDecodeError) as error:
             raise CacheCorruptionError(f"invalid cache manifest: {path}") from error
-        if manifest.get("complete") is not True or manifest.get("format_version") != _FORMAT_VERSION or manifest.get("codec") != _CODEC:
+        if manifest.get("complete") is not True or manifest.get("format_version") != _FORMAT_VERSION or manifest.get("codec") != self._codec:
             raise CacheCorruptionError(f"invalid cache completion marker: {path}")
         if manifest.get("computation_identity") != _identity_payload(identity):
             raise CacheCorruptionError(f"cache identity mismatch: {path}")
@@ -171,8 +178,46 @@ class PreparedFeatureCache:
         checksum, _ = self._checksum(identity, available, missing, manifest["feature_metadata"], frames)
         if checksum != manifest.get("content_checksum"):
             raise CacheCorruptionError(f"cache content checksum mismatch: {path}")
-        cache_metadata = {"hit": True, "cache_key": identity.sha256, "codec": _CODEC, "relative_path": self._relative(path), "row_count": manifest["row_count"], "content_checksum": checksum}
+        cache_metadata = {"hit": True, "cache_key": identity.sha256, "codec": self._codec, "relative_path": self._relative(path), "row_count": manifest["row_count"], "content_checksum": checksum}
         metadata = MappingProxyType({**manifest["feature_metadata"], "cache": MappingProxyType(cache_metadata)})
+        return FeatureResult(identity, metadata, available, missing, MappingProxyType(frames))
+
+    def _read_npz_entry(self, path: Path, identity: FeatureComputationIdentity) -> FeatureResult:
+        manifest_path, data_path = path / "manifest.json", path / "data.npz"
+        if not manifest_path.is_file() or not data_path.is_file():
+            raise CacheCorruptionError(f"incomplete cache entry: {path}")
+        try:
+            manifest = json.loads(manifest_path.read_text(encoding="utf-8"))
+        except (OSError, json.JSONDecodeError) as error:
+            raise CacheCorruptionError("invalid cache manifest") from error
+        if manifest.get("complete") is not True or manifest.get("codec") != _NPZ_CODEC or manifest.get("computation_identity") != _identity_payload(identity):
+            raise CacheCorruptionError("invalid NPZ cache manifest")
+        if sha256(data_path.read_bytes()).hexdigest() != manifest.get("physical_sha256"):
+            raise CacheCorruptionError("NPZ physical checksum mismatch")
+        expected = set(); frames = {}
+        try:
+            with np.load(data_path, allow_pickle=False) as archive:
+                for item in manifest["frames"]:
+                    keys = [item["index_key"], *(column["key"] for column in item["columns"])]
+                    expected.update(keys)
+                    if any(key not in archive for key in keys):
+                        raise CacheCorruptionError("missing NPZ member")
+                    data = {column["name"]: archive[column["key"]].astype(np.dtype(column["dtype"]), copy=False) for column in item["columns"]}
+                    frame = pd.DataFrame(data, columns=[column["name"] for column in item["columns"]])
+                    index = archive[item["index_key"]]
+                    if item["index"]["kind"] == "range":
+                        frame.index = pd.RangeIndex(item["index"]["start"], item["index"]["stop"], item["index"]["step"], name=item["index"].get("name"))
+                    else:
+                        frame.index = pd.Index(index.astype(np.dtype(item["index"]["dtype"]), copy=False), name=item["index"].get("name"))
+                    if len(frame) != item["row_count"]:
+                        raise CacheCorruptionError("NPZ row count mismatch")
+                    frames[item["symbol"]] = frame
+                if set(archive.files) != expected:
+                    raise CacheCorruptionError("unexpected NPZ member")
+        except (OSError, ValueError) as error:
+            raise CacheCorruptionError("invalid NPZ payload") from error
+        available, missing = tuple(manifest["available_symbols"]), tuple(manifest["missing_symbols"])
+        metadata = MappingProxyType({**manifest["feature_metadata"], "cache": MappingProxyType({"hit": True, "cache_key": identity.sha256, "codec": _NPZ_CODEC, "relative_path": self._relative(path), "row_count": manifest["row_count"], "content_checksum": manifest["content_checksum"]})})
         return FeatureResult(identity, metadata, available, missing, MappingProxyType(frames))
 
     def get(self, identity: FeatureComputationIdentity) -> FeatureResult | None:
@@ -197,6 +242,8 @@ class PreparedFeatureCache:
         return FeatureResult(result.computation_identity, metadata, result.available_symbols, result.missing_symbols, result._frames)
 
     def put(self, result: FeatureResult) -> CacheWriteResult:
+        if self._codec == _NPZ_CODEC:
+            return self._put_npz(result)
         identity = result.computation_identity; final = self._entry_path(identity)
         if final.exists():
             existing = self._read_entry(final, identity)
@@ -242,6 +289,47 @@ class PreparedFeatureCache:
             if temporary.exists():
                 for child in temporary.iterdir():
                     child.unlink()
+                temporary.rmdir()
+
+    def _put_npz(self, result: FeatureResult) -> CacheWriteResult:
+        identity = result.computation_identity; final = self._entry_path(identity)
+        if final.exists():
+            existing = self._read_entry(final, identity); cache = existing.metadata["cache"]
+            return CacheWriteResult(True, identity.sha256, _NPZ_CODEC, str(cache["relative_path"]), int(cache["row_count"]), str(cache["content_checksum"]))
+        checksum, _ = self._checksum(identity, result.available_symbols, result.missing_symbols, result.metadata, result._frames)
+        final.parent.mkdir(parents=True, exist_ok=True); temporary = final.parent / f".{uuid4().hex}.tmp"; temporary.mkdir()
+        try:
+            arrays: dict[str, np.ndarray] = {}; frame_manifest = []
+            for ordinal, (symbol, frame) in enumerate(sorted(result._frames.items())):
+                unsupported = [column for column in frame.columns if not _supported_dtype(frame[column].dtype)]
+                if unsupported: raise TypeError("unsupported object-valued feature columns: " + ", ".join(unsupported))
+                prefix = f"frame_{ordinal:05d}"; index_key = prefix + "_index"
+                if isinstance(frame.index, pd.RangeIndex):
+                    arrays[index_key] = np.arange(frame.index.start, frame.index.stop, frame.index.step, dtype=np.int64); index_meta = {"kind": "range", "start": frame.index.start, "stop": frame.index.stop, "step": frame.index.step, "name": frame.index.name}
+                else:
+                    if not _supported_dtype(frame.index.dtype): raise TypeError("unsupported feature index dtype")
+                    arrays[index_key] = frame.index.to_numpy(copy=True); index_meta = {"kind": "values", "dtype": str(frame.index.dtype), "name": frame.index.name}
+                columns = []
+                for column_ordinal, column in enumerate(frame.columns):
+                    key = f"{prefix}_column_{column_ordinal:03d}"; arrays[key] = frame[column].to_numpy(copy=True)
+                    columns.append({"name": column, "key": key, "dtype": str(frame[column].dtype)})
+                frame_manifest.append({"symbol": symbol, "index_key": index_key, "index": index_meta, "columns": columns, "row_count": len(frame)})
+            data_path = temporary / "data.npz"; np.savez(data_path, **arrays)
+            physical = sha256(data_path.read_bytes()).hexdigest()
+            manifest = {"format_version": _FORMAT_VERSION, "codec": _NPZ_CODEC, "computation_identity": _identity_payload(identity), "available_symbols": list(result.available_symbols), "missing_symbols": list(result.missing_symbols), "feature_metadata": dict(result.metadata), "frames": frame_manifest, "row_count": sum(len(frame) for frame in result._frames.values()), "content_checksum": checksum, "physical_sha256": physical, "complete": True}
+            (temporary / "manifest.json").write_bytes(canonical_json(manifest))
+            self._read_npz_entry(temporary, identity)
+            try: os.rename(temporary, final); hit = False
+            except OSError:
+                if not final.exists(): raise
+                hit = True
+            if hit:
+                existing = self._read_entry(final, identity); cache = existing.metadata["cache"]
+                return CacheWriteResult(True, identity.sha256, _NPZ_CODEC, str(cache["relative_path"]), int(cache["row_count"]), str(cache["content_checksum"]))
+            return CacheWriteResult(False, identity.sha256, _NPZ_CODEC, self._relative(final), manifest["row_count"], checksum)
+        finally:
+            if temporary.exists():
+                for child in temporary.iterdir(): child.unlink()
                 temporary.rmdir()
 
     def get_or_compute(self, identity: FeatureComputationIdentity, compute_fn: Callable[[], FeatureResult]) -> FeatureResult:
