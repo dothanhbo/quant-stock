@@ -112,6 +112,7 @@ def run_frozen_q70_backtest(
     maximum_staleness_sessions: int = 5,
     coverage_index: CoverageUniverseIndex | None = None,
     breadth_index: HistoricalBreadthIndex | None = None,
+    current_vn100_symbols: Iterable[str] | None = None,
     paper_execution_config: PaperExecutionConfig | None = None,
     parity_config: BacktestPaperParityConfig | None = None,
 ) -> tuple[list[Trade], dict[str, Any], pd.DataFrame]:
@@ -158,7 +159,11 @@ def run_frozen_q70_backtest(
         selected_symbols = list(active_coverage.candidate_symbols)
         effective_universe_mode = "database_coverage"
     else:
-        selected_symbols = _normalize_symbols(get_vn100_symbols())
+        selected_symbols = _normalize_symbols(
+            current_vn100_symbols
+            if current_vn100_symbols is not None
+            else get_vn100_symbols()
+        )
         effective_universe_mode = "legacy_current_vn100_retroactive"
 
     if breadth_index is None:
