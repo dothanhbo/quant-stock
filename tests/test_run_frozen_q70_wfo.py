@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import math
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -42,11 +43,14 @@ def test_paired_runner_reuses_dependencies_chains_capital_and_writes_contract(
     monkeypatch.setattr(runner, "build_historical_breadth_index", build_breadth)
     def fake_evaluator(**kwargs):
         calls.append(kwargs)
-        final = kwargs["parity_config"].initial_cash + 1_000.0
+        initial = kwargs["parity_config"].initial_cash
         is_test = kwargs["start_date"] >= "2022-01-01"
+        final = initial + 1_000.0 if is_test else initial * 2
         cost = 10.0 if is_test else 1.0
         metrics = {
-            "final_equity": final, "total_return_pct": .001, "total_trades": 0,
+            "final_equity": final,
+            "total_return_pct": (final / initial - 1.0) * 100.0,
+            "total_trades": 0,
             "win_rate_pct": 0., "profit_factor": 0., "max_drawdown_pct": 0.,
             "gross_profit": 0., "gross_loss": 0., "gross_trading_pnl": -cost,
             "net_trading_pnl": -cost, "total_transaction_cost": cost,
@@ -91,6 +95,26 @@ def test_paired_runner_reuses_dependencies_chains_capital_and_writes_contract(
     for arm in result["arms"].values():
         assert arm["summary"]["total_oos_transaction_cost"] == 20.0
         assert set(arm["folds"]["test_total_transaction_cost"]) == {10.0}
+        implied_returns = (
+            arm["folds"]["test_final_equity"]
+            / arm["folds"]["test_initial_equity"]
+            - 1.0
+        ) * 100.0
+        assert arm["folds"]["test_return_pct"].tolist() == pytest.approx(
+            implied_returns.tolist()
+        )
+        assert (
+            math.prod(
+                1.0 + value / 100.0
+                for value in arm["folds"]["test_return_pct"]
+            )
+            - 1.0
+        ) * 100.0 == pytest.approx(
+            arm["summary"]["compounded_chained_oos_return_pct"]
+        )
+        # Training diagnostics deliberately return +100% in this fixture but
+        # must not affect the chained OOS summary.
+        assert arm["summary"]["final_equity"] == pytest.approx(100_002_000.0)
     for arm in ("legacy_current_vn100_retroactive", "database_coverage_50_history_5_staleness"):
         arm_dir = output / arm
         assert {path.name for path in arm_dir.iterdir()} == {

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime, timedelta
+import math
 from types import SimpleNamespace
 from typing import Any
 
@@ -46,9 +47,9 @@ def _trade(symbol: str, signal_date: datetime = DAY) -> Trade:
     return trade
 
 
-def _parity() -> BacktestPaperParityConfig:
+def _parity(initial_cash: float = 100_000_000) -> BacktestPaperParityConfig:
     return BacktestPaperParityConfig(
-        initial_cash=100_000_000, position_sizer="fixed_fraction",
+        initial_cash=initial_cash, position_sizer="fixed_fraction",
         risk_per_trade_pct=1, atr_stop_multiplier=2, fixed_fraction_pct=10,
         lot_size=100, commission_rate=.0015, slippage_bps=5,
         maximum_position_pct=20, maximum_gross_exposure_pct=80,
@@ -97,9 +98,10 @@ def _patch_pipeline(monkeypatch: pytest.MonkeyPatch, rows: list[HistoricalEvalua
 def _run(monkeypatch: pytest.MonkeyPatch, rows: list[HistoricalEvaluationRow], trades: list[Trade], **kwargs: Any):
     captured = _patch_pipeline(monkeypatch, rows, trades)
     breadth_index = kwargs.pop("breadth_index", _Breadth())
+    parity_config = kwargs.pop("parity_config", _parity())
     result = evaluator.run_frozen_q70_backtest(
         symbols=["AAA"], start_date="2020-02-01", end_date="2020-04-01",
-        breadth_index=breadth_index, parity_config=_parity(), **kwargs,
+        breadth_index=breadth_index, parity_config=parity_config, **kwargs,
     )
     return result, captured
 
@@ -302,3 +304,65 @@ def test_zero_cost_metrics_are_valid_when_no_trade_executes(
     assert metrics["gross_trading_pnl"] == 0.0
     assert metrics["net_trading_pnl"] == 0.0
     assert metrics["total_transaction_cost"] == 0.0
+
+
+@pytest.mark.parametrize(
+    ("exit_price", "initial_cash", "expected_sign"),
+    [
+        (105.0, 250_000_000.0, 1),
+        (95.0, 250_000_000.0, -1),
+    ],
+)
+def test_total_return_uses_fold_specific_initial_cash_not_first_equity_row(
+    monkeypatch: pytest.MonkeyPatch,
+    exit_price: float,
+    initial_cash: float,
+    expected_sign: int,
+) -> None:
+    trade = _trade("AAA")
+    trade.exit_price = exit_price
+    # Deliberately conflicting portfolio metric proves the evaluator overrides
+    # the first-equity-row return with the fold-specific parity cash.
+    _patch_pipeline(monkeypatch, [_row("AAA", passed=True, score=100)], [trade])
+    monkeypatch.setattr(
+        evaluator,
+        "calculate_portfolio_metrics",
+        lambda *args, **kwargs: {
+            "final_equity": kwargs["final_equity"],
+            "total_return_pct": 999.0,
+        },
+    )
+    monkeypatch.setattr(
+        PaperV2QualityGate,
+        "_add_sector_rs_telemetry",
+        lambda self, signal: dict(signal),
+    )
+    _, metrics, _ = evaluator.run_frozen_q70_backtest(
+        symbols=["AAA"],
+        start_date="2020-02-01",
+        end_date="2020-04-01",
+        breadth_index=_Breadth(),
+        parity_config=_parity(initial_cash),
+    )
+    expected = (metrics["final_equity"] / initial_cash - 1.0) * 100.0
+    assert metrics["total_return_pct"] == pytest.approx(expected)
+    assert math.copysign(1, metrics["total_return_pct"]) == expected_sign
+    assert metrics["total_return_pct"] != 999.0
+
+
+def test_total_return_is_zero_for_genuine_no_trade_fold(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        PaperV2QualityGate,
+        "_add_sector_rs_telemetry",
+        lambda self, signal: dict(signal),
+    )
+    (_, metrics, _), _ = _run(
+        monkeypatch,
+        [_row("AAA", passed=True, score=100)],
+        [],
+        parity_config=_parity(250_000_000.0),
+    )
+    assert metrics["final_equity"] == 250_000_000.0
+    assert metrics["total_return_pct"] == 0.0

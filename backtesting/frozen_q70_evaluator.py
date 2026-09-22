@@ -289,6 +289,12 @@ def run_frozen_q70_backtest(
     result = simulator.simulate(accepted_candidates)
     metrics = calculate_metrics(result.executed_trades, config)
     metrics.update(calculate_portfolio_metrics(result.equity_curve, final_equity=result.final_equity))
+    # ``calculate_portfolio_metrics`` measures from the first recorded equity
+    # event.  Frozen-WFO folds must instead measure from this invocation's
+    # supplied, potentially chained capital.
+    metrics["total_return_pct"] = (
+        result.final_equity / parity.initial_cash - 1.0
+    ) * 100.0
     gross_profits = [
         trade.net_pnl for trade in result.executed_trades if trade.net_pnl > 0
     ]
