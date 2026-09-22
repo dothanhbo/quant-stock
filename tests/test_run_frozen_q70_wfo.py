@@ -61,6 +61,21 @@ def test_paired_runner_reuses_dependencies_chains_capital_and_writes_contract(
             "q70_rejection_state_counts": {}, "coverage_eligible_count_min": 1,
             "coverage_eligible_count_max": 1, "coverage_eligible_count_mean": 1.,
         }
+        if kwargs.get("collect_decision_ledger"):
+            metrics["decision_ledger"] = (
+                SimpleNamespace(
+                    phase=kwargs.get("decision_phase", "unspecified"), symbol="AAA",
+                    signal_date=pd.Timestamp(kwargs["start_date"]),
+                    candidate_key=f"AAA|{kwargs['start_date']}T00:00:00",
+                    score=1.0, relative_strength_20d=2.0, adx=3.0,
+                    percentile_score=1.0, percentile_relative_strength_20d=1.0,
+                    percentile_adx=1.0, quality_score=1.0, quality_threshold=.7,
+                    market_state="HEALTHY_BULL", breadth_ema50_pct=70.0,
+                    breadth_ema50_change_10d=1.0, gate_accepted=True,
+                    gate_reason="Q0.70_PASS", execution_disposition="reason_unavailable",
+                    executed_trade_key=None,
+                ),
+            )
         return [], metrics, pd.DataFrame({"equity": [final]})
     monkeypatch.setattr(runner, "run_frozen_q70_backtest", fake_evaluator)
 
@@ -124,6 +139,28 @@ def test_paired_runner_reuses_dependencies_chains_capital_and_writes_contract(
     assert (output / "experiment_manifest.json").exists()
     assert (output / "universe_comparison.json").exists()
     assert test_calls  # retain the test/train distinction in the recorded calls
+
+    audited_output = tmp_path / "audited_experiment"
+    audited = runner.run_paired_frozen_q70_wfo(
+        start_date="2020-01-01", end_date="2022-12-31", output_root=audited_output,
+        decision_ledger=True,
+    )
+    for arm, payload in audited["arms"].items():
+        ledger = payload["decisions"]
+        assert set(ledger["phase"]) == {"test"}
+        assert ledger[["fold", "signal_date", "symbol", "candidate_key"]].equals(
+            ledger.sort_values(["fold", "signal_date", "symbol", "candidate_key"], kind="stable")[
+                ["fold", "signal_date", "symbol", "candidate_key"]
+            ]
+        )
+        assert len(ledger) == int(payload["folds"]["base_entry_candidates"].sum())
+        assert payload["summary"]["decision_base_entry_count"] == len(ledger)
+        assert payload["summary"]["decision_q70_accepted_count"] == int(
+            payload["folds"]["q70_accepted_candidates"].sum()
+        )
+        assert payload["summary"]["decision_executed_count"] == int(payload["folds"]["test_trades"].sum())
+        assert list(ledger.columns) == list(runner._DECISION_COLUMNS)
+        assert (audited_output / arm / "candidate_decision_oos.csv").exists()
 
 
 def test_existing_output_protection_and_exact_overwrite_scope(tmp_path: Path) -> None:

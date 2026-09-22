@@ -3,6 +3,7 @@ from __future__ import annotations
 """Historical evaluation of the frozen production Q70 policy only."""
 
 from collections import Counter, defaultdict
+from dataclasses import dataclass, replace
 from datetime import datetime
 import math
 from typing import Any, Iterable, Literal
@@ -37,6 +38,31 @@ _ATR_STOP = 2.0
 _ATR_TARGET = 5.0
 
 
+@dataclass(frozen=True, slots=True)
+class FrozenQ70Decision:
+    """Immutable audit record for one base-entry candidate's real gate path."""
+
+    phase: str
+    symbol: str
+    signal_date: datetime
+    candidate_key: str
+    score: Any
+    relative_strength_20d: Any
+    adx: Any
+    percentile_score: float | None
+    percentile_relative_strength_20d: float | None
+    percentile_adx: float | None
+    quality_score: float
+    quality_threshold: float
+    market_state: str
+    breadth_ema50_pct: Any
+    breadth_ema50_change_10d: Any
+    gate_accepted: bool
+    gate_reason: str
+    execution_disposition: str
+    executed_trade_key: str | None
+
+
 def _normalize_symbols(symbols: Iterable[str]) -> list[str]:
     return sorted(
         {
@@ -49,6 +75,11 @@ def _normalize_symbols(symbols: Iterable[str]) -> list[str]:
 
 def _key(symbol: str, signal_date: datetime) -> tuple[str, datetime]:
     return str(symbol).strip().upper(), pd.Timestamp(signal_date).to_pydatetime()
+
+
+def _candidate_key(symbol: str, signal_date: datetime) -> str:
+    normalized_symbol, normalized_date = _key(symbol, signal_date)
+    return f"{normalized_symbol}|{normalized_date.isoformat()}"
 
 
 def _validate_frozen_policy() -> None:
@@ -116,6 +147,8 @@ def run_frozen_q70_backtest(
     current_vn100_symbols: Iterable[str] | None = None,
     paper_execution_config: PaperExecutionConfig | None = None,
     parity_config: BacktestPaperParityConfig | None = None,
+    collect_decision_ledger: bool = False,
+    decision_phase: str = "unspecified",
 ) -> tuple[list[Trade], dict[str, Any], pd.DataFrame]:
     """Evaluate the immutable Q70 policy using existing candidates and simulator.
 
@@ -235,6 +268,7 @@ def run_frozen_q70_backtest(
         sector_universe_symbols=tuple(selected_symbols),
     )
     accepted_candidates: list[Trade] = []
+    gate_decisions: dict[str, FrozenQ70Decision] = {}
     rejection_counts: Counter[str] = Counter()
     rejection_state_counts: Counter[str] = Counter()
     total_evaluations = 0
@@ -259,10 +293,42 @@ def run_frozen_q70_backtest(
             base_entry_candidates += 1
             candidate_signals.append(_signal_from_evaluation(row, fields))
 
-        accepted, rejected = gate.apply(
-            candidate_signals,
-            quality_universe=quality_universe,
-        )
+        def observe_gate_decision(
+            signal: dict[str, Any],
+            decision: Any,
+            components: dict[str, float],
+        ) -> None:
+            if not collect_decision_ledger:
+                return
+            candidate_key = _candidate_key(str(signal["symbol"]), signal_date)
+            if candidate_key in gate_decisions:
+                raise ValueError("duplicate frozen Q70 decision candidate key")
+            gate_decisions[candidate_key] = FrozenQ70Decision(
+                phase=decision_phase,
+                symbol=str(signal["symbol"]).strip().upper(),
+                signal_date=pd.Timestamp(signal_date).to_pydatetime(),
+                candidate_key=candidate_key,
+                score=signal.get("score"),
+                relative_strength_20d=signal.get("relative_strength_20d"),
+                adx=signal.get("adx"),
+                percentile_score=components.get("score"),
+                percentile_relative_strength_20d=components.get("relative_strength_20d"),
+                percentile_adx=components.get("adx"),
+                quality_score=float(signal["paper_v2_quality"]),
+                quality_threshold=_Q70_THRESHOLD,
+                market_state=str(signal["paper_v2_state"]),
+                breadth_ema50_pct=signal.get("breadth_ema50_pct"),
+                breadth_ema50_change_10d=signal.get("breadth_ema50_change_10d"),
+                gate_accepted=bool(decision.accepted),
+                gate_reason=str(signal["paper_v2_gate"]),
+                execution_disposition=("pending_simulation" if decision.accepted else "not_gate_accepted"),
+                executed_trade_key=None,
+            )
+
+        gate_kwargs: dict[str, Any] = {"quality_universe": quality_universe}
+        if collect_decision_ledger:
+            gate_kwargs["decision_observer"] = observe_gate_decision
+        accepted, rejected = gate.apply(candidate_signals, **gate_kwargs)
         for rejected_signal in rejected:
             rejection_counts[str(rejected_signal.get("paper_v2_gate", "UNKNOWN"))] += 1
             rejection_state_counts[
@@ -287,6 +353,36 @@ def run_frozen_q70_backtest(
         minimum_cash_buffer_pct=parity.minimum_cash_buffer_pct,
     )
     result = simulator.simulate(accepted_candidates)
+    if collect_decision_ledger:
+        rejected_by_key = {
+            _candidate_key(rejected.trade.symbol, rejected.trade.signal_date): rejected.reason
+            for rejected in getattr(result, "rejected_trades", ())
+            if rejected.trade.signal_date is not None
+        }
+        executed_by_key = {
+            _candidate_key(trade.symbol, trade.signal_date): trade
+            for trade in result.executed_trades
+            if trade.signal_date is not None
+        }
+        for candidate_key, decision in tuple(gate_decisions.items()):
+            if not decision.gate_accepted:
+                continue
+            if candidate_key in executed_by_key:
+                gate_decisions[candidate_key] = replace(
+                    decision,
+                    execution_disposition="executed",
+                    executed_trade_key=candidate_key,
+                )
+            elif candidate_key in rejected_by_key:
+                gate_decisions[candidate_key] = replace(
+                    decision,
+                    execution_disposition=str(rejected_by_key[candidate_key]),
+                )
+            else:
+                gate_decisions[candidate_key] = replace(
+                    decision,
+                    execution_disposition="reason_unavailable",
+                )
     metrics = calculate_metrics(result.executed_trades, config)
     metrics.update(calculate_portfolio_metrics(result.equity_curve, final_equity=result.final_equity))
     # ``calculate_portfolio_metrics`` measures from the first recorded equity
@@ -369,4 +465,8 @@ def run_frozen_q70_backtest(
             },
         }
     )
+    if collect_decision_ledger:
+        metrics["decision_ledger"] = tuple(
+            sorted(gate_decisions.values(), key=lambda row: (row.signal_date, row.symbol, row.candidate_key))
+        )
     return result.executed_trades, metrics, result.equity_curve

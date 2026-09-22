@@ -3,11 +3,13 @@ from __future__ import annotations
 """Paired, fixed-policy OOS evaluation for the frozen production Q70 policy."""
 
 import argparse
+from collections import Counter
 from dataclasses import asdict, replace
 from pathlib import Path
 from hashlib import sha256
 import json
 import math
+import re
 import shutil
 import sqlite3
 import sys
@@ -54,6 +56,15 @@ _REQUIRED_TEST_METRICS = (
     "total_sell_commission",
     "total_sell_tax",
     "total_transaction_cost",
+)
+
+_DECISION_COLUMNS = (
+    "fold", "test_start", "test_end", "phase", "symbol", "signal_date",
+    "candidate_key", "score", "relative_strength_20d", "adx",
+    "percentile_score", "percentile_relative_strength_20d", "percentile_adx",
+    "quality_score", "quality_threshold", "market_state", "breadth_ema50_pct",
+    "breadth_ema50_change_10d", "gate_accepted", "gate_reason",
+    "execution_disposition", "executed_trade_key",
 )
 
 
@@ -308,6 +319,65 @@ def _trade_rows(trades: list[Trade], fold: int) -> list[dict[str, Any]]:
     return rows
 
 
+def _decision_rows(
+    decisions: tuple[Any, ...],
+    *,
+    fold: WalkForwardFold,
+) -> list[dict[str, Any]]:
+    """Flatten immutable evaluator audit records into the OOS-only CSV schema."""
+    return [
+        {
+            "fold": fold.fold,
+            "test_start": str(fold.test_start.date()),
+            "test_end": str(fold.test_end.date()),
+            "phase": decision.phase,
+            "symbol": decision.symbol,
+            "signal_date": decision.signal_date,
+            "candidate_key": decision.candidate_key,
+            "score": decision.score,
+            "relative_strength_20d": decision.relative_strength_20d,
+            "adx": decision.adx,
+            "percentile_score": decision.percentile_score,
+            "percentile_relative_strength_20d": decision.percentile_relative_strength_20d,
+            "percentile_adx": decision.percentile_adx,
+            "quality_score": decision.quality_score,
+            "quality_threshold": decision.quality_threshold,
+            "market_state": decision.market_state,
+            "breadth_ema50_pct": decision.breadth_ema50_pct,
+            "breadth_ema50_change_10d": decision.breadth_ema50_change_10d,
+            "gate_accepted": decision.gate_accepted,
+            "gate_reason": decision.gate_reason,
+            "execution_disposition": decision.execution_disposition,
+            "executed_trade_key": decision.executed_trade_key,
+        }
+        for decision in decisions
+    ]
+
+
+def _audit_column(prefix: str, value: str) -> str:
+    return prefix + re.sub(r"[^a-z0-9]+", "_", value.lower()).strip("_")
+
+
+def _decision_summary(decisions: list[dict[str, Any]]) -> dict[str, Any]:
+    accepted = [row for row in decisions if row["gate_accepted"]]
+    executed = [row for row in accepted if row["execution_disposition"] == "executed"]
+    summary: dict[str, Any] = {
+        "decision_base_entry_count": len(decisions),
+        "decision_q70_accepted_count": len(accepted),
+        "decision_executed_count": len(executed),
+        "decision_accepted_not_executed_count": len(accepted) - len(executed),
+    }
+    for prefix, values in (
+        ("decision_gate_reason_", (str(row["gate_reason"]) for row in decisions)),
+        ("decision_simulator_disposition_", (str(row["execution_disposition"]) for row in accepted)),
+        ("decision_accepted_state_", (str(row["market_state"]) for row in accepted)),
+        ("decision_executed_state_", (str(row["market_state"]) for row in executed)),
+    ):
+        for value, count in Counter(values).items():
+            summary[_audit_column(prefix, value)] = count
+    return summary
+
+
 def _require_test_metrics(metrics: dict[str, Any]) -> None:
     """Reject incomplete evaluator output instead of publishing invented zeros."""
     for name in _REQUIRED_TEST_METRICS:
@@ -366,10 +436,12 @@ def _run_arm(
     breadth_index: HistoricalBreadthIndex,
     paper: PaperExecutionConfig,
     parity: BacktestPaperParityConfig,
+    decision_ledger: bool = False,
 ) -> dict[str, Any]:
     current_capital = parity.initial_cash
     fold_rows: list[dict[str, Any]] = []
     oos_trades: list[dict[str, Any]] = []
+    oos_decisions: list[dict[str, Any]] = []
     equity_curves: list[pd.DataFrame] = []
     for fold in folds:
         common = {
@@ -390,11 +462,19 @@ def _run_arm(
         test_parity = replace(parity, initial_cash=current_capital)
         trades, test_metrics, equity = run_frozen_q70_backtest(
             start_date=str(fold.test_start.date()), end_date=str(fold.test_end.date()),
-            parity_config=test_parity, **common,
+            parity_config=test_parity,
+            collect_decision_ledger=decision_ledger,
+            decision_phase="test",
+            **common,
         )
         _require_test_metrics(test_metrics)
         fold_rows.append(_fold_row(fold, train_metrics, test_metrics, current_capital))
         oos_trades.extend(_trade_rows(trades, fold.fold))
+        if decision_ledger:
+            decisions = test_metrics.get("decision_ledger")
+            if decisions is None:
+                raise ValueError("frozen evaluator missing decision ledger")
+            oos_decisions.extend(_decision_rows(decisions, fold=fold))
         equity_curves.append(equity)
         current_capital = float(test_metrics["final_equity"])
 
@@ -402,6 +482,9 @@ def _run_arm(
     trade_frame = pd.DataFrame(oos_trades).sort_values(
         ["fold", "signal_date", "symbol"], kind="stable"
     ) if oos_trades else pd.DataFrame(columns=["fold", "symbol", "signal_date"])
+    decision_frame = pd.DataFrame(oos_decisions, columns=_DECISION_COLUMNS).sort_values(
+        ["fold", "signal_date", "symbol", "candidate_key"], kind="stable"
+    ) if oos_decisions else pd.DataFrame(columns=_DECISION_COLUMNS)
     summary = {
         "arm": arm,
         "policy_fingerprint": "Q70_FROZEN/hybrid_trend_donchian/ATR2x5/fixed",
@@ -418,7 +501,14 @@ def _run_arm(
         "retrospective_current_vn100_warning": arm.startswith("legacy_current"),
         "database_coverage_limitation": arm.startswith("database_coverage"),
     }
-    return {"folds": fold_frame, "trades": trade_frame, "summary": summary}
+    if decision_ledger:
+        summary.update(_decision_summary(oos_decisions))
+    return {
+        "folds": fold_frame,
+        "trades": trade_frame,
+        "decisions": decision_frame,
+        "summary": summary,
+    }
 
 
 def run_paired_frozen_q70_wfo(
@@ -434,6 +524,7 @@ def run_paired_frozen_q70_wfo(
     overwrite: bool = False,
     db_path: str | Path | None = None,
     legacy_universe_manifest: str | Path | None = None,
+    decision_ledger: bool = False,
 ) -> dict[str, Any]:
     """Run paired fixed-Q70 folds and write a new, self-contained experiment."""
     if (minimum_history_sessions, maximum_staleness_sessions) != (50, 5):
@@ -512,12 +603,17 @@ def run_paired_frozen_q70_wfo(
             arm=arm, folds=folds, database_path=database_path,
             current_symbols=arm_symbols, coverage_index=arm_coverage,
             breadth_index=arm_breadth, paper=paper, parity=parity,
+            decision_ledger=decision_ledger,
         )
         arm_dir = output / arm
         arm_dir.mkdir()
         arms[arm]["folds"].to_csv(arm_dir / "folds.csv", index=False, encoding="utf-8")
         pd.DataFrame([arms[arm]["summary"]]).to_csv(arm_dir / "summary.csv", index=False, encoding="utf-8")
         arms[arm]["trades"].to_csv(arm_dir / "trade_level_oos.csv", index=False, encoding="utf-8")
+        if decision_ledger:
+            arms[arm]["decisions"].to_csv(
+                arm_dir / "candidate_decision_oos.csv", index=False, encoding="utf-8"
+            )
         (arm_dir / "policy_fingerprint.json").write_text(json.dumps({
             "policy": asdict(Q70_FROZEN), "paper_execution": asdict(paper),
             "parity": asdict(parity), "universe_label": arm,
@@ -576,6 +672,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--db-path")
     parser.add_argument("--legacy-universe-manifest")
+    parser.add_argument("--decision-ledger", action="store_true")
     return parser.parse_args()
 
 

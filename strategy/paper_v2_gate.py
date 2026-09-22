@@ -7,7 +7,7 @@ change the Q70 score or gate decision in this version.
 """
 
 from dataclasses import dataclass
-from typing import Any, Iterable
+from typing import Any, Callable, Iterable
 import math
 
 import numpy as np
@@ -176,6 +176,14 @@ class PaperV2QualityGate:
         self,
         signals: Iterable[dict[str, Any]],
     ) -> dict[str, float]:
+        scores, _ = self._score_cross_section_details(signals)
+        return scores
+
+    def _score_cross_section_details(
+        self,
+        signals: Iterable[dict[str, Any]],
+    ) -> tuple[dict[str, float], dict[str, dict[str, float]]]:
+        """Return production quality scores and their actual component ranks."""
         rows = list(signals)
         refs = {
             feature: np.asarray(
@@ -186,18 +194,19 @@ class PaperV2QualityGate:
         }
 
         scores: dict[str, float] = {}
+        components_by_symbol: dict[str, dict[str, float]] = {}
         for row in rows:
             symbol = str(row.get("symbol", "")).strip().upper()
             if not symbol:
                 continue
 
-            components = [
-                _pct_rank(refs[feature], _num(row.get(feature)))
+            components_by_symbol[symbol] = {
+                feature: _pct_rank(refs[feature], _num(row.get(feature)))
                 for feature in QUALITY_FEATURES
-            ]
-            scores[symbol] = float(np.mean(components))
+            }
+            scores[symbol] = float(np.mean(list(components_by_symbol[symbol].values())))
 
-        return scores
+        return scores, components_by_symbol
 
     def decide(
         self,
@@ -238,13 +247,14 @@ class PaperV2QualityGate:
         signals: list[dict[str, Any]],
         *,
         quality_universe: Iterable[dict[str, Any]] | None = None,
+        decision_observer: Callable[[dict[str, Any], GateDecision, dict[str, float]], None] | None = None,
     ) -> tuple[list[dict[str, Any]], list[dict[str, Any]]]:
         universe = (
             list(quality_universe)
             if quality_universe is not None
             else list(signals)
         )
-        quality_scores = self.score_cross_section(universe)
+        quality_scores, component_scores = self._score_cross_section_details(universe)
         accepted: list[dict[str, Any]] = []
         rejected: list[dict[str, Any]] = []
 
@@ -258,6 +268,13 @@ class PaperV2QualityGate:
             enriched["paper_v2_quality"] = round(quality, 6)
             enriched["paper_v2_state"] = decision.state
             enriched["paper_v2_gate"] = decision.reason
+
+            if decision_observer is not None:
+                decision_observer(
+                    enriched,
+                    decision,
+                    component_scores.get(symbol, {}),
+                )
 
             if decision.accepted:
                 accepted.append(enriched)

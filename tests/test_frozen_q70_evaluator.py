@@ -58,7 +58,13 @@ def _parity(initial_cash: float = 100_000_000) -> BacktestPaperParityConfig:
     )
 
 
-def _patch_pipeline(monkeypatch: pytest.MonkeyPatch, rows: list[HistoricalEvaluationRow], trades: list[Trade]) -> dict[str, Any]:
+def _patch_pipeline(
+    monkeypatch: pytest.MonkeyPatch,
+    rows: list[HistoricalEvaluationRow],
+    trades: list[Trade],
+    *,
+    rejection_reason: str | None = None,
+) -> dict[str, Any]:
     captured: dict[str, Any] = {}
     collection = CandidateGenerationCollection(tuple(rows), tuple(trades), {})
     monkeypatch.setattr(
@@ -87,7 +93,11 @@ def _patch_pipeline(monkeypatch: pytest.MonkeyPatch, rows: list[HistoricalEvalua
                 candidate.net_pnl for candidate in candidates
             )
             return SimpleNamespace(
-                executed_trades=candidates,
+                executed_trades=[] if rejection_reason else candidates,
+                rejected_trades=(
+                    [SimpleNamespace(trade=candidate, reason=rejection_reason) for candidate in candidates]
+                    if rejection_reason else []
+                ),
                 equity_curve=pd.DataFrame({"date": [DAY], "equity": [final_equity]}),
                 final_equity=final_equity,
             )
@@ -96,7 +106,8 @@ def _patch_pipeline(monkeypatch: pytest.MonkeyPatch, rows: list[HistoricalEvalua
 
 
 def _run(monkeypatch: pytest.MonkeyPatch, rows: list[HistoricalEvaluationRow], trades: list[Trade], **kwargs: Any):
-    captured = _patch_pipeline(monkeypatch, rows, trades)
+    rejection_reason = kwargs.pop("rejection_reason", None)
+    captured = _patch_pipeline(monkeypatch, rows, trades, rejection_reason=rejection_reason)
     breadth_index = kwargs.pop("breadth_index", _Breadth())
     parity_config = kwargs.pop("parity_config", _parity())
     result = evaluator.run_frozen_q70_backtest(
@@ -366,3 +377,98 @@ def test_total_return_is_zero_for_genuine_no_trade_fold(
     )
     assert metrics["final_equity"] == 250_000_000.0
     assert metrics["total_return_pct"] == 0.0
+
+
+def test_decision_ledger_is_opt_in_and_captures_real_gate_details(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate = _trade("AAA")
+    rows = [_row("AAA", passed=True, score=50), _row("REF", passed=False, score=100)]
+    monkeypatch.setattr(PaperV2QualityGate, "_add_sector_rs_telemetry", lambda self, signal: dict(signal))
+    (_, disabled_metrics, _), _ = _run(monkeypatch, rows, [candidate])
+    assert "decision_ledger" not in disabled_metrics
+
+    with monkeypatch.context() as ledger_patch:
+        ledger_patch.setattr(PaperV2QualityGate, "_add_sector_rs_telemetry", lambda self, signal: dict(signal))
+        (_, metrics, _), _ = _run(
+            ledger_patch,
+            rows,
+            [candidate],
+            collect_decision_ledger=True,
+            decision_phase="test",
+        )
+    decision = metrics["decision_ledger"][0]
+    assert decision.phase == "test"
+    assert decision.gate_accepted is False
+    assert decision.gate_reason == "quality<0.70"
+    assert decision.market_state == "HEALTHY_BULL"
+    assert decision.percentile_score == pytest.approx(0.5)
+    assert decision.percentile_relative_strength_20d == pytest.approx(0.5)
+    assert decision.percentile_adx == pytest.approx(0.5)
+    assert decision.quality_score == pytest.approx(0.5)
+    assert decision.execution_disposition == "not_gate_accepted"
+
+
+def test_decision_ledger_links_original_candidate_and_real_simulator_rejection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate = _trade("AAA")
+    monkeypatch.setattr(PaperV2QualityGate, "_add_sector_rs_telemetry", lambda self, signal: dict(signal))
+    (_, metrics, _), _ = _run(
+        monkeypatch,
+        [_row("AAA", passed=True, score=100)],
+        [candidate],
+        collect_decision_ledger=True,
+        decision_phase="test",
+        rejection_reason="insufficient_cash",
+    )
+    decision = metrics["decision_ledger"][0]
+    assert decision.candidate_key == "AAA|2020-03-01T00:00:00"
+    assert decision.gate_accepted
+    assert decision.execution_disposition == "insufficient_cash"
+    assert decision.executed_trade_key is None
+
+
+def test_decision_ledger_executed_link_and_duplicate_candidate_identity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate = _trade("AAA")
+    monkeypatch.setattr(PaperV2QualityGate, "_add_sector_rs_telemetry", lambda self, signal: dict(signal))
+    (_, metrics, _), _ = _run(
+        monkeypatch,
+        [_row("AAA", passed=True, score=100)],
+        [candidate],
+        collect_decision_ledger=True,
+    )
+    decision = metrics["decision_ledger"][0]
+    assert decision.execution_disposition == "executed"
+    assert decision.executed_trade_key == decision.candidate_key
+
+    duplicate = _trade("AAA")
+    with monkeypatch.context() as duplicate_patch:
+        _patch_pipeline(duplicate_patch, [_row("AAA", passed=True, score=100)], [candidate, duplicate])
+        with pytest.raises(ValueError, match="candidate Trades must be unique"):
+            evaluator.run_frozen_q70_backtest(
+                symbols=["AAA"], start_date="2020-02-01", end_date="2020-04-01",
+                breadth_index=_Breadth(), parity_config=_parity(), collect_decision_ledger=True,
+            )
+
+
+def test_decision_ledger_does_not_change_evaluator_results(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate = _trade("AAA")
+    rows = [_row("AAA", passed=True, score=100)]
+    with monkeypatch.context() as disabled_patch:
+        disabled_patch.setattr(PaperV2QualityGate, "_add_sector_rs_telemetry", lambda self, signal: dict(signal))
+        (disabled_trades, disabled_metrics, disabled_equity), _ = _run(disabled_patch, rows, [candidate])
+    with monkeypatch.context() as enabled_patch:
+        enabled_patch.setattr(PaperV2QualityGate, "_add_sector_rs_telemetry", lambda self, signal: dict(signal))
+        (enabled_trades, enabled_metrics, enabled_equity), _ = _run(
+            enabled_patch, rows, [candidate], collect_decision_ledger=True,
+        )
+    assert enabled_trades == disabled_trades
+    assert enabled_equity.equals(disabled_equity)
+    assert {
+        key: value for key, value in enabled_metrics.items() if key != "decision_ledger"
+    } == disabled_metrics
