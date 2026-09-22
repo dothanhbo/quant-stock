@@ -59,6 +59,8 @@ class FrozenQ70Decision:
     breadth_ema50_change_10d: Any
     gate_accepted: bool
     gate_reason: str
+    state_policy_eligible: bool
+    state_policy_reason: str | None
     execution_disposition: str
     executed_trade_key: str | None
 
@@ -149,6 +151,7 @@ def run_frozen_q70_backtest(
     parity_config: BacktestPaperParityConfig | None = None,
     collect_decision_ledger: bool = False,
     decision_phase: str = "unspecified",
+    allowed_entry_states: Iterable[str] | None = None,
 ) -> tuple[list[Trade], dict[str, Any], pd.DataFrame]:
     """Evaluate the immutable Q70 policy using existing candidates and simulator.
 
@@ -161,6 +164,13 @@ def run_frozen_q70_backtest(
         raise ValueError("universe_mode is not supported")
     if minimum_history_sessions < 0 or maximum_staleness_sessions < 0:
         raise ValueError("coverage thresholds must be non-negative")
+    allowed_states = (
+        None
+        if allowed_entry_states is None
+        else frozenset(str(state).strip().upper() for state in allowed_entry_states)
+    )
+    if allowed_states is not None and not allowed_states:
+        raise ValueError("allowed_entry_states must not be empty when supplied")
 
     paper = _frozen_paper_config(paper_execution_config)
     parity = parity_config or BacktestPaperParityConfig.from_paper_config(paper)
@@ -271,8 +281,10 @@ def run_frozen_q70_backtest(
     gate_decisions: dict[str, FrozenQ70Decision] = {}
     rejection_counts: Counter[str] = Counter()
     rejection_state_counts: Counter[str] = Counter()
+    state_policy_rejection_counts: Counter[str] = Counter()
     total_evaluations = 0
     base_entry_candidates = 0
+    q70_accepted_candidates = 0
 
     for signal_date in sorted(evaluations_by_date):
         applicable_rows = evaluations_by_date[signal_date]
@@ -321,6 +333,8 @@ def run_frozen_q70_backtest(
                 breadth_ema50_change_10d=signal.get("breadth_ema50_change_10d"),
                 gate_accepted=bool(decision.accepted),
                 gate_reason=str(signal["paper_v2_gate"]),
+                state_policy_eligible=bool(decision.accepted),
+                state_policy_reason=None,
                 execution_disposition=("pending_simulation" if decision.accepted else "not_gate_accepted"),
                 executed_trade_key=None,
             )
@@ -335,6 +349,20 @@ def run_frozen_q70_backtest(
                 str(rejected_signal.get("paper_v2_state", "UNKNOWN"))
             ] += 1
         for accepted_signal in accepted:
+            q70_accepted_candidates += 1
+            candidate_key = _candidate_key(str(accepted_signal["symbol"]), signal_date)
+            state = str(accepted_signal["paper_v2_state"])
+            if allowed_states is not None and state not in allowed_states:
+                state_policy_rejection_counts[state] += 1
+                if collect_decision_ledger:
+                    decision = gate_decisions[candidate_key]
+                    gate_decisions[candidate_key] = replace(
+                        decision,
+                        state_policy_eligible=False,
+                        state_policy_reason="state_not_allowed",
+                        execution_disposition="state_policy_rejected",
+                    )
+                continue
             candidate = candidates_by_key[_key(
                 str(accepted_signal["symbol"]), signal_date
             )]
@@ -366,6 +394,8 @@ def run_frozen_q70_backtest(
         }
         for candidate_key, decision in tuple(gate_decisions.items()):
             if not decision.gate_accepted:
+                continue
+            if not decision.state_policy_eligible:
                 continue
             if candidate_key in executed_by_key:
                 gate_decisions[candidate_key] = replace(
@@ -439,7 +469,7 @@ def run_frozen_q70_backtest(
             "q70_features": QUALITY_FEATURES,
             "total_evaluation_rows": total_evaluations,
             "base_entry_candidates": base_entry_candidates,
-            "q70_accepted_candidates": len(accepted_candidates),
+            "q70_accepted_candidates": q70_accepted_candidates,
             "q70_rejection_counts": dict(rejection_counts),
             "q70_rejection_state_counts": dict(rejection_state_counts),
             "coverage_eligible_count_min": coverage_min,
@@ -465,6 +495,18 @@ def run_frozen_q70_backtest(
             },
         }
     )
+    if allowed_states is not None:
+        metrics.update(
+            {
+                "state_policy_rejected_candidates": int(
+                    sum(state_policy_rejection_counts.values())
+                ),
+                "state_policy_rejection_state_counts": dict(
+                    state_policy_rejection_counts
+                ),
+                "state_policy_allowed_states": tuple(sorted(allowed_states)),
+            }
+        )
     if collect_decision_ledger:
         metrics["decision_ledger"] = tuple(
             sorted(gate_decisions.values(), key=lambda row: (row.signal_date, row.symbol, row.candidate_key))

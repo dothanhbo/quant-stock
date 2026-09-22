@@ -217,6 +217,49 @@ def test_gate_retains_production_tie_and_invalid_value_behavior(monkeypatch: pyt
     assert invalid_metrics["q70_rejection_counts"] == {"quality<0.70": 1}
 
 
+def test_optional_state_policy_filters_only_gate_accepted_neutral_before_simulation(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    neutral = _trade("AAA")
+    rows = [_row("AAA", passed=True, score=100, regime="SIDEWAY")]
+    monkeypatch.setattr(PaperV2QualityGate, "_add_sector_rs_telemetry", lambda self, signal: dict(signal))
+    (_, baseline_metrics, _), baseline = _run(
+        monkeypatch, rows, [neutral], collect_decision_ledger=True,
+        breadth_index=_Breadth(fields={"breadth_ema50_pct": 70, "breadth_ema50_change_10d": 0}),
+    )
+    assert baseline["candidates"] == [neutral]
+    (_, variant_metrics, _), variant = _run(
+        monkeypatch, rows, [neutral], collect_decision_ledger=True,
+        allowed_entry_states={"HEALTHY_BULL", "RECOVERY", "FRAGILE_BULL"},
+        breadth_index=_Breadth(fields={"breadth_ema50_pct": 70, "breadth_ema50_change_10d": 0}),
+    )
+    assert variant["candidates"] == []
+    assert baseline_metrics["q70_accepted_candidates"] == variant_metrics["q70_accepted_candidates"] == 1
+    assert variant_metrics["state_policy_rejected_candidates"] == 1
+    decision = variant_metrics["decision_ledger"][0]
+    assert decision.gate_accepted
+    assert not decision.state_policy_eligible
+    assert decision.state_policy_reason == "state_not_allowed"
+    assert decision.execution_disposition == "state_policy_rejected"
+
+
+def test_state_policy_does_not_reclassify_gate_rejections(monkeypatch: pytest.MonkeyPatch) -> None:
+    candidate = _trade("AAA")
+    monkeypatch.setattr(PaperV2QualityGate, "_add_sector_rs_telemetry", lambda self, signal: dict(signal))
+    (_, metrics, _), captured = _run(
+        monkeypatch, [_row("AAA", passed=True, score=100, regime="BEAR")], [candidate],
+        collect_decision_ledger=True,
+        allowed_entry_states={"HEALTHY_BULL", "RECOVERY", "FRAGILE_BULL"},
+        breadth_index=_Breadth(fields={"breadth_ema50_pct": 70, "breadth_ema50_change_10d": 0}),
+    )
+    assert captured["candidates"] == []
+    decision = metrics["decision_ledger"][0]
+    assert not decision.gate_accepted
+    assert decision.execution_disposition == "not_gate_accepted"
+    assert decision.state_policy_reason is None
+    assert metrics["state_policy_rejected_candidates"] == 0
+
+
 def test_historical_gate_telemetry_cannot_reach_vnstock_or_change_selection(
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
