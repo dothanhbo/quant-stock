@@ -194,3 +194,66 @@ def test_gate_retains_production_tie_and_invalid_value_behavior(monkeypatch: pyt
     (_, invalid_metrics, _), invalid_captured = _run(monkeypatch, [invalid], [first])
     assert invalid_captured["candidates"] == []
     assert invalid_metrics["q70_rejection_counts"] == {"quality<0.70": 1}
+
+
+def test_historical_gate_telemetry_cannot_reach_vnstock_or_change_selection(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """The real gate remains in use, but its non-selection telemetry is offline."""
+    import core.sector as sector
+    import core.universe as universe
+    import strategy.paper_v2_gate as paper_gate
+    import strategy.relative_strength_v2 as sector_rs
+
+    def forbidden(*args: object, **kwargs: object) -> object:
+        raise AssertionError("historical Q70 must not retrieve a live VN100/sector universe")
+
+    monkeypatch.setattr(evaluator, "get_vn100_symbols", forbidden)
+    monkeypatch.setattr(universe, "get_vn100_symbols", forbidden)
+    monkeypatch.setattr(paper_gate, "get_vn100_symbols", forbidden)
+    monkeypatch.setattr(sector_rs, "get_vn100_symbols", forbidden)
+    monkeypatch.setattr(paper_gate, "fetch_sector_mapping", forbidden)
+    monkeypatch.setattr(sector, "fetch_sector_mapping", forbidden)
+
+    candidate = _trade("AAA")
+    (_, metrics, _), captured = _run(
+        monkeypatch,
+        [_row("AAA", passed=True, score=100)],
+        [candidate],
+    )
+    assert captured["candidates"] == [candidate]
+    assert metrics["q70_accepted_candidates"] == 1
+
+
+def test_injected_legacy_and_coverage_universes_never_fall_back_to_live_vn100(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate = _trade("AAA")
+    rows = [_row("AAA", passed=True, score=100)]
+    captured = _patch_pipeline(monkeypatch, rows, [candidate])
+    monkeypatch.setattr(
+        evaluator,
+        "get_vn100_symbols",
+        lambda: (_ for _ in ()).throw(AssertionError("unexpected VN100 fallback")),
+    )
+    monkeypatch.setattr(PaperV2QualityGate, "_add_sector_rs_telemetry", lambda self, signal: dict(signal))
+    evaluator.run_frozen_q70_backtest(
+        start_date="2020-02-01", end_date="2020-04-01",
+        current_vn100_symbols=("AAA", "BBB"), breadth_index=_Breadth(),
+        parity_config=_parity(),
+    )
+    assert captured["candidates"] == [candidate]
+
+    coverage = CoverageUniverseIndex(
+        start_date="2020-02-01", end_date="2020-04-01",
+        effective_start_date="2020-03-01", effective_end_date="2020-03-01",
+        minimum_history_sessions=50, maximum_staleness_sessions=5,
+        session_dates=("2020-03-01",), candidate_symbols=("AAA",),
+        eligible_count_by_session={"2020-03-01": 1},
+        _members_by_session={"2020-03-01": frozenset({"AAA"})},
+    )
+    evaluator.run_frozen_q70_backtest(
+        start_date="2020-02-01", end_date="2020-04-01",
+        universe_mode="database_coverage", coverage_index=coverage,
+        breadth_index=_Breadth(), parity_config=_parity(),
+    )

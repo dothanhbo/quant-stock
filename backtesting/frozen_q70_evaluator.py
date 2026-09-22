@@ -223,7 +223,16 @@ def run_frozen_q70_backtest(
                 raise ValueError("candidate Trades must be unique by symbol and signal_date")
             candidates_by_key[candidate_key] = candidate
 
-    gate = PaperV2QualityGate(_Q70_THRESHOLD)
+    # Sector RS is observational telemetry only: it is not a Q70 feature and
+    # must not make historical candidate processing retrieve a live universe.
+    # An explicit empty mapping makes the production gate record unavailable
+    # telemetry without calling its Vnstock sector provider.  The immutable
+    # selected universe is still supplied so no fallback can reach VN100.
+    gate = PaperV2QualityGate(
+        _Q70_THRESHOLD,
+        sector_mapping={},
+        sector_universe_symbols=tuple(selected_symbols),
+    )
     accepted_candidates: list[Trade] = []
     rejection_counts: Counter[str] = Counter()
     rejection_state_counts: Counter[str] = Counter()
