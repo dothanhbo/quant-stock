@@ -50,6 +50,8 @@ def test_benchmark_runs_parity_query_count_and_read_only(database: Path) -> None
     assert result["parity"] and result["database_unchanged"]
     assert result["snapshot_construction"]["query_counts"]["data_selects"] == 1
     assert result["scenarios"][0]["bulk_loader"]["query_counts"]["data_selects"] == 1
+    assert result["scenarios"][0]["bulk_loader"]["query_mode"] in {"json_each", "fallback_date_scan"}
+    assert result["scenarios"][0]["bulk_loader"]["sqlite_rows_returned"] == result["scenarios"][0]["bulk_loader"]["row_count"]
     assert result["scenarios"][0]["existing_loader"]["query_counts"]["data_selects"] == 1
     assert result["scenarios"][1]["actual_sample_size"] == 2
     assert result["scenarios"][1]["sample_capped"]
@@ -92,3 +94,16 @@ def test_json_output_invalid_arguments_and_import_safety(database: Path, tmp_pat
         cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True,
     )
     assert completed.returncode == 0, completed.stderr
+
+
+def test_documented_direct_script_invocation_works(database: Path) -> None:
+    script = Path(__file__).resolve().parents[1] / "benchmarks" / "benchmark_market_data_snapshot.py"
+    completed = subprocess.run(
+        [
+            sys.executable, str(script), "--database-path", str(database),
+            "--sample-sizes", "1", "--repeat", "1",
+        ],
+        cwd=Path(__file__).resolve().parents[1], capture_output=True, text=True,
+    )
+    assert completed.returncode == 0, completed.stderr
+    assert "Snapshot:" in completed.stdout

@@ -21,6 +21,11 @@ from typing import Any, Callable, Iterator
 
 import pandas as pd
 
+# Permit the documented ``python benchmarks/benchmark_market_data_snapshot.py``
+# invocation while retaining normal imports under pytest and ``python -m``.
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
+
 from backtesting import engine as historical_engine
 from core.paths import resolve_market_database_path
 import quantlab.catalog.market_data_snapshot as snapshot_module
@@ -60,8 +65,8 @@ def _query_counter() -> tuple[dict[str, int], Callable[[str], None]]:
         normalized = statement.lstrip().upper()
         if normalized.startswith("PRAGMA"):
             counts["pragma_reads"] += 1
-        elif normalized.startswith("SELECT"):
-            if " FROM PRICES" in normalized:
+        elif normalized.startswith(("SELECT", "WITH")):
+            if " PRICES" in normalized:
                 counts["data_selects"] += 1
             else:
                 counts["other_reads"] += 1
@@ -243,7 +248,12 @@ def run_benchmark(
             "sample_capped": len(symbols) < requested_size,
             "symbols": list(symbols),
             "existing_loader": {**_summary(old_times), "row_count": old_rows, "peak_python_bytes": old_peaks, "query_counts": old_queries},
-            "bulk_loader": {**_summary(bulk_times), "row_count": bulk_rows, "peak_python_bytes": bulk_peaks, "query_counts": bulk_queries},
+            "bulk_loader": {
+                **_summary(bulk_times), "row_count": bulk_rows,
+                "peak_python_bytes": bulk_peaks, "query_counts": bulk_queries,
+                "query_mode": bundle.query_mode,
+                "sqlite_rows_returned": bundle.sqlite_row_count,
+            },
             "speed_ratio_existing_over_bulk": (
                 float(pd.Series(old_times).median() / pd.Series(bulk_times).median())
                 if bulk_times else None
