@@ -35,6 +35,26 @@ def _donchian(frames, _dependencies, parameters):
     return {symbol: pd.DataFrame({"time": frame["time"], reference: frame["high"].shift(1).rolling(window=period, min_periods=period).max(), breakout: frame["close"] > frame["high"].shift(1).rolling(window=period, min_periods=period).max()}) for symbol, frame in frames.items()}
 
 
+def _historical_candidate_core_subset(frames, dependencies, parameters):
+    """Combine dependency outputs only; no indicator formula is duplicated."""
+    ema10 = dependencies[FeatureRequest("ema", "v1", {"period": 10})]
+    ema20 = dependencies[FeatureRequest("ema", "v1", {"period": 20})]
+    ema50 = dependencies[FeatureRequest("ema", "v1", {"period": 50})]
+    atr14 = dependencies[FeatureRequest("atr", "v1", {"period": 14})]
+    donchian20 = dependencies[FeatureRequest("donchian", "v1", {"period": 20})]
+    result = {}
+    for symbol, raw in frames.items():
+        result[symbol] = pd.DataFrame({
+            # Symbol identity belongs to the bundle key.  Keeping the frame
+            # itself numeric/datetime/bool allows the explicitly opted-in
+            # ``npz_numeric_v1`` codec to cache this top-level bundle.
+            "time": raw["time"], "open": raw["open"], "high": raw["high"], "low": raw["low"], "close": raw["close"], "volume": raw["volume"],
+            "EMA10": ema10[symbol]["EMA10"], "EMA20": ema20[symbol]["EMA20"], "EMA50": ema50[symbol]["EMA50"], "ATR14": atr14[symbol]["ATR14"],
+            "Previous_20D_High": donchian20[symbol]["Previous_20D_High"], "Breakout_20D": donchian20[symbol]["Breakout_20D"],
+        })
+    return result
+
+
 def _parameter_warmup(parameters: Mapping[str, object]) -> int:
     return _period(parameters)
 
@@ -44,4 +64,5 @@ def builtin_definitions() -> tuple[FeatureDefinition, ...]:
         FeatureDefinition("ema", "v1", FeatureScope.PER_SYMBOL, ("time", "close"), direct_warmup_sessions=0, output_columns=("time",), compute=_ema),
         FeatureDefinition("atr", "v1", FeatureScope.PER_SYMBOL, ("time", "high", "low", "close"), direct_warmup_sessions=_parameter_warmup, output_columns=("time",), compute=_atr),
         FeatureDefinition("donchian", "v1", FeatureScope.PER_SYMBOL, ("time", "high", "close"), direct_warmup_sessions=_parameter_warmup, output_columns=("time",), compute=_donchian),
+        FeatureDefinition("historical_candidate_core_subset", "v1", FeatureScope.PER_SYMBOL, ("time", "open", "high", "low", "close", "volume"), dependencies=(FeatureRequest("ema", "v1", {"period": 10}), FeatureRequest("ema", "v1", {"period": 20}), FeatureRequest("ema", "v1", {"period": 50}), FeatureRequest("atr", "v1", {"period": 14}), FeatureRequest("donchian", "v1", {"period": 20})), direct_warmup_sessions=0, output_columns=("time", "open", "high", "low", "close", "volume", "EMA10", "EMA20", "EMA50", "ATR14", "Previous_20D_High", "Breakout_20D"), compute=_historical_candidate_core_subset),
     )
