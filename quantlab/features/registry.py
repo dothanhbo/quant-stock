@@ -67,11 +67,18 @@ class FeatureRegistry:
         resolved[request] = (definition, identity, warmup)
         return resolved[request]
 
-    def compute(self, request: FeatureRequest, snapshot: MarketDataSnapshot, symbols: Iterable[str], *, start_date: str | None = None, through_date: str | None = None, universe_identity: str | None = None, cache: "PreparedFeatureCache | None" = None) -> FeatureResult:
+    def compute(self, request: FeatureRequest, snapshot: MarketDataSnapshot, symbols: Iterable[str], *, start_date: str | None = None, through_date: str | None = None, universe_identity: str | None = None, execution_context: Any | None = None, cache: "PreparedFeatureCache | None" = None) -> FeatureResult:
         resolved: dict[FeatureRequest, tuple[FeatureDefinition, FeatureIdentity, int]] = {}
         definition, identity, warmup = self._resolve(request, set(), resolved)
-        if definition.scope is not FeatureScope.PER_SYMBOL and not universe_identity:
+        if (
+            any(item[0].scope is not FeatureScope.PER_SYMBOL for item in resolved.values())
+            and not universe_identity
+        ):
             raise ValueError("cross-sectional and market features require universe_identity")
+        if execution_context is not None:
+            context_identity = getattr(execution_context, "membership_identity", None)
+            if not isinstance(context_identity, str) or context_identity != universe_identity:
+                raise ValueError("execution_context membership identity must match universe_identity")
         normalized_symbols = tuple(sorted({str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()}))
         computation_identity = FeatureComputationIdentity.create(feature_identity=identity, snapshot_id=snapshot.snapshot_id, symbols=normalized_symbols, start_date=start_date, through_date=through_date, universe_identity=universe_identity)
         if cache is not None:
@@ -92,7 +99,12 @@ class FeatureRegistry:
                 dependency: outputs[dependency]
                 for dependency in self._dependency_requests(current_definition, current)
             }
-            computed = current_definition.compute(raw_frames, dependency_outputs, current.parameter_mapping)  # type: ignore[misc]
+            compute = current_definition.compute
+            assert compute is not None
+            if current_definition.uses_execution_context:
+                computed = compute(raw_frames, dependency_outputs, current.parameter_mapping, execution_context)
+            else:
+                computed = compute(raw_frames, dependency_outputs, current.parameter_mapping)
             checked: dict[str, pd.DataFrame] = {}
             for symbol, frame in computed.items():
                 declared_missing = set(current_definition.output_columns).difference(frame.columns)

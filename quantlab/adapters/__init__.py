@@ -3,6 +3,8 @@
 from .historical_prepared_features import (
     HistoricalPreparedFeatureBundle,
     prepare_historical_benchmark_relative_subset,
+    prepare_historical_market_context_subset,
+    prepare_historical_breadth_context_subset,
     prepare_historical_core_subset,
     prepare_historical_per_symbol_subset,
 )
@@ -10,6 +12,8 @@ from .historical_prepared_features import (
 __all__ = [
     "HistoricalPreparedFeatureBundle",
     "prepare_historical_benchmark_relative_subset",
+    "prepare_historical_market_context_subset",
+    "prepare_historical_breadth_context_subset",
     "prepare_historical_core_subset",
     "prepare_historical_per_symbol_subset",
 ]

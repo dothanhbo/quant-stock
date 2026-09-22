@@ -8,6 +8,7 @@ import numpy as np
 import pandas as pd
 
 from .contracts import FeatureDefinition, FeatureRequest, FeatureScope
+from .universe_context import BREADTH_CONTEXT_KEY, PointInTimeUniverseContext
 
 
 def _period(parameters: Mapping[str, object]) -> int:
@@ -203,6 +204,104 @@ def _historical_candidate_benchmark_relative_subset(frames, dependencies, parame
     }
 
 
+def _historical_market_regime(frames, _dependencies, parameters):
+    """Exact causal history authority from prepare_market_regime_history."""
+    benchmark_symbol = _benchmark_symbol(parameters)
+    benchmark = frames.get(benchmark_symbol)
+    if benchmark is None or benchmark.empty:
+        raise ValueError(f"benchmark series is unavailable: {benchmark_symbol}")
+    frame = benchmark[["time", "close"]].copy()
+    close = frame["close"]
+    ema50 = close.ewm(span=50, adjust=False).mean()
+    ema200 = close.ewm(span=200, adjust=False).mean()
+    slope = (ema50 / ema50.shift(10) - 1) * 100
+    return_20d = (close / close.shift(20) - 1) * 100
+    enough_history = pd.Series(np.arange(len(frame)), index=frame.index) >= 199
+    bull = enough_history & (close > ema50) & (ema50 > ema200) & (slope > 0) & (return_20d > -2)
+    bear = enough_history & (close < ema200) & (ema50 < ema200) & (slope < 0)
+    regime = np.full(len(frame), "UNKNOWN", dtype=object)
+    regime[bull] = "BULL"
+    regime[bear] = "BEAR"
+    regime[enough_history & ~bull & ~bear] = "SIDEWAY"
+    return {benchmark_symbol: pd.DataFrame({"time": frame["time"], "Market_Regime": regime})}
+
+
+def _market_context_dependencies(request: FeatureRequest) -> tuple[FeatureRequest, ...]:
+    parameters = request.parameter_mapping
+    return (
+        FeatureRequest("historical_candidate_benchmark_relative_subset", "v3", {
+            "benchmark_symbol": _benchmark_symbol(parameters), "period": 20,
+        }),
+        FeatureRequest("historical_market_regime", "v1", {"benchmark_symbol": _benchmark_symbol(parameters)}),
+    )
+
+
+def _historical_candidate_market_context_subset(frames, dependencies, parameters):
+    benchmark_symbol = _benchmark_symbol(parameters)
+    core = dependencies[FeatureRequest("historical_candidate_benchmark_relative_subset", "v3", {
+        "benchmark_symbol": benchmark_symbol, "period": 20,
+    })]
+    regime = dependencies[FeatureRequest("historical_market_regime", "v1", {"benchmark_symbol": benchmark_symbol})][benchmark_symbol]
+    return {
+        symbol: frame.merge(regime, on="time", how="left")
+        for symbol, frame in core.items()
+    }
+
+
+def _historical_breadth_context(frames, _dependencies, _parameters, context):
+    """Mirror HistoricalBreadthIndex using the supplied immutable memberships."""
+    if not isinstance(context, PointInTimeUniverseContext):
+        raise ValueError("historical_breadth_context requires PointInTimeUniverseContext")
+    rows_by_date: dict[str, list[tuple[str, float, int, float]]] = {}
+    alpha = 2.0 / 51.0
+    for symbol in context.candidate_symbols:
+        frame = frames.get(symbol)
+        if frame is None:
+            continue
+        previous: float | None = None; count = 0
+        for time, close in frame[["time", "close"]].itertuples(index=False, name=None):
+            try:
+                value = float(close)
+            except (TypeError, ValueError):
+                continue
+            if not np.isfinite(value):
+                continue
+            count += 1; ema = value if previous is None else alpha * value + (1.0 - alpha) * previous
+            previous = ema
+            rows_by_date.setdefault(pd.Timestamp(time).date().isoformat(), []).append((symbol, value, count, ema))
+    prior: list[float] = []; output: list[dict[str, object]] = []
+    for date_text in sorted(rows_by_date):
+        applicable = context.members_as_of(date_text)
+        values = [close > ema for symbol, close, count, ema in rows_by_date[date_text] if symbol in applicable and count >= 50]
+        if not values:
+            continue
+        breadth = sum(values) / len(values) * 100.0
+        change = breadth - prior[-10] if len(prior) >= 10 else float("nan")
+        prior.append(breadth)
+        output.append({
+            "time": pd.Timestamp(date_text),
+            "breadth_ema50_pct": round(breadth, 4),
+            "breadth_ema50_change_10d": round(change, 4) if np.isfinite(change) else float("nan"),
+            "breadth_universe_count": len(values),
+        })
+    return {BREADTH_CONTEXT_KEY: pd.DataFrame(output, columns=("time", "breadth_ema50_pct", "breadth_ema50_change_10d", "breadth_universe_count"))}
+
+
+def _breadth_context_dependencies(request: FeatureRequest) -> tuple[FeatureRequest, ...]:
+    parameters = request.parameter_mapping
+    return (
+        FeatureRequest("historical_candidate_market_context_subset", "v4", {"benchmark_symbol": _benchmark_symbol(parameters)}),
+        FeatureRequest("historical_breadth_context", "v1"),
+    )
+
+
+def _historical_candidate_breadth_context_subset(frames, dependencies, parameters):
+    benchmark = _benchmark_symbol(parameters)
+    core = dependencies[FeatureRequest("historical_candidate_market_context_subset", "v4", {"benchmark_symbol": benchmark})]
+    breadth = dependencies[FeatureRequest("historical_breadth_context", "v1")][BREADTH_CONTEXT_KEY]
+    return {symbol: frame.merge(breadth, on="time", how="left") for symbol, frame in core.items()}
+
+
 def _parameter_warmup(parameters: Mapping[str, object]) -> int:
     return _period(parameters)
 
@@ -223,4 +322,8 @@ def builtin_definitions() -> tuple[FeatureDefinition, ...]:
         FeatureDefinition("historical_candidate_per_symbol_subset", "v2", FeatureScope.PER_SYMBOL, ("time", "open", "high", "low", "close", "volume"), dependencies=(FeatureRequest("historical_candidate_core_subset", "v1"), FeatureRequest("rsi", "v1", {"period": 14}), FeatureRequest("adx", "v1", {"period": 14}), FeatureRequest("volume_context", "v1", {"period": 20}), FeatureRequest("atr_percent", "v1"), FeatureRequest("price_context", "v1")), direct_warmup_sessions=0, output_columns=("time", "open", "high", "low", "close", "volume", "EMA10", "EMA20", "EMA50", "ATR14", "Previous_20D_High", "Breakout_20D", "RSI", "Vol_MA20", "Vol_Ratio", "Previous_5D_Max_Volume", "Volume_Breakout_5D", "ATR_Percent", "ADX14", "EMA20_Rising", "Recent_Breakout_10D", "Touched_EMA10", "Reclaimed_EMA10", "Distance_EMA20_Pct", "Return_3D_Pct", "Body_Ratio", "Green_Candle", "Close_Upper_Half"), compute=_historical_candidate_per_symbol_subset),
         FeatureDefinition("benchmark_relative_context", "v1", FeatureScope.PER_SYMBOL, ("time", "close"), direct_warmup_sessions=lambda parameters: _period(parameters) + 1, output_columns=("time", "Stock_Return_20D", "Index_Return_20D", "Relative_Strength_20D"), compute=_benchmark_relative_context),
         FeatureDefinition("historical_candidate_benchmark_relative_subset", "v3", FeatureScope.PER_SYMBOL, ("time", "open", "high", "low", "close", "volume"), dependencies=_benchmark_relative_dependencies, direct_warmup_sessions=0, output_columns=("time", "open", "high", "low", "close", "volume", "EMA10", "EMA20", "EMA50", "ATR14", "Previous_20D_High", "Breakout_20D", "RSI", "Vol_MA20", "Vol_Ratio", "Previous_5D_Max_Volume", "Volume_Breakout_5D", "ATR_Percent", "ADX14", "EMA20_Rising", "Recent_Breakout_10D", "Touched_EMA10", "Reclaimed_EMA10", "Distance_EMA20_Pct", "Return_3D_Pct", "Body_Ratio", "Green_Candle", "Close_Upper_Half", "Stock_Return_20D", "Index_Return_20D", "Relative_Strength_20D"), compute=_historical_candidate_benchmark_relative_subset),
+        FeatureDefinition("historical_market_regime", "v1", FeatureScope.MARKET, ("time", "close"), direct_warmup_sessions=200, output_columns=("time", "Market_Regime"), compute=_historical_market_regime),
+        FeatureDefinition("historical_candidate_market_context_subset", "v4", FeatureScope.PER_SYMBOL, ("time", "open", "high", "low", "close", "volume"), dependencies=_market_context_dependencies, direct_warmup_sessions=0, output_columns=("time", "open", "high", "low", "close", "volume", "EMA10", "EMA20", "EMA50", "ATR14", "Previous_20D_High", "Breakout_20D", "RSI", "Vol_MA20", "Vol_Ratio", "Previous_5D_Max_Volume", "Volume_Breakout_5D", "ATR_Percent", "ADX14", "EMA20_Rising", "Recent_Breakout_10D", "Touched_EMA10", "Reclaimed_EMA10", "Distance_EMA20_Pct", "Return_3D_Pct", "Body_Ratio", "Green_Candle", "Close_Upper_Half", "Stock_Return_20D", "Index_Return_20D", "Relative_Strength_20D", "Market_Regime"), compute=_historical_candidate_market_context_subset),
+        FeatureDefinition("historical_breadth_context", "v1", FeatureScope.CROSS_SECTIONAL, ("time", "close"), uses_execution_context=True, direct_warmup_sessions=50, output_columns=("time", "breadth_ema50_pct", "breadth_ema50_change_10d", "breadth_universe_count"), compute=_historical_breadth_context),
+        FeatureDefinition("historical_candidate_breadth_context_subset", "v5", FeatureScope.PER_SYMBOL, ("time", "open", "high", "low", "close", "volume"), dependencies=_breadth_context_dependencies, direct_warmup_sessions=0, output_columns=("time", "open", "high", "low", "close", "volume", "EMA10", "EMA20", "EMA50", "ATR14", "Previous_20D_High", "Breakout_20D", "RSI", "Vol_MA20", "Vol_Ratio", "Previous_5D_Max_Volume", "Volume_Breakout_5D", "ATR_Percent", "ADX14", "EMA20_Rising", "Recent_Breakout_10D", "Touched_EMA10", "Reclaimed_EMA10", "Distance_EMA20_Pct", "Return_3D_Pct", "Body_Ratio", "Green_Candle", "Close_Upper_Half", "Stock_Return_20D", "Index_Return_20D", "Relative_Strength_20D", "Market_Regime", "breadth_ema50_pct", "breadth_ema50_change_10d", "breadth_universe_count"), compute=_historical_candidate_breadth_context_subset),
     )

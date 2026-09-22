@@ -99,6 +99,7 @@ class FeatureDefinition:
     scope: FeatureScope
     required_raw_columns: tuple[str, ...]
     dependencies: tuple[FeatureRequest, ...] | DependencyResolver = ()
+    uses_execution_context: bool = False
     direct_warmup_sessions: WarmupResolver = 0
     causal: bool = True
     output_columns: tuple[str, ...] = ()
