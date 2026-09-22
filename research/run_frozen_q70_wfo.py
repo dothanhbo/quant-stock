@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 from dataclasses import asdict, replace
 from pathlib import Path
+from hashlib import sha256
 import json
 import math
 import shutil
@@ -54,6 +55,162 @@ _REQUIRED_TEST_METRICS = (
     "total_sell_tax",
     "total_transaction_cost",
 )
+
+
+def _normalized_symbols(symbols: Any) -> list[str]:
+    return sorted(
+        {
+            str(symbol).strip().upper()
+            for symbol in symbols
+            if str(symbol).strip() and str(symbol).strip().upper() != "VNINDEX"
+        }
+    )
+
+
+def _canonical_hash(value: Any) -> str:
+    """SHA-256 of deterministic UTF-8 JSON (sorted keys, compact separators)."""
+    encoded = json.dumps(
+        value,
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    ).encode("utf-8")
+    return sha256(encoded).hexdigest()
+
+
+def _fold_membership_record(
+    fold: WalkForwardFold,
+    *,
+    memberships: list[tuple[str, list[str]]],
+) -> dict[str, Any]:
+    set_dictionary: dict[str, list[str]] = {}
+    sessions: list[dict[str, Any]] = []
+    for session_date, symbols in memberships:
+        normalized = _normalized_symbols(symbols)
+        membership_hash = _canonical_hash(normalized)
+        set_dictionary.setdefault(membership_hash, normalized)
+        sessions.append(
+            {
+                "session_date": session_date,
+                "member_count": len(normalized),
+                "membership_hash": membership_hash,
+            }
+        )
+    session_sets = [set(set_dictionary[row["membership_hash"]]) for row in sessions]
+    union = sorted(set().union(*session_sets)) if session_sets else []
+    intersection = sorted(set.intersection(*session_sets)) if session_sets else []
+    return {
+        "fold": fold.fold,
+        "test_start": str(fold.test_start.date()),
+        "test_end": str(fold.test_end.date()),
+        "sessions": sessions,
+        "membership_sets": set_dictionary,
+        "fold_membership_hash": _canonical_hash(
+            [{"session_date": row["session_date"], "membership_hash": row["membership_hash"]} for row in sessions]
+        ),
+        "member_count_min": min((row["member_count"] for row in sessions), default=0),
+        "member_count_max": max((row["member_count"] for row in sessions), default=0),
+        "union_symbols": union,
+        "union_symbol_count": len(union),
+        "union_hash": _canonical_hash(union),
+        "intersection_symbols": intersection,
+        "intersection_symbol_count": len(intersection),
+        "intersection_hash": _canonical_hash(intersection),
+    }
+
+
+def _arm_universe_manifest(
+    *,
+    arm: str,
+    folds: list[WalkForwardFold],
+    session_dates: tuple[str, ...],
+    legacy_symbols: list[str] | None,
+    coverage_index: CoverageUniverseIndex | None,
+) -> dict[str, Any]:
+    is_legacy = arm == "legacy_current_vn100_retroactive"
+    if is_legacy:
+        resolved_symbols = _normalized_symbols(legacy_symbols or [])
+        manifest: dict[str, Any] = {
+            "universe_mode": arm,
+            "retrospective_current_membership_warning": True,
+            "resolved_at_run_symbols": resolved_symbols,
+            "symbol_count": len(resolved_symbols),
+            "symbol_list_hash": _canonical_hash(resolved_symbols),
+        }
+    else:
+        if coverage_index is None:
+            raise ValueError("database coverage manifest requires coverage_index")
+        candidates = _normalized_symbols(coverage_index.candidate_symbols)
+        manifest = {
+            "universe_mode": arm,
+            "minimum_history_sessions": coverage_index.minimum_history_sessions,
+            "maximum_staleness_sessions": coverage_index.maximum_staleness_sessions,
+            "coverage_index_start_date": coverage_index.start_date,
+            "coverage_index_end_date": coverage_index.end_date,
+            "candidate_symbols": candidates,
+            "candidate_symbol_count": len(candidates),
+            "candidate_symbol_list_hash": _canonical_hash(candidates),
+            "database_coverage_warning": "Database availability coverage is not historical VN100.",
+        }
+
+    fold_records: list[dict[str, Any]] = []
+    for fold in folds:
+        dates = [
+            session_date
+            for session_date in session_dates
+            if str(fold.test_start.date()) <= session_date <= str(fold.test_end.date())
+        ]
+        memberships = [
+            (
+                session_date,
+                (resolved_symbols if is_legacy else _normalized_symbols(
+                    coverage_index.members_as_of(session_date)  # type: ignore[union-attr]
+                )),
+            )
+            for session_date in dates
+        ]
+        fold_records.append(_fold_membership_record(fold, memberships=memberships))
+    manifest["oos_fold_memberships"] = fold_records
+    return manifest
+
+
+def _universe_comparison(
+    legacy: dict[str, Any],
+    coverage: dict[str, Any],
+) -> dict[str, Any]:
+    rows: list[dict[str, Any]] = []
+    for left, right in zip(legacy["oos_fold_memberships"], coverage["oos_fold_memberships"]):
+        left_sessions = [(row["session_date"], row["membership_hash"]) for row in left["sessions"]]
+        right_sessions = [(row["session_date"], row["membership_hash"]) for row in right["sessions"]]
+        left_union, right_union = set(left["union_symbols"]), set(right["union_symbols"])
+        left_intersection = set(left["intersection_symbols"])
+        right_intersection = set(right["intersection_symbols"])
+        rows.append(
+            {
+                "fold": left["fold"],
+                "test_start": left["test_start"],
+                "test_end": left["test_end"],
+                "legacy_fold_membership_hash": left["fold_membership_hash"],
+                "coverage_fold_membership_hash": right["fold_membership_hash"],
+                "legacy_member_count_range": [left["member_count_min"], left["member_count_max"]],
+                "coverage_member_count_range": [right["member_count_min"], right["member_count_max"]],
+                "exact_membership_equality_every_oos_session": left_sessions == right_sessions,
+                "legacy_union_hash": left["union_hash"],
+                "coverage_union_hash": right["union_hash"],
+                "legacy_intersection_hash": left["intersection_hash"],
+                "coverage_intersection_hash": right["intersection_hash"],
+                "symbols_only_in_legacy_union": sorted(left_union - right_union),
+                "symbols_only_in_coverage_union": sorted(right_union - left_union),
+                "symbols_only_in_legacy_intersection": sorted(left_intersection - right_intersection),
+                "symbols_only_in_coverage_intersection": sorted(right_intersection - left_intersection),
+            }
+        )
+    return {
+        "canonical_hashing": "SHA-256 over UTF-8 JSON with sorted keys and compact separators.",
+        "legacy_universe_mode": legacy["universe_mode"],
+        "coverage_universe_mode": coverage["universe_mode"],
+        "oos_fold_comparisons": rows,
+    }
 
 
 def _latest_vnindex_date(database_path: Path) -> str:
@@ -283,6 +440,26 @@ def run_paired_frozen_q70_wfo(
         ("legacy_current_vn100_retroactive", current_symbols, None, current_breadth),
         ("database_coverage_50_history_5_staleness", None, coverage, coverage_breadth),
     )
+    universe_manifests = {
+        "legacy_current_vn100_retroactive": _arm_universe_manifest(
+            arm="legacy_current_vn100_retroactive",
+            folds=folds,
+            session_dates=coverage.session_dates,
+            legacy_symbols=current_symbols,
+            coverage_index=None,
+        ),
+        "database_coverage_50_history_5_staleness": _arm_universe_manifest(
+            arm="database_coverage_50_history_5_staleness",
+            folds=folds,
+            session_dates=coverage.session_dates,
+            legacy_symbols=None,
+            coverage_index=coverage,
+        ),
+    }
+    universe_comparison = _universe_comparison(
+        universe_manifests["legacy_current_vn100_retroactive"],
+        universe_manifests["database_coverage_50_history_5_staleness"],
+    )
     arms: dict[str, dict[str, Any]] = {}
     for arm, arm_symbols, arm_coverage, arm_breadth in arm_specs:
         arms[arm] = _run_arm(
@@ -299,6 +476,10 @@ def run_paired_frozen_q70_wfo(
             "policy": asdict(Q70_FROZEN), "paper_execution": asdict(paper),
             "parity": asdict(parity), "universe_label": arm,
         }, indent=2, default=str), encoding="utf-8")
+        (arm_dir / "universe_manifest.json").write_text(
+            json.dumps(universe_manifests[arm], indent=2, ensure_ascii=False),
+            encoding="utf-8",
+        )
         (arm_dir / "assumptions.md").write_text(
             "# Assumptions\n\n"
             "Q70 is frozen; train folds are diagnostic only and never fit parameters.\n\n"
@@ -321,7 +502,18 @@ def run_paired_frozen_q70_wfo(
         "warning": "legacy_current_vn100_retroactive is survivorship-biased; database coverage is not historical VN100.",
     }
     (output / "experiment_manifest.json").write_text(json.dumps(manifest, indent=2, default=str), encoding="utf-8")
-    return {"output_root": output, "folds": folds, "arms": arms, "manifest": manifest}
+    (output / "universe_comparison.json").write_text(
+        json.dumps(universe_comparison, indent=2, ensure_ascii=False),
+        encoding="utf-8",
+    )
+    return {
+        "output_root": output,
+        "folds": folds,
+        "arms": arms,
+        "manifest": manifest,
+        "universe_manifests": universe_manifests,
+        "universe_comparison": universe_comparison,
+    }
 
 
 def parse_args() -> argparse.Namespace:

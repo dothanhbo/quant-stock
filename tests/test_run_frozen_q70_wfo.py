@@ -8,6 +8,7 @@ import pytest
 
 import research.run_frozen_q70_wfo as runner
 from core.database_coverage import CoverageUniverseIndex
+from backtesting.walk_forward import WalkForwardFold
 
 
 def _coverage() -> CoverageUniverseIndex:
@@ -93,10 +94,11 @@ def test_paired_runner_reuses_dependencies_chains_capital_and_writes_contract(
     for arm in ("legacy_current_vn100_retroactive", "database_coverage_50_history_5_staleness"):
         arm_dir = output / arm
         assert {path.name for path in arm_dir.iterdir()} == {
-            "folds.csv", "summary.csv", "trade_level_oos.csv", "policy_fingerprint.json", "assumptions.md"
+            "folds.csv", "summary.csv", "trade_level_oos.csv", "policy_fingerprint.json", "assumptions.md", "universe_manifest.json"
         }
     assert (output / "comparison.csv").exists()
     assert (output / "experiment_manifest.json").exists()
+    assert (output / "universe_comparison.json").exists()
     assert test_calls  # retain the test/train distinction in the recorded calls
 
 
@@ -123,3 +125,69 @@ def test_runner_rejects_missing_required_financial_metrics() -> None:
             "total_buy_commission": 0.0, "total_sell_commission": 0.0,
             "total_sell_tax": 0.0,
         })
+
+
+def test_universe_manifests_are_normalized_hashed_and_compare_each_oos_session() -> None:
+    fold = WalkForwardFold(
+        fold=1,
+        train_start=pd.Timestamp("2020-01-01"), train_end=pd.Timestamp("2020-01-31"),
+        test_start=pd.Timestamp("2020-02-01"), test_end=pd.Timestamp("2020-02-02"),
+    )
+    coverage = CoverageUniverseIndex(
+        start_date="2020-01-01", end_date="2020-02-02",
+        effective_start_date="2020-01-01", effective_end_date="2020-02-02",
+        minimum_history_sessions=50, maximum_staleness_sessions=5,
+        session_dates=("2020-02-01", "2020-02-02"),
+        candidate_symbols=("AAA", "BBB", "CCC"),
+        eligible_count_by_session={"2020-02-01": 2, "2020-02-02": 3},
+        _members_by_session={
+            "2020-02-01": frozenset({"AAA", "BBB"}),
+            "2020-02-02": frozenset({"AAA", "BBB", "CCC"}),
+        },
+    )
+    legacy = runner._arm_universe_manifest(
+        arm="legacy_current_vn100_retroactive", folds=[fold],
+        session_dates=coverage.session_dates,
+        legacy_symbols=["bbb", "VNINDEX", "AAA", "aaa"], coverage_index=None,
+    )
+    coverage_manifest = runner._arm_universe_manifest(
+        arm="database_coverage_50_history_5_staleness", folds=[fold],
+        session_dates=coverage.session_dates, legacy_symbols=None, coverage_index=coverage,
+    )
+    assert legacy["resolved_at_run_symbols"] == ["AAA", "BBB"]
+    assert legacy["symbol_count"] == 2
+    assert coverage_manifest["candidate_symbols"] == ["AAA", "BBB", "CCC"]
+    assert coverage_manifest["minimum_history_sessions"] == 50
+    assert coverage_manifest["oos_fold_memberships"][0]["sessions"][1]["member_count"] == 3
+    assert runner._arm_universe_manifest(
+        arm="legacy_current_vn100_retroactive", folds=[fold],
+        session_dates=coverage.session_dates,
+        legacy_symbols=["AAA", "BBB"], coverage_index=None,
+    )["oos_fold_memberships"][0]["fold_membership_hash"] == legacy["oos_fold_memberships"][0]["fold_membership_hash"]
+    comparison = runner._universe_comparison(legacy, coverage_manifest)
+    record = comparison["oos_fold_comparisons"][0]
+    assert not record["exact_membership_equality_every_oos_session"]
+    assert record["symbols_only_in_coverage_union"] == ["CCC"]
+    matching = runner._arm_universe_manifest(
+        arm="legacy_current_vn100_retroactive", folds=[fold],
+        session_dates=coverage.session_dates,
+        legacy_symbols=["AAA", "BBB", "CCC"], coverage_index=None,
+    )
+    assert matching["symbol_list_hash"] != legacy["symbol_list_hash"]
+    static_coverage = CoverageUniverseIndex(
+        start_date="2020-01-01", end_date="2020-02-02",
+        effective_start_date="2020-01-01", effective_end_date="2020-02-02",
+        minimum_history_sessions=50, maximum_staleness_sessions=5,
+        session_dates=("2020-02-01", "2020-02-02"), candidate_symbols=("AAA", "BBB"),
+        eligible_count_by_session={"2020-02-01": 2, "2020-02-02": 2},
+        _members_by_session={
+            "2020-02-01": frozenset({"AAA", "BBB"}),
+            "2020-02-02": frozenset({"AAA", "BBB"}),
+        },
+    )
+    static_manifest = runner._arm_universe_manifest(
+        arm="database_coverage_50_history_5_staleness", folds=[fold],
+        session_dates=static_coverage.session_dates, legacy_symbols=None,
+        coverage_index=static_coverage,
+    )
+    assert runner._universe_comparison(legacy, static_manifest)["oos_fold_comparisons"][0]["exact_membership_equality_every_oos_session"]
