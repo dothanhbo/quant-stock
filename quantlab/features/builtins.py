@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from typing import Mapping
 
+import numpy as np
 import pandas as pd
 
 from .contracts import FeatureDefinition, FeatureRequest, FeatureScope
@@ -55,6 +56,101 @@ def _historical_candidate_core_subset(frames, dependencies, parameters):
     return result
 
 
+def _rsi(frames, _dependencies, parameters):
+    period = _period(parameters); column = f"RSI{period}"; result = {}
+    for symbol, frame in frames.items():
+        delta = frame["close"].diff()
+        gain, loss = delta.clip(lower=0), -delta.clip(upper=0)
+        average_gain = gain.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+        average_loss = loss.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+        relative = average_gain / average_loss.replace(0, np.nan)
+        value = 100 - (100 / (1 + relative))
+        value = value.where(average_loss != 0, 100).where(average_gain != 0, 0)
+        result[symbol] = pd.DataFrame({"time": frame["time"], column: value})
+    return result
+
+
+def _adx(frames, _dependencies, parameters):
+    """The exact Wilder/min-period sequence used by strategy.calculate_adx."""
+    period = _period(parameters); column = f"ADX{period}"; result = {}
+    for symbol, frame in frames.items():
+        high_diff, low_diff = frame["high"].diff(), -frame["low"].diff()
+        plus = pd.Series(np.where((high_diff > low_diff) & (high_diff > 0), high_diff, 0.0), index=frame.index)
+        minus = pd.Series(np.where((low_diff > high_diff) & (low_diff > 0), low_diff, 0.0), index=frame.index)
+        previous_close = frame["close"].shift(1)
+        true_range = pd.concat([frame["high"] - frame["low"], (frame["high"] - previous_close).abs(), (frame["low"] - previous_close).abs()], axis=1).max(axis=1)
+        atr = true_range.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+        plus_smoothed = plus.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+        minus_smoothed = minus.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()
+        plus_di, minus_di = 100 * plus_smoothed / atr.replace(0, np.nan), 100 * minus_smoothed / atr.replace(0, np.nan)
+        dx = 100 * (plus_di - minus_di).abs() / (plus_di + minus_di).replace(0, np.nan)
+        result[symbol] = pd.DataFrame({"time": frame["time"], column: dx.ewm(alpha=1 / period, adjust=False, min_periods=period).mean()})
+    return result
+
+
+def _volume_context(frames, _dependencies, parameters):
+    average_period = _period(parameters); result = {}
+    for symbol, frame in frames.items():
+        average = frame["volume"].rolling(window=average_period, min_periods=average_period).mean()
+        previous_max = frame["volume"].shift(1).rolling(window=5, min_periods=5).max()
+        result[symbol] = pd.DataFrame({
+            "time": frame["time"], "Vol_MA20": average,
+            "Vol_Ratio": frame["volume"] / average.replace(0, np.nan),
+            "Previous_5D_Max_Volume": previous_max,
+            "Volume_Breakout_5D": frame["volume"] > previous_max,
+        })
+    return result
+
+
+def _atr_percent(frames, dependencies, _parameters):
+    atr = dependencies[FeatureRequest("atr", "v1", {"period": 14})]
+    return {symbol: pd.DataFrame({"time": raw["time"], "ATR_Percent": atr[symbol]["ATR14"] / raw["close"].replace(0, np.nan) * 100}) for symbol, raw in frames.items()}
+
+
+def _price_context(frames, dependencies, _parameters):
+    ema10 = dependencies[FeatureRequest("ema", "v1", {"period": 10})]
+    ema20 = dependencies[FeatureRequest("ema", "v1", {"period": 20})]
+    donchian = dependencies[FeatureRequest("donchian", "v1", {"period": 20})]
+    result = {}
+    for symbol, raw in frames.items():
+        close, high, low, opening = raw["close"], raw["high"], raw["low"], raw["open"]
+        breakout = donchian[symbol]["Breakout_20D"]
+        candle_range = high - low
+        result[symbol] = pd.DataFrame({
+            "time": raw["time"],
+            "EMA20_Rising": ema20[symbol]["EMA20"] > ema20[symbol]["EMA20"].shift(1),
+            "Recent_Breakout_10D": breakout.shift(1).rolling(window=10, min_periods=1).max().fillna(False).astype(bool),
+            "Touched_EMA10": low <= ema10[symbol]["EMA10"] * 1.01,
+            "Reclaimed_EMA10": close >= ema10[symbol]["EMA10"],
+            "Distance_EMA20_Pct": (close - ema20[symbol]["EMA20"]) / ema20[symbol]["EMA20"].replace(0, np.nan) * 100,
+            "Return_3D_Pct": close.pct_change(periods=3) * 100,
+            "Body_Ratio": np.where(candle_range > 0, (close - opening).abs() / candle_range, 0.0),
+            "Green_Candle": close > opening,
+            "Close_Upper_Half": np.where(candle_range > 0, close >= low + candle_range * 0.5, True),
+        })
+    return result
+
+
+def _historical_candidate_per_symbol_subset(frames, dependencies, _parameters):
+    core = dependencies[FeatureRequest("historical_candidate_core_subset", "v1")]
+    rsi = dependencies[FeatureRequest("rsi", "v1", {"period": 14})]
+    adx = dependencies[FeatureRequest("adx", "v1", {"period": 14})]
+    volume = dependencies[FeatureRequest("volume_context", "v1", {"period": 20})]
+    atr_percent = dependencies[FeatureRequest("atr_percent", "v1")]
+    context = dependencies[FeatureRequest("price_context", "v1")]
+    result = {}
+    for symbol, frame in core.items():
+        result[symbol] = pd.concat([
+            frame,
+            rsi[symbol][["RSI14"]].rename(columns={"RSI14": "RSI"}),
+            volume[symbol][["Vol_MA20", "Vol_Ratio", "Previous_5D_Max_Volume", "Volume_Breakout_5D"]],
+            atr_percent[symbol][["ATR_Percent"]],
+            adx[symbol][["ADX14"]],
+            context[symbol][["EMA20_Rising", "Recent_Breakout_10D", "Touched_EMA10", "Reclaimed_EMA10", "Distance_EMA20_Pct", "Return_3D_Pct", "Body_Ratio", "Green_Candle", "Close_Upper_Half"]],
+        ], axis=1)
+    return result
+
+
 def _parameter_warmup(parameters: Mapping[str, object]) -> int:
     return _period(parameters)
 
@@ -65,4 +161,12 @@ def builtin_definitions() -> tuple[FeatureDefinition, ...]:
         FeatureDefinition("atr", "v1", FeatureScope.PER_SYMBOL, ("time", "high", "low", "close"), direct_warmup_sessions=_parameter_warmup, output_columns=("time",), compute=_atr),
         FeatureDefinition("donchian", "v1", FeatureScope.PER_SYMBOL, ("time", "high", "close"), direct_warmup_sessions=_parameter_warmup, output_columns=("time",), compute=_donchian),
         FeatureDefinition("historical_candidate_core_subset", "v1", FeatureScope.PER_SYMBOL, ("time", "open", "high", "low", "close", "volume"), dependencies=(FeatureRequest("ema", "v1", {"period": 10}), FeatureRequest("ema", "v1", {"period": 20}), FeatureRequest("ema", "v1", {"period": 50}), FeatureRequest("atr", "v1", {"period": 14}), FeatureRequest("donchian", "v1", {"period": 20})), direct_warmup_sessions=0, output_columns=("time", "open", "high", "low", "close", "volume", "EMA10", "EMA20", "EMA50", "ATR14", "Previous_20D_High", "Breakout_20D"), compute=_historical_candidate_core_subset),
+        # ``close.diff()`` makes the first gain/loss unavailable, so Wilder
+        # RSI first becomes defined after period + 1 observed closes.
+        FeatureDefinition("rsi", "v1", FeatureScope.PER_SYMBOL, ("time", "close"), direct_warmup_sessions=lambda parameters: _period(parameters) + 1, output_columns=("time",), compute=_rsi),
+        FeatureDefinition("adx", "v1", FeatureScope.PER_SYMBOL, ("time", "high", "low", "close"), direct_warmup_sessions=lambda parameters: 2 * _period(parameters) - 1, output_columns=("time",), compute=_adx),
+        FeatureDefinition("volume_context", "v1", FeatureScope.PER_SYMBOL, ("time", "volume"), direct_warmup_sessions=_parameter_warmup, output_columns=("time", "Vol_MA20", "Vol_Ratio", "Previous_5D_Max_Volume", "Volume_Breakout_5D"), compute=_volume_context),
+        FeatureDefinition("atr_percent", "v1", FeatureScope.PER_SYMBOL, ("time", "close"), dependencies=(FeatureRequest("atr", "v1", {"period": 14}),), direct_warmup_sessions=0, output_columns=("time", "ATR_Percent"), compute=_atr_percent),
+        FeatureDefinition("price_context", "v1", FeatureScope.PER_SYMBOL, ("time", "open", "high", "low", "close"), dependencies=(FeatureRequest("ema", "v1", {"period": 10}), FeatureRequest("ema", "v1", {"period": 20}), FeatureRequest("donchian", "v1", {"period": 20})), direct_warmup_sessions=0, output_columns=("time", "EMA20_Rising", "Recent_Breakout_10D", "Touched_EMA10", "Reclaimed_EMA10", "Distance_EMA20_Pct", "Return_3D_Pct", "Body_Ratio", "Green_Candle", "Close_Upper_Half"), compute=_price_context),
+        FeatureDefinition("historical_candidate_per_symbol_subset", "v2", FeatureScope.PER_SYMBOL, ("time", "open", "high", "low", "close", "volume"), dependencies=(FeatureRequest("historical_candidate_core_subset", "v1"), FeatureRequest("rsi", "v1", {"period": 14}), FeatureRequest("adx", "v1", {"period": 14}), FeatureRequest("volume_context", "v1", {"period": 20}), FeatureRequest("atr_percent", "v1"), FeatureRequest("price_context", "v1")), direct_warmup_sessions=0, output_columns=("time", "open", "high", "low", "close", "volume", "EMA10", "EMA20", "EMA50", "ATR14", "Previous_20D_High", "Breakout_20D", "RSI", "Vol_MA20", "Vol_Ratio", "Previous_5D_Max_Volume", "Volume_Breakout_5D", "ATR_Percent", "ADX14", "EMA20_Rising", "Recent_Breakout_10D", "Touched_EMA10", "Reclaimed_EMA10", "Distance_EMA20_Pct", "Return_3D_Pct", "Body_Ratio", "Green_Candle", "Close_Upper_Half"), compute=_historical_candidate_per_symbol_subset),
     )
