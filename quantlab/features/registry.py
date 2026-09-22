@@ -4,12 +4,15 @@ from __future__ import annotations
 
 from collections.abc import Iterable, Mapping
 from types import MappingProxyType
-from typing import Any
+from typing import TYPE_CHECKING, Any
 
 import pandas as pd
 
 from quantlab.catalog.market_data_snapshot import MarketDataSnapshot
 from .contracts import FeatureComputationIdentity, FeatureDefinition, FeatureIdentity, FeatureRequest, FeatureResult, FeatureScope
+
+if TYPE_CHECKING:
+    from .cache import PreparedFeatureCache
 
 
 class FeatureRegistry:
@@ -49,12 +52,17 @@ class FeatureRegistry:
         resolved[request] = (definition, identity, warmup)
         return resolved[request]
 
-    def compute(self, request: FeatureRequest, snapshot: MarketDataSnapshot, symbols: Iterable[str], *, start_date: str | None = None, through_date: str | None = None, universe_identity: str | None = None) -> FeatureResult:
+    def compute(self, request: FeatureRequest, snapshot: MarketDataSnapshot, symbols: Iterable[str], *, start_date: str | None = None, through_date: str | None = None, universe_identity: str | None = None, cache: "PreparedFeatureCache | None" = None) -> FeatureResult:
         resolved: dict[FeatureRequest, tuple[FeatureDefinition, FeatureIdentity, int]] = {}
         definition, identity, warmup = self._resolve(request, set(), resolved)
         if definition.scope is not FeatureScope.PER_SYMBOL and not universe_identity:
             raise ValueError("cross-sectional and market features require universe_identity")
         normalized_symbols = tuple(sorted({str(symbol).strip().upper() for symbol in symbols if str(symbol).strip()}))
+        computation_identity = FeatureComputationIdentity.create(feature_identity=identity, snapshot_id=snapshot.snapshot_id, symbols=normalized_symbols, start_date=start_date, through_date=through_date, universe_identity=universe_identity)
+        if cache is not None:
+            cached = cache.get(computation_identity)
+            if cached is not None:
+                return cached
         # Loading all history through the causal boundary ensures warmup is in
         # observed sessions; no calendar-day subtraction is used.
         bundle = snapshot.load_ohlcv(normalized_symbols, through_date=through_date)
@@ -85,5 +93,7 @@ class FeatureRegistry:
         if start_date is not None:
             cutoff = pd.Timestamp(start_date)
             final = MappingProxyType({symbol: frame.loc[frame["time"] >= cutoff].reset_index(drop=True).copy(deep=True) for symbol, frame in final.items()})
-        computation_identity = FeatureComputationIdentity.create(feature_identity=identity, snapshot_id=snapshot.snapshot_id, symbols=normalized_symbols, start_date=start_date, through_date=through_date, universe_identity=universe_identity)
-        return FeatureResult(computation_identity, MappingProxyType({"resolved_warmup_sessions": warmup, "causal": definition.causal}), bundle.available_symbols, bundle.missing_symbols, MappingProxyType(dict(final)))
+        result = FeatureResult(computation_identity, MappingProxyType({"resolved_warmup_sessions": warmup, "causal": definition.causal}), bundle.available_symbols, bundle.missing_symbols, MappingProxyType(dict(final)))
+        if cache is None:
+            return result
+        return cache.with_write_metadata(result, cache.put(result))
