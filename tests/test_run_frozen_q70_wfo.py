@@ -70,7 +70,7 @@ def test_paired_runner_reuses_dependencies_chains_capital_and_writes_contract(
     test_calls = [call for call in calls if call["start_date"] != "2020-01-01"]
     assert all(call["minimum_history_sessions"] == 50 for call in calls)
     assert all(call["maximum_staleness_sessions"] == 5 for call in calls)
-    assert all(call["current_vn100_symbols"] == ["AAA"] for call in calls if call["universe_mode"] == "current_vn100")
+    assert all(call["current_vn100_symbols"] == ("AAA",) for call in calls if call["universe_mode"] == "current_vn100")
     legacy_dates = [
         (call["start_date"], call["end_date"])
         for call in calls if call["universe_mode"] == "current_vn100"
@@ -191,3 +191,89 @@ def test_universe_manifests_are_normalized_hashed_and_compare_each_oos_session()
         coverage_index=static_coverage,
     )
     assert runner._universe_comparison(legacy, static_manifest)["oos_fold_comparisons"][0]["exact_membership_equality_every_oos_session"]
+
+
+def test_persisted_legacy_manifest_bypasses_live_provider_and_records_provenance(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    symbols = ["AAA", "BBB"]
+    source = tmp_path / "source.json"
+    source.write_text(
+        __import__("json").dumps({
+            "resolved_at_run_symbols": [" bbb ", "VNINDEX", "AAA", "aaa"],
+            "symbol_count": 2,
+            "symbol_list_hash": runner._canonical_hash(symbols),
+        }),
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        runner, "get_vn100_symbols",
+        lambda: (_ for _ in ()).throw(AssertionError("live provider must be bypassed")),
+    )
+    monkeypatch.setattr(runner, "resolve_market_database_path", lambda path: tmp_path / "market.db")
+    monkeypatch.setattr(runner, "build_database_coverage_index", lambda *args, **kwargs: _coverage())
+    monkeypatch.setattr(
+        runner, "build_historical_breadth_index",
+        lambda *args, **kwargs: SimpleNamespace(start_date="2020-01-01", end_date="2023-01-01"),
+    )
+    seen: list[tuple[str, ...] | None] = []
+    def fake_arm(**kwargs):
+        seen.append(kwargs["current_symbols"])
+        return {
+            "folds": pd.DataFrame({"fold": [1], "test_total_transaction_cost": [0.0], "evaluation_rows": [0], "base_entry_candidates": [0], "q70_accepted_candidates": [0]}),
+            "trades": pd.DataFrame(),
+            "summary": {"arm": kwargs["arm"], "total_oos_transaction_cost": 0.0},
+        }
+    monkeypatch.setattr(runner, "_run_arm", fake_arm)
+    result = runner.run_paired_frozen_q70_wfo(
+        start_date="2020-01-01", end_date="2022-12-31",
+        output_root=tmp_path / "out", legacy_universe_manifest=source,
+    )
+    assert seen[0] == ("AAA", "BBB")
+    provenance = result["universe_manifests"]["legacy_current_vn100_retroactive"]
+    assert provenance["source"] == "persisted_manifest"
+    assert provenance["source_manifest_path"] == str(source.resolve())
+    assert provenance["validated_source_hash"] == runner._canonical_hash(symbols)
+    assert result["manifest"]["legacy_universe_provenance"] == {
+        "source": "persisted_manifest",
+        "source_manifest_path": str(source.resolve()),
+        "validated_source_hash": runner._canonical_hash(symbols),
+    }
+
+
+@pytest.mark.parametrize(
+    "payload",
+    [
+        "not json",
+        {},
+        {"resolved_at_run_symbols": []},
+        {"resolved_at_run_symbols": ["AAA"], "symbol_count": 2},
+        {"resolved_at_run_symbols": ["AAA"], "symbol_list_hash": "bad"},
+    ],
+)
+def test_invalid_persisted_legacy_manifest_fails_before_output(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch, payload: object,
+) -> None:
+    source = tmp_path / "invalid.json"
+    source.write_text(payload if isinstance(payload, str) else __import__("json").dumps(payload), encoding="utf-8")
+    output = tmp_path / "must_not_exist"
+    monkeypatch.setattr(
+        runner, "build_database_coverage_index",
+        lambda *args, **kwargs: (_ for _ in ()).throw(AssertionError("must fail before index build")),
+    )
+    with pytest.raises((ValueError, FileNotFoundError)):
+        runner.run_paired_frozen_q70_wfo(
+            start_date="2020-01-01", end_date="2022-12-31",
+            output_root=output, legacy_universe_manifest=source,
+        )
+    assert not output.exists()
+
+
+def test_missing_persisted_legacy_manifest_fails_before_output(tmp_path: Path) -> None:
+    output = tmp_path / "must_not_exist"
+    with pytest.raises(FileNotFoundError):
+        runner.run_paired_frozen_q70_wfo(
+            start_date="2020-01-01", end_date="2022-12-31",
+            output_root=output, legacy_universe_manifest=tmp_path / "missing.json",
+        )
+    assert not output.exists()

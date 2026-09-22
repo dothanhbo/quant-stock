@@ -78,6 +78,41 @@ def _canonical_hash(value: Any) -> str:
     return sha256(encoded).hexdigest()
 
 
+def _load_legacy_universe_manifest(path: str | Path) -> tuple[tuple[str, ...], dict[str, str]]:
+    """Load and validate a prior audited legacy-universe snapshot offline."""
+    source_path = Path(path).expanduser().resolve()
+    if not source_path.is_file():
+        raise FileNotFoundError(f"legacy universe manifest not found: {source_path}")
+    try:
+        payload = json.loads(source_path.read_text(encoding="utf-8"))
+    except json.JSONDecodeError as exc:
+        raise ValueError(f"legacy universe manifest is invalid JSON: {source_path}") from exc
+    symbols = payload.get("resolved_at_run_symbols") if isinstance(payload, dict) else None
+    if not isinstance(symbols, list):
+        raise ValueError("legacy universe manifest requires resolved_at_run_symbols list")
+    normalized = _normalized_symbols(symbols)
+    if not normalized:
+        raise ValueError("legacy universe manifest resolves to an empty symbol list")
+    expected_count = payload.get("symbol_count")
+    if expected_count is not None:
+        if isinstance(expected_count, bool) or not isinstance(expected_count, int):
+            raise ValueError("legacy universe manifest symbol_count must be an integer")
+        if expected_count != len(normalized):
+            raise ValueError("legacy universe manifest symbol_count does not match normalized symbols")
+    actual_hash = _canonical_hash(normalized)
+    expected_hash = payload.get("symbol_list_hash")
+    if expected_hash is not None:
+        if not isinstance(expected_hash, str):
+            raise ValueError("legacy universe manifest symbol_list_hash must be a string")
+        if expected_hash != actual_hash:
+            raise ValueError("legacy universe manifest symbol_list_hash does not match normalized symbols")
+    return tuple(normalized), {
+        "source": "persisted_manifest",
+        "source_manifest_path": str(source_path),
+        "validated_source_hash": actual_hash,
+    }
+
+
 def _fold_membership_record(
     fold: WalkForwardFold,
     *,
@@ -124,8 +159,9 @@ def _arm_universe_manifest(
     arm: str,
     folds: list[WalkForwardFold],
     session_dates: tuple[str, ...],
-    legacy_symbols: list[str] | None,
+    legacy_symbols: tuple[str, ...] | None,
     coverage_index: CoverageUniverseIndex | None,
+    legacy_provenance: dict[str, str] | None = None,
 ) -> dict[str, Any]:
     is_legacy = arm == "legacy_current_vn100_retroactive"
     if is_legacy:
@@ -136,6 +172,7 @@ def _arm_universe_manifest(
             "resolved_at_run_symbols": resolved_symbols,
             "symbol_count": len(resolved_symbols),
             "symbol_list_hash": _canonical_hash(resolved_symbols),
+            **(legacy_provenance or {"source": "live_current_vn100"}),
         }
     else:
         if coverage_index is None:
@@ -324,7 +361,7 @@ def _run_arm(
     arm: str,
     folds: list[WalkForwardFold],
     database_path: Path,
-    current_symbols: list[str] | None,
+    current_symbols: tuple[str, ...] | None,
     coverage_index: CoverageUniverseIndex | None,
     breadth_index: HistoricalBreadthIndex,
     paper: PaperExecutionConfig,
@@ -396,10 +433,19 @@ def run_paired_frozen_q70_wfo(
     output_root: str | Path | None = None,
     overwrite: bool = False,
     db_path: str | Path | None = None,
+    legacy_universe_manifest: str | Path | None = None,
 ) -> dict[str, Any]:
     """Run paired fixed-Q70 folds and write a new, self-contained experiment."""
     if (minimum_history_sessions, maximum_staleness_sessions) != (50, 5):
         raise ValueError("frozen paired Q70 protocol requires 50 history and 5 staleness sessions")
+    # Validate the offline source before any database/index work or output path.
+    if legacy_universe_manifest is not None:
+        current_symbols, legacy_provenance = _load_legacy_universe_manifest(
+            legacy_universe_manifest
+        )
+    else:
+        current_symbols = tuple(_normalized_symbols(get_vn100_symbols()))
+        legacy_provenance = {"source": "live_current_vn100"}
     database_path = resolve_market_database_path(db_path)
     resolved_end_date = end_date or _latest_vnindex_date(database_path)
     folds = build_walk_forward_folds(WalkForwardConfig(
@@ -407,7 +453,6 @@ def run_paired_frozen_q70_wfo(
         train_months=train_months, test_months=test_months, step_months=step_months,
     ))
     # Build every dependency before creating any result path.
-    current_symbols = sorted({str(symbol).strip().upper() for symbol in get_vn100_symbols() if str(symbol).strip().upper() != "VNINDEX"})
     coverage = build_database_coverage_index(
         start_date, resolved_end_date, minimum_history_sessions=50,
         maximum_staleness_sessions=5, database_path=database_path,
@@ -447,6 +492,7 @@ def run_paired_frozen_q70_wfo(
             session_dates=coverage.session_dates,
             legacy_symbols=current_symbols,
             coverage_index=None,
+            legacy_provenance=legacy_provenance,
         ),
         "database_coverage_50_history_5_staleness": _arm_universe_manifest(
             arm="database_coverage_50_history_5_staleness",
@@ -500,6 +546,7 @@ def run_paired_frozen_q70_wfo(
         "policy_fingerprint": "Q70_FROZEN/hybrid_trend_donchian/ATR2x5/fixed",
         "arms": [name for name, *_ in arm_specs],
         "warning": "legacy_current_vn100_retroactive is survivorship-biased; database coverage is not historical VN100.",
+        "legacy_universe_provenance": legacy_provenance,
     }
     (output / "experiment_manifest.json").write_text(json.dumps(manifest, indent=2, default=str), encoding="utf-8")
     (output / "universe_comparison.json").write_text(
@@ -528,6 +575,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--output-root")
     parser.add_argument("--overwrite", action="store_true")
     parser.add_argument("--db-path")
+    parser.add_argument("--legacy-universe-manifest")
     return parser.parse_args()
 
 
