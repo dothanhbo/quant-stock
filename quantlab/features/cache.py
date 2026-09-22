@@ -82,8 +82,16 @@ def _supported_dtype(dtype: Any) -> bool:
     return pd.api.types.is_numeric_dtype(dtype) or pd.api.types.is_bool_dtype(dtype) or pd.api.types.is_datetime64_any_dtype(dtype)
 
 
+def _supported_column(column: str, series: pd.Series) -> bool:
+    if _supported_dtype(series.dtype):
+        return True
+    # This is the sole authoritative categorical field introduced by the
+    # MARKET feature.  NPZ writes Unicode plus an explicit null mask.
+    return column in {"Market_Regime", "paper_v2_state"} and all(pd.isna(value) or isinstance(value, str) for value in series)
+
+
 def _frame_payload(frame: pd.DataFrame) -> dict[str, Any]:
-    unsupported = [column for column in frame.columns if not _supported_dtype(frame[column].dtype)]
+    unsupported = [column for column in frame.columns if not _supported_column(column, frame[column])]
     if unsupported:
         raise TypeError("unsupported object-valued feature columns: " + ", ".join(unsupported))
     if isinstance(frame.index, pd.RangeIndex):
@@ -198,11 +206,25 @@ class PreparedFeatureCache:
         try:
             with np.load(data_path, allow_pickle=False) as archive:
                 for item in manifest["frames"]:
-                    keys = [item["index_key"], *(column["key"] for column in item["columns"])]
+                    keys = [
+                        item["index_key"],
+                        *(key for column in item["columns"] for key in (
+                            (column["key"], column["valid_key"])
+                            if column.get("kind") == "string" else (column["key"],)
+                        )),
+                    ]
                     expected.update(keys)
                     if any(key not in archive for key in keys):
                         raise CacheCorruptionError("missing NPZ member")
-                    data = {column["name"]: archive[column["key"]].astype(np.dtype(column["dtype"]), copy=False) for column in item["columns"]}
+                    data = {}
+                    for column in item["columns"]:
+                        values = archive[column["key"]]
+                        if column.get("kind") == "string":
+                            restored = pd.Series(values.astype(str), dtype=column["dtype"])
+                            restored.loc[~archive[column["valid_key"]].astype(bool, copy=False)] = np.nan
+                            data[column["name"]] = restored
+                        else:
+                            data[column["name"]] = values.astype(np.dtype(column["dtype"]), copy=False)
                     frame = pd.DataFrame(data, columns=[column["name"] for column in item["columns"]])
                     index = archive[item["index_key"]]
                     if item["index"]["kind"] == "range":
@@ -301,7 +323,7 @@ class PreparedFeatureCache:
         try:
             arrays: dict[str, np.ndarray] = {}; frame_manifest = []
             for ordinal, (symbol, frame) in enumerate(sorted(result._frames.items())):
-                unsupported = [column for column in frame.columns if not _supported_dtype(frame[column].dtype)]
+                unsupported = [column for column in frame.columns if not _supported_column(column, frame[column])]
                 if unsupported: raise TypeError("unsupported object-valued feature columns: " + ", ".join(unsupported))
                 prefix = f"frame_{ordinal:05d}"; index_key = prefix + "_index"
                 if isinstance(frame.index, pd.RangeIndex):
@@ -311,8 +333,16 @@ class PreparedFeatureCache:
                     arrays[index_key] = frame.index.to_numpy(copy=True); index_meta = {"kind": "values", "dtype": str(frame.index.dtype), "name": frame.index.name}
                 columns = []
                 for column_ordinal, column in enumerate(frame.columns):
-                    key = f"{prefix}_column_{column_ordinal:03d}"; arrays[key] = frame[column].to_numpy(copy=True)
-                    columns.append({"name": column, "key": key, "dtype": str(frame[column].dtype)})
+                    key = f"{prefix}_column_{column_ordinal:03d}"
+                    if not _supported_dtype(frame[column].dtype):
+                        values = frame[column]
+                        width = max(1, max((len(value) for value in values.dropna().astype(str)), default=0))
+                        arrays[key] = np.asarray(values.fillna("").astype(str), dtype=f"<U{width}")
+                        valid_key = key + "_valid"; arrays[valid_key] = values.notna().to_numpy(dtype=bool)
+                        columns.append({"name": column, "key": key, "valid_key": valid_key, "dtype": str(frame[column].dtype), "kind": "string"})
+                    else:
+                        arrays[key] = frame[column].to_numpy(copy=True)
+                        columns.append({"name": column, "key": key, "dtype": str(frame[column].dtype)})
                 frame_manifest.append({"symbol": symbol, "index_key": index_key, "index": index_meta, "columns": columns, "row_count": len(frame)})
             data_path = temporary / "data.npz"; np.savez(data_path, **arrays)
             physical = sha256(data_path.read_bytes()).hexdigest()

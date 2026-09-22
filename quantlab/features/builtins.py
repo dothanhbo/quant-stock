@@ -302,6 +302,67 @@ def _historical_candidate_breadth_context_subset(frames, dependencies, parameter
     return {symbol: frame.merge(breadth, on="time", how="left") for symbol, frame in core.items()}
 
 
+PAPER_STATE_CONTEXT_KEY = "__QUANTLAB_HISTORICAL_PAPER_STATE_CONTEXT__"
+
+
+def _classify_paper_v2_state(signal):
+    """Isolated exact parity copy; importing the production gate has I/O side effects."""
+    regime = str(signal.get("regime", "")).upper()
+    try:
+        breadth = float(signal.get("breadth_ema50_pct"))
+    except (TypeError, ValueError):
+        breadth = float("nan")
+    try:
+        change = float(signal.get("breadth_ema50_change_10d"))
+    except (TypeError, ValueError):
+        change = float("nan")
+    breadth = breadth if np.isfinite(breadth) else float("nan")
+    change = change if np.isfinite(change) else float("nan")
+    if regime == "BEAR":
+        return "BEAR"
+    if regime == "BULL":
+        if np.isfinite(breadth) and np.isfinite(change):
+            if breadth < 50.0 and change < 0.0:
+                return "DIVERGENT_BULL"
+            if breadth >= 70.0 and change >= 0.0:
+                return "HEALTHY_BULL"
+        return "FRAGILE_BULL"
+    if regime == "SIDEWAY" and np.isfinite(breadth) and np.isfinite(change):
+        if breadth >= 60.0 and change > 0.0:
+            return "RECOVERY"
+    return "NEUTRAL"
+
+
+def _paper_state_dependencies(request: FeatureRequest) -> tuple[FeatureRequest, ...]:
+    return (FeatureRequest("historical_candidate_breadth_context_subset", "v5", {"benchmark_symbol": _benchmark_symbol(request.parameter_mapping)}),)
+
+
+def _historical_paper_market_state(_frames, dependencies, parameters, context):
+    if not isinstance(context, PointInTimeUniverseContext):
+        raise ValueError("historical_paper_market_state requires PointInTimeUniverseContext")
+    source = dependencies[FeatureRequest("historical_candidate_breadth_context_subset", "v5", {"benchmark_symbol": _benchmark_symbol(parameters)})]
+    if not source:
+        return {PAPER_STATE_CONTEXT_KEY: pd.DataFrame(columns=("time", "paper_v2_state"))}
+    frame = source[sorted(source)[0]][["time", "Market_Regime", "breadth_ema50_pct", "breadth_ema50_change_10d"]]
+    states = [_classify_paper_v2_state({"regime": row.Market_Regime, "breadth_ema50_pct": row.breadth_ema50_pct, "breadth_ema50_change_10d": row.breadth_ema50_change_10d}) for row in frame.itertuples(index=False)]
+    return {PAPER_STATE_CONTEXT_KEY: pd.DataFrame({"time": frame["time"], "paper_v2_state": states})}
+
+
+def _paper_state_composite_dependencies(request: FeatureRequest) -> tuple[FeatureRequest, ...]:
+    benchmark = _benchmark_symbol(request.parameter_mapping)
+    return (
+        FeatureRequest("historical_candidate_breadth_context_subset", "v5", {"benchmark_symbol": benchmark}),
+        FeatureRequest("historical_paper_market_state", "v1", {"benchmark_symbol": benchmark}),
+    )
+
+
+def _historical_candidate_paper_state_subset(frames, dependencies, parameters):
+    benchmark = _benchmark_symbol(parameters)
+    core = dependencies[FeatureRequest("historical_candidate_breadth_context_subset", "v5", {"benchmark_symbol": benchmark})]
+    state = dependencies[FeatureRequest("historical_paper_market_state", "v1", {"benchmark_symbol": benchmark})][PAPER_STATE_CONTEXT_KEY]
+    return {symbol: frame.merge(state, on="time", how="left") for symbol, frame in core.items()}
+
+
 def _parameter_warmup(parameters: Mapping[str, object]) -> int:
     return _period(parameters)
 
@@ -326,4 +387,6 @@ def builtin_definitions() -> tuple[FeatureDefinition, ...]:
         FeatureDefinition("historical_candidate_market_context_subset", "v4", FeatureScope.PER_SYMBOL, ("time", "open", "high", "low", "close", "volume"), dependencies=_market_context_dependencies, direct_warmup_sessions=0, output_columns=("time", "open", "high", "low", "close", "volume", "EMA10", "EMA20", "EMA50", "ATR14", "Previous_20D_High", "Breakout_20D", "RSI", "Vol_MA20", "Vol_Ratio", "Previous_5D_Max_Volume", "Volume_Breakout_5D", "ATR_Percent", "ADX14", "EMA20_Rising", "Recent_Breakout_10D", "Touched_EMA10", "Reclaimed_EMA10", "Distance_EMA20_Pct", "Return_3D_Pct", "Body_Ratio", "Green_Candle", "Close_Upper_Half", "Stock_Return_20D", "Index_Return_20D", "Relative_Strength_20D", "Market_Regime"), compute=_historical_candidate_market_context_subset),
         FeatureDefinition("historical_breadth_context", "v1", FeatureScope.CROSS_SECTIONAL, ("time", "close"), uses_execution_context=True, direct_warmup_sessions=50, output_columns=("time", "breadth_ema50_pct", "breadth_ema50_change_10d", "breadth_universe_count"), compute=_historical_breadth_context),
         FeatureDefinition("historical_candidate_breadth_context_subset", "v5", FeatureScope.PER_SYMBOL, ("time", "open", "high", "low", "close", "volume"), dependencies=_breadth_context_dependencies, direct_warmup_sessions=0, output_columns=("time", "open", "high", "low", "close", "volume", "EMA10", "EMA20", "EMA50", "ATR14", "Previous_20D_High", "Breakout_20D", "RSI", "Vol_MA20", "Vol_Ratio", "Previous_5D_Max_Volume", "Volume_Breakout_5D", "ATR_Percent", "ADX14", "EMA20_Rising", "Recent_Breakout_10D", "Touched_EMA10", "Reclaimed_EMA10", "Distance_EMA20_Pct", "Return_3D_Pct", "Body_Ratio", "Green_Candle", "Close_Upper_Half", "Stock_Return_20D", "Index_Return_20D", "Relative_Strength_20D", "Market_Regime", "breadth_ema50_pct", "breadth_ema50_change_10d", "breadth_universe_count"), compute=_historical_candidate_breadth_context_subset),
+        FeatureDefinition("historical_paper_market_state", "v1", FeatureScope.CROSS_SECTIONAL, ("time",), dependencies=_paper_state_dependencies, uses_execution_context=True, direct_warmup_sessions=0, output_columns=("time", "paper_v2_state"), compute=_historical_paper_market_state),
+        FeatureDefinition("historical_candidate_paper_state_subset", "v6", FeatureScope.PER_SYMBOL, ("time", "open", "high", "low", "close", "volume"), dependencies=_paper_state_composite_dependencies, direct_warmup_sessions=0, output_columns=("time", "open", "high", "low", "close", "volume", "EMA10", "EMA20", "EMA50", "ATR14", "Previous_20D_High", "Breakout_20D", "RSI", "Vol_MA20", "Vol_Ratio", "Previous_5D_Max_Volume", "Volume_Breakout_5D", "ATR_Percent", "ADX14", "EMA20_Rising", "Recent_Breakout_10D", "Touched_EMA10", "Reclaimed_EMA10", "Distance_EMA20_Pct", "Return_3D_Pct", "Body_Ratio", "Green_Candle", "Close_Upper_Half", "Stock_Return_20D", "Index_Return_20D", "Relative_Strength_20D", "Market_Regime", "breadth_ema50_pct", "breadth_ema50_change_10d", "breadth_universe_count", "paper_v2_state"), compute=_historical_candidate_paper_state_subset),
     )
