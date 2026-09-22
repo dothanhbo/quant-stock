@@ -42,11 +42,15 @@ def test_paired_runner_reuses_dependencies_chains_capital_and_writes_contract(
     def fake_evaluator(**kwargs):
         calls.append(kwargs)
         final = kwargs["parity_config"].initial_cash + 1_000.0
+        is_test = kwargs["start_date"] >= "2022-01-01"
+        cost = 10.0 if is_test else 1.0
         metrics = {
             "final_equity": final, "total_return_pct": .001, "total_trades": 0,
             "win_rate_pct": 0., "profit_factor": 0., "max_drawdown_pct": 0.,
-            "total_transaction_cost": 0., "total_buy_commission": 0.,
-            "total_sell_commission": 0., "total_sell_tax": 0.,
+            "gross_profit": 0., "gross_loss": 0., "gross_trading_pnl": -cost,
+            "net_trading_pnl": -cost, "total_transaction_cost": cost,
+            "total_buy_commission": cost / 3,
+            "total_sell_commission": cost / 3, "total_sell_tax": cost / 3,
             "total_evaluation_rows": 2, "base_entry_candidates": 1,
             "q70_accepted_candidates": 1, "q70_rejection_counts": {},
             "q70_rejection_state_counts": {}, "coverage_eligible_count_min": 1,
@@ -83,6 +87,9 @@ def test_paired_runner_reuses_dependencies_chains_capital_and_writes_contract(
             if call["universe_mode"] == mode and call["start_date"] in test_starts
         ]
         assert capitals == [100_000_000, 100_001_000]
+    for arm in result["arms"].values():
+        assert arm["summary"]["total_oos_transaction_cost"] == 20.0
+        assert set(arm["folds"]["test_total_transaction_cost"]) == {10.0}
     for arm in ("legacy_current_vn100_retroactive", "database_coverage_50_history_5_staleness"):
         arm_dir = output / arm
         assert {path.name for path in arm_dir.iterdir()} == {
@@ -104,3 +111,15 @@ def test_existing_output_protection_and_exact_overwrite_scope(tmp_path: Path) ->
     assert sibling.read_text(encoding="utf-8") == "keep"
     with pytest.raises(ValueError):
         runner._prepare_output(Path.cwd(), overwrite=True)
+
+
+def test_runner_rejects_missing_required_financial_metrics() -> None:
+    with pytest.raises(ValueError, match="missing required metric: total_transaction_cost"):
+        runner._require_test_metrics({
+            "final_equity": 1.0, "total_return_pct": 0.0, "total_trades": 0,
+            "win_rate_pct": 0.0, "profit_factor": 0.0, "max_drawdown_pct": 0.0,
+            "gross_profit": 0.0, "gross_loss": 0.0,
+            "gross_trading_pnl": 0.0, "net_trading_pnl": 0.0,
+            "total_buy_commission": 0.0, "total_sell_commission": 0.0,
+            "total_sell_tax": 0.0,
+        })

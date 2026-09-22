@@ -6,11 +6,18 @@ import argparse
 from dataclasses import asdict, replace
 from pathlib import Path
 import json
+import math
 import shutil
 import sqlite3
+import sys
 from typing import Any
 
 import pandas as pd
+
+# Permit the documented ``python research/run_frozen_q70_wfo.py`` invocation
+# while retaining normal package imports under pytest and ``python -m``.
+if __package__ in {None, ""}:
+    sys.path.insert(0, str(Path(__file__).resolve().parent.parent))
 
 from backtesting.frozen_q70_evaluator import run_frozen_q70_backtest
 from backtesting.paper_parity import BacktestPaperParityConfig
@@ -30,6 +37,23 @@ from execution.signal_executor import PaperExecutionConfig
 
 
 DEFAULT_START_DATE = "2018-08-07"
+
+_REQUIRED_TEST_METRICS = (
+    "final_equity",
+    "total_return_pct",
+    "total_trades",
+    "win_rate_pct",
+    "profit_factor",
+    "max_drawdown_pct",
+    "gross_profit",
+    "gross_loss",
+    "gross_trading_pnl",
+    "net_trading_pnl",
+    "total_buy_commission",
+    "total_sell_commission",
+    "total_sell_tax",
+    "total_transaction_cost",
+)
 
 
 def _latest_vnindex_date(database_path: Path) -> str:
@@ -90,6 +114,21 @@ def _trade_rows(trades: list[Trade], fold: int) -> list[dict[str, Any]]:
     return rows
 
 
+def _require_test_metrics(metrics: dict[str, Any]) -> None:
+    """Reject incomplete evaluator output instead of publishing invented zeros."""
+    for name in _REQUIRED_TEST_METRICS:
+        if name not in metrics:
+            raise ValueError(f"frozen evaluator missing required metric: {name}")
+        try:
+            value = float(metrics[name])
+        except (TypeError, ValueError) as exc:
+            raise ValueError(
+                f"frozen evaluator metric must be numeric: {name}"
+            ) from exc
+        if not math.isfinite(value):
+            raise ValueError(f"frozen evaluator metric must be finite: {name}")
+
+
 def _fold_row(
     fold: WalkForwardFold,
     train_metrics: dict[str, Any],
@@ -102,14 +141,14 @@ def _fold_row(
         "test_initial_equity": initial_equity,
         "test_final_equity": test_metrics.get("final_equity"),
         "test_return_pct": test_metrics.get("total_return_pct"),
-        "test_trades": test_metrics.get("total_trades", 0),
-        "test_win_rate_pct": test_metrics.get("win_rate_pct"),
-        "test_profit_factor": test_metrics.get("profit_factor"),
-        "test_max_drawdown_pct": test_metrics.get("max_drawdown_pct"),
-        "test_total_transaction_cost": test_metrics.get("total_transaction_cost", 0.0),
-        "test_total_buy_commission": test_metrics.get("total_buy_commission", 0.0),
-        "test_total_sell_commission": test_metrics.get("total_sell_commission", 0.0),
-        "test_total_sell_tax": test_metrics.get("total_sell_tax", 0.0),
+        "test_trades": test_metrics["total_trades"],
+        "test_win_rate_pct": test_metrics["win_rate_pct"],
+        "test_profit_factor": test_metrics["profit_factor"],
+        "test_max_drawdown_pct": test_metrics["max_drawdown_pct"],
+        "test_total_transaction_cost": test_metrics["total_transaction_cost"],
+        "test_total_buy_commission": test_metrics["total_buy_commission"],
+        "test_total_sell_commission": test_metrics["total_sell_commission"],
+        "test_total_sell_tax": test_metrics["total_sell_tax"],
         "train_trades_diagnostic": train_metrics.get("total_trades", 0),
         "train_return_pct_diagnostic": train_metrics.get("total_return_pct"),
         "evaluation_rows": test_metrics.get("total_evaluation_rows", 0),
@@ -159,6 +198,7 @@ def _run_arm(
             start_date=str(fold.test_start.date()), end_date=str(fold.test_end.date()),
             parity_config=test_parity, **common,
         )
+        _require_test_metrics(test_metrics)
         fold_rows.append(_fold_row(fold, train_metrics, test_metrics, current_capital))
         oos_trades.extend(_trade_rows(trades, fold.fold))
         equity_curves.append(equity)

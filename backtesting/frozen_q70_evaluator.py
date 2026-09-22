@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from collections import Counter, defaultdict
 from datetime import datetime
+import math
 from typing import Any, Iterable, Literal
 
 import pandas as pd
@@ -288,6 +289,44 @@ def run_frozen_q70_backtest(
     result = simulator.simulate(accepted_candidates)
     metrics = calculate_metrics(result.executed_trades, config)
     metrics.update(calculate_portfolio_metrics(result.equity_curve, final_equity=result.final_equity))
+    gross_profits = [
+        trade.net_pnl for trade in result.executed_trades if trade.net_pnl > 0
+    ]
+    gross_losses = [
+        trade.net_pnl for trade in result.executed_trades if trade.net_pnl < 0
+    ]
+    gross_profit_amount = float(sum(gross_profits))
+    gross_loss_amount = float(abs(sum(gross_losses)))
+    profit_factor_amount = (
+        gross_profit_amount / gross_loss_amount
+        if gross_loss_amount > 0
+        else (math.inf if gross_profit_amount > 0 else 0.0)
+    )
+    metrics.update(
+        {
+            "gross_profit": gross_profit_amount,
+            "gross_loss": gross_loss_amount,
+            "profit_factor": float(profit_factor_amount),
+            "gross_trading_pnl": float(
+                sum(trade.gross_pnl for trade in result.executed_trades)
+            ),
+            "net_trading_pnl": float(
+                sum(trade.net_pnl for trade in result.executed_trades)
+            ),
+            "total_buy_commission": float(
+                sum(trade.buy_commission for trade in result.executed_trades)
+            ),
+            "total_sell_commission": float(
+                sum(trade.sell_commission for trade in result.executed_trades)
+            ),
+            "total_sell_tax": float(
+                sum(trade.sell_tax for trade in result.executed_trades)
+            ),
+            "total_transaction_cost": float(
+                sum(trade.total_transaction_cost for trade in result.executed_trades)
+            ),
+        }
+    )
     coverage_min, coverage_max, coverage_mean = _coverage_counts(active_coverage)
     metrics.update(
         {

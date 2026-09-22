@@ -70,17 +70,25 @@ def _patch_pipeline(monkeypatch: pytest.MonkeyPatch, rows: list[HistoricalEvalua
         ),
     )
     monkeypatch.setattr(evaluator, "calculate_metrics", lambda *args, **kwargs: {})
-    monkeypatch.setattr(evaluator, "calculate_portfolio_metrics", lambda *args, **kwargs: {})
+    monkeypatch.setattr(
+        evaluator,
+        "calculate_portfolio_metrics",
+        lambda *args, **kwargs: {"final_equity": kwargs["final_equity"]},
+    )
 
     class Simulator:
         def __init__(self, **kwargs: Any) -> None:
             captured["simulator_kwargs"] = kwargs
+            self.initial_cash = kwargs["initial_cash"]
         def simulate(self, candidates: list[Trade]) -> Any:
             captured["candidates"] = candidates
+            final_equity = self.initial_cash + sum(
+                candidate.net_pnl for candidate in candidates
+            )
             return SimpleNamespace(
                 executed_trades=candidates,
-                equity_curve=pd.DataFrame({"date": [DAY], "equity": [100.0]}),
-                final_equity=100.0,
+                equity_curve=pd.DataFrame({"date": [DAY], "equity": [final_equity]}),
+                final_equity=final_equity,
             )
     monkeypatch.setattr(evaluator, "PortfolioSimulator", Simulator)
     return captured
@@ -257,3 +265,40 @@ def test_injected_legacy_and_coverage_universes_never_fall_back_to_live_vn100(
         universe_mode="database_coverage", coverage_index=coverage,
         breadth_index=_Breadth(), parity_config=_parity(),
     )
+
+
+def test_executed_trade_cost_aggregation_reconciles_final_equity(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    winner, loser = _trade("AAA"), _trade("BBB")
+    winner.entry_price, winner.exit_price, winner.quantity = 100.0, 110.0, 2
+    winner.buy_commission, winner.sell_commission, winner.sell_tax = 1.0, 2.0, 3.0
+    loser.entry_price, loser.exit_price, loser.quantity = 100.0, 90.0, 1
+    loser.buy_commission, loser.sell_commission, loser.sell_tax = 1.0, 2.0, 3.0
+    monkeypatch.setattr(PaperV2QualityGate, "_add_sector_rs_telemetry", lambda self, signal: dict(signal))
+    (_, metrics, _), _ = _run(
+        monkeypatch,
+        [_row("AAA", passed=True, score=50), _row("BBB", passed=True, score=50)],
+        [winner, loser],
+    )
+    assert metrics["gross_trading_pnl"] == 10.0
+    assert metrics["total_buy_commission"] == 2.0
+    assert metrics["total_sell_commission"] == 4.0
+    assert metrics["total_sell_tax"] == 6.0
+    assert metrics["total_transaction_cost"] == 12.0
+    assert metrics["net_trading_pnl"] == -2.0
+    assert metrics["gross_profit"] == 14.0
+    assert metrics["gross_loss"] == 16.0
+    assert metrics["profit_factor"] == pytest.approx(14.0 / 16.0)
+    assert metrics["final_equity"] == pytest.approx(100_000_000.0 + metrics["net_trading_pnl"])
+
+
+def test_zero_cost_metrics_are_valid_when_no_trade_executes(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(PaperV2QualityGate, "_add_sector_rs_telemetry", lambda self, signal: dict(signal))
+    (_, metrics, _), captured = _run(monkeypatch, [_row("AAA", passed=True, score=100)], [])
+    assert captured["candidates"] == []
+    assert metrics["gross_trading_pnl"] == 0.0
+    assert metrics["net_trading_pnl"] == 0.0
+    assert metrics["total_transaction_cost"] == 0.0
