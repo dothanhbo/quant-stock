@@ -1,41 +1,47 @@
 # Quant Bot V3 — Market Breadth Paper Candidate
 
-V3 is the frozen Q70 + Hard Donchian + ATR 2/5 baseline with one additional
-market-level exposure overlay.
+Paper V3 keeps the frozen Q70 entry policy and adds market-breadth exposure
+control. Breadth does not change the Q70 score, its component percentiles, or
+the Q70 acceptance decision.
 
-## Frozen V3 rule
+## Decision order and exposure
 
-- breadth >= 60%: 100% of normal position size
-- 40% <= breadth < 60%: 50% of normal position size
-- breadth < 40%: 0% new-position exposure
-- missing/non-finite breadth: fail closed (0% new exposure)
+`PaperV3Scanner` applies the frozen Q70 gate first. Breadth exposure is
+calculated only for Q70-accepted candidates from their point-in-time
+`breadth_ema50_pct` value:
 
-Breadth uses the point-in-time `breadth_ema50_pct` already produced by the
-scanner. It does not change Q70, Donchian, entry timing, ATR stop/target, or
-the Q70 quality features.
+- breadth >= 60%: 100% of normal position size (`FULL`)
+- 40% <= breadth < 60%: 50% of normal position size (`HALF`)
+- breadth < 40%: 0% new-position exposure (`BREADTH_BLOCK`)
+- missing or non-finite breadth: fail closed to 0% new-position exposure
 
-## Runtime
+Candidates blocked at 0% are retained in V3 breadth diagnostics rather than
+returned as accepted candidates.
 
-The default daily pipeline remains `Q70_FROZEN` for backward compatibility.
+Q70-rejected candidates do not receive breadth exposure. They report
+`breadth_exposure_applied=False`, no breadth multiplier or percentage, and
+`paper_v3_breadth_gate=NOT_APPLICABLE`.
 
-To run the V3 paper candidate, set:
+## Runtime configuration
 
-`PAPER_STRATEGY_VERSION=V3_BREADTH_40_60`
+The daily pipeline defaults to `Q70_FROZEN`. Select Paper V3 with:
 
-and optionally:
+```text
+PAPER_STRATEGY_VERSION=V3_BREADTH_40_60
+```
 
-`PAPER_V3_DATABASE_PATH=data/paper_trading_v3.db`
+Paper database defaults and overrides are:
 
-V3 uses its own paper database. Existing V1/V2 databases are not migrated or
-modified.
+```text
+V2: data/paper_trading_v2.db  (PAPER_V2_DATABASE_PATH)
+V3: data/paper_trading_v3.db  (PAPER_V3_DATABASE_PATH)
+```
 
-The V3 runner and lifecycle entrypoints live in `scripts/` alongside the V2
-entrypoints. `scripts/run_daily.py` selects V2 or V3 from
-`PAPER_STRATEGY_VERSION`.
+V2 and V3 paper state remain isolated. The V3 lifecycle configures the hybrid
+entry model, ATR stop 2.0, ATR target 5.0, and disables trailing behavior.
 
 ## Validation boundary
 
-V3 is an exposure-overlay candidate. It must be validated against the frozen
-Q70 baseline before being treated as the production strategy. Historical
-research results should remain reproducible artifacts; they are not silently
-replaced by paper-trading observations.
+V3 remains an exposure-control candidate. Historical research artifacts and
+paper observations should retain their policy, universe, cost, and database
+provenance rather than being relabeled or overwritten.
