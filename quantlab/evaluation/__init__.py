@@ -1,21 +1,37 @@
-"""Pure descriptive evaluation of candidate factors against future labels."""
+"""Pure descriptive candidate-factor evaluation contracts and helpers."""
 
-from .contracts import (
-    CandidateFactorOutcomeEvaluationResult,
-    DailyFactorOutcomeEvaluation,
-    DESCRIPTIVE_WARNING,
-    FROZEN_Q70_FACTOR_OUTCOMES_5_10_20_V1,
-    FactorHorizonEvaluationSummary,
-    FactorOutcomeEvaluationSpec,
-)
-from .factor_outcomes import evaluate_candidate_factor_outcomes
+from importlib import import_module
 
-__all__ = [
-    "CandidateFactorOutcomeEvaluationResult",
-    "DailyFactorOutcomeEvaluation",
-    "DESCRIPTIVE_WARNING",
-    "FROZEN_Q70_FACTOR_OUTCOMES_5_10_20_V1",
-    "FactorHorizonEvaluationSummary",
-    "FactorOutcomeEvaluationSpec",
-    "evaluate_candidate_factor_outcomes",
-]
+
+_EXPORT_MODULES = {
+    "CandidateFactorOutcomeEvaluationResult": ".contracts",
+    "DailyFactorOutcomeEvaluation": ".contracts",
+    "DESCRIPTIVE_WARNING": ".contracts",
+    "FROZEN_Q70_FACTOR_OUTCOMES_5_10_20_V1": ".contracts",
+    "FactorHorizonEvaluationSummary": ".contracts",
+    "FactorOutcomeEvaluationSpec": ".contracts",
+    "evaluate_candidate_factor_outcomes": ".factor_outcomes",
+    "TemporalBlock": ".temporal_stability_contracts",
+    "FactorTemporalStabilitySpec": ".temporal_stability_contracts",
+    "FactorBlockStabilityResult": ".temporal_stability_contracts",
+    "FactorHorizonTemporalStabilitySummary": ".temporal_stability_contracts",
+    "CandidateFactorTemporalStabilityResult": ".temporal_stability_contracts",
+    "FROZEN_Q70_VOLUME_RSI_TEMPORAL_STABILITY_V1": ".temporal_stability_contracts",
+    "evaluate_candidate_factor_temporal_stability": ".temporal_stability",
+}
+
+__all__ = tuple(_EXPORT_MODULES)
+
+
+def __getattr__(name: str):
+    try:
+        module_name = _EXPORT_MODULES[name]
+    except KeyError as exc:
+        raise AttributeError(f"module {__name__!r} has no attribute {name!r}") from exc
+    value = getattr(import_module(module_name, __name__), name)
+    globals()[name] = value
+    return value
+
+
+def __dir__() -> list[str]:
+    return sorted((*globals(), *__all__))
