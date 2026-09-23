@@ -30,6 +30,7 @@ from quantlab.evaluation import (
     evaluate_candidate_factor_outcomes,
 )
 from quantlab.features import PointInTimeUniverseContext
+from quantlab.identity import canonical_json
 from quantlab.outcomes import (
     FORWARD_CLOSE_RETURNS_5_10_20_V1,
     CandidateForwardOutcomeSet,
@@ -57,7 +58,8 @@ _SUMMARY_COLUMNS = (
     "mean_daily_high_minus_low_median_spread", "median_daily_high_minus_low_median_spread",
     "positive_spread_date_count", "zero_spread_date_count", "negative_spread_date_count",
     "positive_spread_rate", "average_low_bucket_size", "average_high_bucket_size",
-    "included_daily_identities", "warning", "identity",
+    "included_daily_identity_count", "included_daily_identities_sha256",
+    "warning", "identity",
 )
 _DAILY_COLUMNS = (
     "signal_date", "factor", "horizon_sessions", "outcome_field",
@@ -89,6 +91,13 @@ _REQUIRED_FILENAMES = (
     "candidate_counts_by_date.csv",
     "evaluation_coverage_summary.csv",
     "assumptions.md",
+)
+_SUMMARY_COMPACT_IDENTITY_COLUMNS = (
+    "included_daily_identity_count", "included_daily_identities_sha256",
+)
+_SUMMARY_DIRECT_COLUMNS = tuple(
+    column for column in _SUMMARY_COLUMNS
+    if column not in _SUMMARY_COMPACT_IDENTITY_COLUMNS
 )
 
 
@@ -210,6 +219,11 @@ def _status_counts_by_date(outcomes: CandidateForwardOutcomeSet) -> dict[tuple[s
     return result
 
 
+def _included_daily_identities_sha256(identities: tuple[str, ...]) -> str:
+    """Hash the ordered immutable identity tuple without expanding it in CSV."""
+    return sha256(canonical_json(list(identities))).hexdigest()
+
+
 def _artifact_rows(
     evaluation: CandidateFactorOutcomeEvaluationResult,
     outcomes: CandidateForwardOutcomeSet,
@@ -218,12 +232,11 @@ def _artifact_rows(
 ) -> dict[str, tuple[tuple[str, ...], list[dict[str, Any]]]]:
     summaries = [
         {
-            **{column: getattr(item, column) for column in _SUMMARY_COLUMNS if column not in {"included_daily_identities", "identity"}},
-            "included_daily_identities": json.dumps(
-                list(item.included_daily_identities), ensure_ascii=False,
-                sort_keys=True, separators=(",", ":"),
+            **{column: getattr(item, column) for column in _SUMMARY_DIRECT_COLUMNS},
+            "included_daily_identity_count": len(item.included_daily_identities),
+            "included_daily_identities_sha256": _included_daily_identities_sha256(
+                item.included_daily_identities,
             ),
-            "identity": item.identity,
         }
         for item in evaluation.summaries
     ]
@@ -382,10 +395,12 @@ def _validate_reconciliation(
 def _validate_emitted(
     directory: Path,
     rows: dict[str, tuple[tuple[str, ...], list[dict[str, Any]]]],
+    evaluation: CandidateFactorOutcomeEvaluationResult,
 ) -> None:
     manifest = json.loads((directory / "experiment_manifest.json").read_text(encoding="utf-8"))
     if manifest.get("completion_status") != "complete":
         raise ValueError("experiment manifest is not complete")
+    emitted_rows: dict[str, list[dict[str, str]]] = {}
     for filename, (columns, expected_rows) in rows.items():
         with (directory / filename).open("r", encoding="utf-8", newline="") as stream:
             reader = csv.DictReader(stream)
@@ -394,6 +409,28 @@ def _validate_emitted(
                 raise ValueError(f"emitted CSV schema mismatch: {filename}")
             if len(actual_rows) != len(expected_rows):
                 raise ValueError(f"emitted CSV row count mismatch: {filename}")
+            emitted_rows[filename] = actual_rows
+    summary_columns = rows["factor_outcome_summary.csv"][0]
+    if "included_daily_identities" in summary_columns:
+        raise ValueError("summary artifact must not contain the full daily identity collection")
+    if not set(_SUMMARY_COMPACT_IDENTITY_COLUMNS).issubset(summary_columns):
+        raise ValueError("summary artifact is missing compact daily identity audit fields")
+    summary_rows = emitted_rows["factor_outcome_summary.csv"]
+    if len(summary_rows) != len(evaluation.summaries):
+        raise ValueError("emitted summary rows do not reconcile with immutable summaries")
+    for row, summary in zip(summary_rows, evaluation.summaries, strict=True):
+        if int(row["included_daily_identity_count"]) != len(summary.included_daily_identities):
+            raise ValueError("summary daily identity count does not reconcile")
+        if row["included_daily_identities_sha256"] != _included_daily_identities_sha256(
+            summary.included_daily_identities,
+        ):
+            raise ValueError("summary daily identity hash does not reconcile")
+        if row["identity"] != summary.identity:
+            raise ValueError("summary identity changed during artifact projection")
+        for column in _SUMMARY_DIRECT_COLUMNS:
+            expected = str(_csv_value(getattr(summary, column)))
+            if row[column] != expected:
+                raise ValueError(f"summary artifact value does not reconcile: {column}")
     actual = tuple(sorted(path.name for path in directory.iterdir()))
     if actual != tuple(sorted(_REQUIRED_FILENAMES)):
         raise ValueError("experiment artifact set is incomplete")
@@ -632,7 +669,7 @@ def run_factor_outcome_evaluation(
             _write_csv(temporary / filename, columns, artifact_rows)
         (temporary / "assumptions.md").write_text(_ASSUMPTIONS, encoding="utf-8", newline="\n")
         _write_json(temporary / "experiment_manifest.json", manifest)
-        _validate_emitted(temporary, rows)
+        _validate_emitted(temporary, rows, evaluation)
         if _file_sha256(database) != database_digest:
             raise RuntimeError("market database changed before experiment publication")
         _publish_atomic(temporary, output)

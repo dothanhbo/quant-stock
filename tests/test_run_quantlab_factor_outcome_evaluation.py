@@ -18,6 +18,7 @@ from quantlab.alpha import FrozenQ70Policy
 from quantlab.candidates import FrozenQ70CandidateBatch, FrozenQ70CandidateRecord
 from quantlab.evaluation import evaluate_candidate_factor_outcomes as real_evaluator
 from quantlab.features import PointInTimeUniverseContext
+from quantlab.identity import canonical_json
 from quantlab.outcomes import (
     FORWARD_CLOSE_RETURNS_5_10_20_V1,
     CandidateForwardOutcome,
@@ -272,7 +273,13 @@ def test_artifacts_order_status_tail_censoring_nulls_and_assumptions(
     assert manifest["outcome_status_counts_by_horizon"]["20"]["CENSORED_AFTER_DATA_END"] == 5
 
     with (output / "factor_outcome_summary.csv").open(encoding="utf-8", newline="") as stream:
-        summary = list(csv.DictReader(stream))
+        summary_reader = csv.DictReader(stream)
+        summary = list(summary_reader)
+    assert tuple(summary_reader.fieldnames or ()) == runner._SUMMARY_COLUMNS
+    assert "included_daily_identities" not in (summary_reader.fieldnames or ())
+    assert {
+        "included_daily_identity_count", "included_daily_identities_sha256",
+    }.issubset(summary_reader.fieldnames or ())
     expected_order = [
         (factor, str(horizon), outcome)
         for factor in runner.FROZEN_Q70_FACTOR_OUTCOMES_5_10_20_V1.factors
@@ -281,12 +288,24 @@ def test_artifacts_order_status_tail_censoring_nulls_and_assumptions(
     ]
     assert [(row["factor"], row["horizon_sessions"], row["outcome_field"]) for row in summary] == expected_order
     assert len(summary) == 54
+    for row, immutable_summary in zip(summary, result["evaluation"].summaries, strict=True):
+        identities = immutable_summary.included_daily_identities
+        assert int(row["included_daily_identity_count"]) == len(identities)
+        assert row["included_daily_identities_sha256"] == sha256(
+            canonical_json(list(identities))
+        ).hexdigest()
+        assert row["identity"] == immutable_summary.identity
+        for column in runner._SUMMARY_DIRECT_COLUMNS:
+            assert row[column] == str(runner._csv_value(getattr(immutable_summary, column)))
+    assert (output / "factor_outcome_summary.csv").stat().st_size < 100_000
     breadth = next(row for row in summary if row["factor"] == "breadth_ema50_pct")
     assert breadth["mean_daily_rank_ic"] == ""
     assert "nan" not in (output / "factor_outcome_summary.csv").read_text(encoding="utf-8").lower()
 
     with (output / "factor_outcome_by_date.csv").open(encoding="utf-8", newline="") as stream:
-        daily = list(csv.DictReader(stream))
+        daily_reader = csv.DictReader(stream)
+        daily = list(daily_reader)
+    assert tuple(daily_reader.fieldnames or ()) == runner._DAILY_COLUMNS
     assert len(daily) == 108
     assert [(row["signal_date"], row["factor"], row["horizon_sessions"], row["outcome_field"]) for row in daily] == [
         (day, factor, str(horizon), outcome)
@@ -295,6 +314,9 @@ def test_artifacts_order_status_tail_censoring_nulls_and_assumptions(
         for horizon in runner.FROZEN_Q70_FACTOR_OUTCOMES_5_10_20_V1.horizons
         for outcome in runner.FROZEN_Q70_FACTOR_OUTCOMES_5_10_20_V1.outcome_fields
     ]
+    for row, immutable_daily in zip(daily, result["evaluation"].daily_evaluations, strict=True):
+        for column in runner._DAILY_COLUMNS:
+            assert row[column] == str(runner._csv_value(getattr(immutable_daily, column)))
     with (output / "outcome_status_counts.csv").open(encoding="utf-8", newline="") as stream:
         status_rows = list(csv.DictReader(stream))
     assert len(status_rows) == 3 * len(tuple(ForwardOutcomeStatus))
