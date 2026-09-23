@@ -3,6 +3,7 @@ from __future__ import annotations
 from datetime import datetime
 from pathlib import Path
 from types import SimpleNamespace
+import csv
 import subprocess
 import sys
 
@@ -402,6 +403,105 @@ def test_causal_classification_and_ranking_identities_are_deterministic() -> Non
     pd.testing.assert_frame_equal(first[0], second[0])
     pd.testing.assert_frame_equal(first[1], second[1])
     assert first[2] == second[2]
+
+
+def test_causal_output_columns_use_explicit_nullable_dtypes_and_assign_all_classes(
+    tmp_path: Path,
+) -> None:
+    execution, ranking = _causal_fixture()
+    early = _execution_row(
+        "EARLY", fold=1, entry_date="2020-01-01", baseline_ordinal=1,
+        variant_ordinal=1, baseline_disposition="executed",
+        variant_disposition="insufficient_cash",
+    )
+    unchanged = _execution_row(
+        "SAME", fold=1, entry_date="2020-01-04", baseline_ordinal=1,
+        variant_ordinal=1, baseline_disposition="executed",
+        variant_disposition="executed",
+    )
+    execution = pd.concat(
+        [pd.DataFrame([early]), execution, pd.DataFrame([unchanged])],
+        ignore_index=True,
+    )
+    ranking = pd.concat([
+        pd.DataFrame([_ranking_row(fold=1, entry_date="2020-01-01", changed=0, identity="c" * 64)]),
+        ranking,
+        pd.DataFrame([_ranking_row(fold=1, entry_date="2020-01-04", changed=0, identity="d" * 64)]),
+    ], ignore_index=True).loc[:, runner.RANKING_CHANGE_COLUMNS]
+
+    classified, _, counts = runner._classify_execution_divergence(execution, ranking)
+    for column in (
+        "divergence_classification", "causal_anchor_entry_date", "causal_anchor_identity",
+    ):
+        assert isinstance(classified[column].dtype, pd.StringDtype)
+    assert str(classified["causal_anchor_fold"].dtype) == "Int64"
+    assert set(classified["divergence_classification"].dropna()) == {
+        "direct_priority", "downstream_portfolio_state", "unexpected",
+    }
+    direct = classified.loc[classified["candidate_key"] == "A"].iloc[0]
+    downstream = classified.loc[classified["candidate_key"] == "C"].iloc[0]
+    unexpected = classified.loc[classified["candidate_key"] == "EARLY"].iloc[0]
+    same = classified.loc[classified["candidate_key"] == "SAME"].iloc[0]
+    assert direct["causal_anchor_fold"] == 1
+    assert direct["causal_anchor_entry_date"] == pd.Timestamp("2020-01-02").isoformat()
+    assert direct["causal_anchor_identity"] == "a" * 64
+    assert downstream["divergence_classification"] == "downstream_portfolio_state"
+    assert unexpected["divergence_classification"] == "unexpected"
+    assert pd.isna(unexpected["causal_anchor_fold"])
+    assert all(pd.isna(same[column]) for column in (
+        "divergence_classification", "causal_anchor_fold",
+        "causal_anchor_entry_date", "causal_anchor_identity",
+    ))
+    assert counts == {"direct_priority": 2, "downstream_portfolio_state": 1, "unexpected": 1}
+
+    output = tmp_path / "executed.csv"
+    runner._write_frame(output, classified, runner.EXECUTED_COMPARISON_COLUMNS)
+    text = output.read_text(encoding="utf-8")
+    assert "<NA>" not in text and ",nan," not in text and ",None," not in text
+    with output.open("r", encoding="utf-8", newline="") as stream:
+        rows = {row["candidate_key"]: row for row in csv.DictReader(stream)}
+    assert rows["SAME"]["divergence_classification"] == ""
+    assert rows["SAME"]["causal_anchor_fold"] == ""
+    assert rows["SAME"]["causal_anchor_entry_date"] == ""
+    assert rows["SAME"]["causal_anchor_identity"] == ""
+    assert rows["A"]["causal_anchor_fold"] == "1"
+    reread = pd.read_csv(output, keep_default_na=False)
+    reread_by_key = reread.set_index("candidate_key")
+    assert reread_by_key.at["A", "divergence_classification"] == "direct_priority"
+    assert reread_by_key.at["C", "divergence_classification"] == "downstream_portfolio_state"
+    assert reread_by_key.at["EARLY", "divergence_classification"] == "unexpected"
+    assert reread_by_key.at["SAME", "causal_anchor_identity"] == ""
+
+
+def test_empty_causal_input_has_exact_nullable_schema() -> None:
+    execution = pd.DataFrame(columns=runner.EXECUTED_COMPARISON_COLUMNS)
+    ranking = pd.DataFrame(columns=runner.RANKING_CHANGE_COLUMNS)
+    classified, changes, counts = runner._classify_execution_divergence(execution, ranking)
+    assert tuple(classified.columns) == runner.EXECUTED_COMPARISON_COLUMNS
+    assert tuple(changes.columns) == runner.RANKING_CHANGE_COLUMNS
+    assert isinstance(classified["divergence_classification"].dtype, pd.StringDtype)
+    assert isinstance(classified["causal_anchor_entry_date"].dtype, pd.StringDtype)
+    assert isinstance(classified["causal_anchor_identity"].dtype, pd.StringDtype)
+    assert str(classified["causal_anchor_fold"].dtype) == "Int64"
+    assert counts == {"direct_priority": 0, "downstream_portfolio_state": 0, "unexpected": 0}
+
+
+def test_causal_classification_is_independent_of_input_presentation_order() -> None:
+    execution, ranking = _causal_fixture()
+    ordered = runner._classify_execution_divergence(execution, ranking)
+    reversed_result = runner._classify_execution_divergence(
+        execution.iloc[::-1].reset_index(drop=True),
+        ranking.iloc[::-1].reset_index(drop=True),
+    )
+    columns = (
+        "candidate_key", "divergence_classification", "causal_anchor_fold",
+        "causal_anchor_entry_date", "causal_anchor_identity",
+    )
+    pd.testing.assert_frame_equal(
+        ordered[0].loc[:, columns].sort_values("candidate_key").reset_index(drop=True),
+        reversed_result[0].loc[:, columns].sort_values("candidate_key").reset_index(drop=True),
+    )
+    assert ordered[2] == reversed_result[2]
 
 
 def test_slot_crossing_still_fails_before_causal_classification() -> None:

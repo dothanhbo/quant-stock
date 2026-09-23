@@ -550,12 +550,19 @@ def _classify_execution_divergence(
     """
     classified = executed.copy()
     changes = ranking.copy()
+    row_index = classified.index
     for column in (
-        "divergence_classification", "causal_anchor_fold",
-        "causal_anchor_entry_date", "causal_anchor_identity",
+        "divergence_classification", "causal_anchor_entry_date",
+        "causal_anchor_identity",
     ):
-        if column not in classified:
-            classified[column] = None
+        classified[column] = pd.Series(
+            pd.array([pd.NA] * len(classified), dtype="string"),
+            index=row_index,
+        )
+    classified["causal_anchor_fold"] = pd.Series(
+        pd.array([pd.NA] * len(classified), dtype="Int64"),
+        index=row_index,
+    )
 
     direct_by_event = {
         _event_key(row.fold, row.entry_date): str(row.ranking_change_identity)
