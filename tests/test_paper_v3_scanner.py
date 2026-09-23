@@ -39,4 +39,35 @@ def test_v3_blocks_below_40_and_halves_40_to_60():
     assert [x["symbol"] for x in accepted] == ["AAA", "BBB"]
     assert accepted[0]["breadth_exposure_multiplier"] == 1.0
     assert accepted[1]["breadth_exposure_multiplier"] == 0.5
+    assert accepted[0]["breadth_exposure_applied"] is True
+    assert accepted[1]["breadth_exposure_applied"] is True
     assert [x["symbol"] for x in stats["paper_v3_breadth_blocked"]] == ["CCC"]
+
+
+def test_v3_does_not_apply_breadth_to_q70_rejected_candidate():
+    universe = [
+        {
+            **signal("AAA", 30),
+            "score": 100.0,
+            "relative_strength_20d": 100.0,
+            "adx": 100.0,
+        },
+        {
+            **signal("BBB", 30),
+            "score": 0.0,
+            "relative_strength_20d": 0.0,
+            "adx": 0.0,
+        },
+    ]
+    accepted, stats = PaperV3Scanner().process(
+        [universe[1]],
+        {"evaluations": universe},
+    )
+
+    assert accepted == []
+    rejected = stats["paper_v3_rejected"]
+    assert len(rejected) == 1
+    assert rejected[0]["breadth_exposure_applied"] is False
+    assert rejected[0]["breadth_exposure_multiplier"] is None
+    assert rejected[0]["breadth_exposure_pct"] is None
+    assert rejected[0]["paper_v3_breadth_gate"] == "NOT_APPLICABLE"

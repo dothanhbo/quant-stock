@@ -201,3 +201,51 @@ def test_analyze_symbol_bear_rejects_even_with_high_q70(monkeypatch):
     assert result.q70_passed is False
     assert result.gate_state == "BEAR"
     assert result.gate_reason == "BEAR"
+
+
+def test_analyze_symbol_rejected_q70_has_no_breadth_application(monkeypatch):
+    evaluations = [
+        {
+            "symbol": "FPT",
+            "status": "PASSED",
+            "regime": "BULL",
+            "score": 100.0,
+            "relative_strength_20d": 100.0,
+            "adx": 100.0,
+            "breadth_ema50_pct": 28.0,
+            "breadth_ema50_change_10d": -5.0,
+        },
+        {
+            "symbol": "HPG",
+            "status": "PASSED",
+            "regime": "BULL",
+            "score": 0.0,
+            "relative_strength_20d": 0.0,
+            "adx": 0.0,
+            "breadth_ema50_pct": 28.0,
+            "breadth_ema50_change_10d": -5.0,
+        },
+    ]
+    monkeypatch.setattr(
+        "services.telegram_bot.query.scan_all_symbols",
+        lambda: (
+            evaluations,
+            {
+                "evaluations": evaluations,
+                "total_symbols": 2,
+                "fresh_count": 2,
+                "market_config": {"regime": "BULL"},
+                "market_state": {
+                    "breadth_ema50_pct": 28.0,
+                    "breadth_ema50_change_10d": -5.0,
+                },
+            },
+        ),
+    )
+
+    result = analyze_symbol("HPG")
+
+    assert result.q70_passed is False
+    assert result.breadth_exposure_multiplier is None
+    assert result.breadth_exposure_pct is None
+    assert result.breadth_gate == "NOT_APPLICABLE"
