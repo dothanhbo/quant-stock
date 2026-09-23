@@ -14,9 +14,11 @@ import pytest
 import backtesting.engine as historical_engine
 import backtesting.frozen_q70_evaluator as legacy_evaluator
 from backtesting.paper_parity import BacktestPaperParityConfig
+import quantlab.adapters.frozen_q70_candidate_decisions as decision_adapter
 from quantlab.adapters.frozen_q70_candidate_decisions import (
     evaluate_frozen_q70_candidates,
 )
+from quantlab.candidates import candidate_batch_from_decisions
 from quantlab.catalog.market_data_snapshot import build_market_data_snapshot
 from quantlab.features import PointInTimeUniverseContext, PreparedFeatureCache
 
@@ -35,6 +37,132 @@ def test_adapter_import_has_no_database_or_cache_side_effect(tmp_path: Path) -> 
     missing = tmp_path / "not-created.db"
     completed = subprocess.run([sys.executable, "-c", "import quantlab.adapters.frozen_q70_candidate_decisions"], cwd=Path(__file__).resolve().parents[1], env=dict(os.environ, MARKET_DATABASE_PATH=str(missing)), capture_output=True, text=True)
     assert completed.returncode == 0 and not missing.exists()
+
+
+def test_sparse_symbol_calendar_resolves_one_causal_daily_state(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """A missing symbol-local state join must not become the Q70 state ``NAN``."""
+    context_columns = {
+        "close": 10.0,
+        "ATR14": 1.0,
+        "ATR_Percent": 2.0,
+        "RSI": 60.0,
+        "Vol_Ratio": 1.2,
+        "EMA10": 9.9,
+        "EMA20": 9.8,
+        "EMA50": 9.5,
+        "Previous_20D_High": 9.8,
+        "Breakout_20D": True,
+        "breadth_ema50_pct": 55.0,
+        "breadth_ema50_change_10d": 0.0,
+        "breadth_universe_count": 2,
+    }
+
+    def frame(dates: tuple[str, str], *, regime: str, state: object) -> pd.DataFrame:
+        return pd.DataFrame({
+            "time": pd.to_datetime(dates),
+            **{column: [value, value] for column, value in context_columns.items()},
+            "Market_Regime": [regime, regime],
+            "paper_v2_state": [state, state],
+        })
+
+    prepared_config = {"cts_regime": "SIDEWAY", "order": ("AAA", "CTS")}
+
+    class Prepared:
+        missing_symbols = ()
+        metadata = {"primary_symbols": ("AAA", "CTS"), "cache": None}
+        computation_identity = SimpleNamespace(sha256="prepared-v6")
+
+        def __init__(self) -> None:
+            self.available_symbols = prepared_config["order"]
+            self.frames = {
+                "AAA": frame(("2020-12-01", "2020-12-03"), regime="BULL", state="FRAGILE_BULL"),
+                # This reproduces the real failure: CTS has an evaluation date
+                # absent from the arbitrary symbol used by the v6 state join.
+                "CTS": frame(("2020-12-02", "2020-12-03"), regime=prepared_config["cts_regime"], state=float("nan")),
+            }
+
+        def frame_for(self, symbol: str) -> pd.DataFrame:
+            return self.frames[symbol].copy(deep=True)
+
+    monkeypatch.setattr(
+        decision_adapter,
+        "prepare_historical_paper_state_subset",
+        lambda *args, **kwargs: Prepared(),
+    )
+    import strategy.scanner as scanner
+    monkeypatch.setattr(
+        scanner,
+        "evaluate_prepared_row",
+        lambda **kwargs: {
+            "status": "PASSED",
+            "score": 100.0,
+            "relative_strength_20d": 10.0,
+            "adx": 25.0,
+        },
+    )
+
+    class EntryModel:
+        def evaluate(self) -> None:
+            return None
+
+    universe = PointInTimeUniverseContext.static(
+        ("AAA", "CTS"),
+        ("2020-12-01", "2020-12-02", "2020-12-03"),
+    )
+    def evaluate():
+        return evaluate_frozen_q70_candidates(
+            SimpleNamespace(snapshot_id="snapshot"),
+            ("AAA", "CTS"),
+            benchmark_symbol="VNINDEX",
+            universe_context=universe,
+            start_date="2020-12-01",
+            through_date="2020-12-03",
+            entry_model=EntryModel(),
+            entry_policy_identity="sparse-calendar-regression-v1",
+        )
+
+    result = evaluate()
+    repeated = evaluate()
+    prepared_config["order"] = ("CTS", "AAA")
+    reordered = evaluate()
+    prepared_config.update(cts_regime="BEAR", order=("AAA", "CTS"))
+    bear = evaluate()
+
+    assert result.batches["2020-12-02"].market_state == "NEUTRAL"
+    assert result.signal_context_for("CTS:2020-12-02")["paper_v2_state"] == "NEUTRAL"
+    assert result.metadata["identity_contract_version"] == "v2"
+    assert repeated.identity == result.identity == reordered.identity
+    assert tuple(row.canonical() for row in bear.evaluations) == tuple(row.canonical() for row in result.evaluations)
+    assert bear.batches["2020-12-02"].market_state == "BEAR"
+    assert bear.batches["2020-12-02"].decisions[0].reason == "BEAR"
+    assert bear.accepted_candidate_keys == ("AAA:2020-12-01",)
+    assert bear.identity != result.identity
+    batch = candidate_batch_from_decisions(
+        result,
+        requested_symbols=("AAA", "CTS"),
+        available_symbols=("AAA", "CTS"),
+        start_date="2020-12-01",
+        through_date="2020-12-03",
+    )
+    assert tuple(item.candidate_key for item in batch.candidates) == (
+        "AAA:2020-12-01",
+        "CTS:2020-12-02",
+    )
+
+
+def test_same_date_market_state_inputs_must_agree() -> None:
+    rows = [
+        decision_adapter.FrozenQ70EvaluationRow("AAA", "2024-01-02", 1, 1, 1, True, "AAA:2024-01-02"),
+        decision_adapter.FrozenQ70EvaluationRow("BBB", "2024-01-02", 1, 1, 1, True, "BBB:2024-01-02"),
+    ]
+    contexts = {
+        "AAA:2024-01-02": {"Market_Regime": "BEAR", "breadth_ema50_pct": 70.0, "breadth_ema50_change_10d": 1.0},
+        "BBB:2024-01-02": {"Market_Regime": "BULL", "breadth_ema50_pct": 70.0, "breadth_ema50_change_10d": 1.0},
+    }
+    with pytest.raises(ValueError, match="inconsistent market-state inputs"):
+        decision_adapter._canonical_daily_states({"2024-01-02": rows}, contexts)
 
 
 class _DeterministicEntryModel:
