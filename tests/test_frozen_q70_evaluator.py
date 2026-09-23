@@ -15,6 +15,10 @@ from backtesting.paper_parity import BacktestPaperParityConfig
 from backtesting.trade import ExitReason, Trade
 from core.database_coverage import CoverageUniverseIndex
 from strategy.paper_v2_gate import PaperV2QualityGate
+from quantlab.ranking import (
+    FROZEN_Q70_QUALITY_RANK_V1,
+    FROZEN_Q70_VOLUME_RATIO_RANK_V1,
+)
 
 
 DAY = datetime(2020, 3, 1)
@@ -258,6 +262,62 @@ def test_state_policy_does_not_reclassify_gate_rejections(monkeypatch: pytest.Mo
     assert decision.execution_disposition == "not_gate_accepted"
     assert decision.state_policy_reason is None
     assert metrics["state_policy_rejected_candidates"] == 0
+
+
+def test_volume_priority_is_post_gate_and_uses_actual_quality_without_mutating_candidates(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    first, second = _trade("AAA"), _trade("BBB")
+    first.signal_score, first.volume_ratio = 90.0, 1.0
+    second.signal_score, second.volume_ratio = 80.0, 3.0
+    monkeypatch.setattr(PaperV2QualityGate, "_add_sector_rs_telemetry", lambda self, signal: dict(signal))
+    (_, metrics, _), captured = _run(
+        monkeypatch,
+        [_row("AAA", passed=True, score=100), _row("BBB", passed=True, score=100)],
+        [first, second],
+        candidate_priority_policy=FROZEN_Q70_VOLUME_RATIO_RANK_V1,
+        collect_priority_ledger=True,
+    )
+    assert captured["candidates"] == [first, second]
+    assert (first.signal_score, second.signal_score) == (90.0, 80.0)
+    ledger = metrics["candidate_priority_ledger"]
+    assert tuple(item.symbol for item in ledger) == ("BBB", "AAA")
+    assert tuple(item.final_simulator_priority_ordinal for item in ledger) == (1, 2)
+    assert tuple(item.baseline_within_entry_date_ordinal for item in ledger) == (2, 1)
+    assert tuple(item.q70_quality_score for item in ledger) == pytest.approx((1.0, 1.0))
+    assert all(item.signal_date_group_slot_ordinals == (1, 2) for item in ledger)
+    assert captured["simulator_kwargs"]["candidate_priority_evidence"] is ledger
+    assert captured["simulator_kwargs"]["candidate_priority_policy_fingerprint"] == FROZEN_Q70_VOLUME_RATIO_RANK_V1.fingerprint
+
+
+def test_priority_option_omitted_and_explicit_none_use_identical_default_seam(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    candidate = _trade("AAA")
+    candidate.signal_score, candidate.volume_ratio = 90.0, 2.0
+    monkeypatch.setattr(PaperV2QualityGate, "_add_sector_rs_telemetry", lambda self, signal: dict(signal))
+    (omitted, omitted_metrics, omitted_curve), omitted_capture = _run(
+        monkeypatch, [_row("AAA", passed=True, score=100)], [candidate]
+    )
+    assert omitted_capture["simulator_kwargs"]["candidate_priority_evidence"] is None
+    (explicit, explicit_metrics, explicit_curve), explicit_capture = _run(
+        monkeypatch, [_row("AAA", passed=True, score=100)], [candidate],
+        candidate_priority_policy=None,
+    )
+    assert explicit_capture["simulator_kwargs"]["candidate_priority_evidence"] is None
+    assert explicit == omitted
+    assert explicit_metrics == omitted_metrics
+    pd.testing.assert_frame_equal(explicit_curve, omitted_curve)
+
+
+def test_frozen_evaluator_rejects_non_volume_candidate_priority_policy(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    with pytest.raises(ValueError, match="only FROZEN_Q70_VOLUME_RATIO_RANK_V1"):
+        _run(
+            monkeypatch, [_row("AAA", passed=True, score=100)], [_trade("AAA")],
+            candidate_priority_policy=FROZEN_Q70_QUALITY_RANK_V1,
+        )
 
 
 def test_historical_gate_telemetry_cannot_reach_vnstock_or_change_selection(

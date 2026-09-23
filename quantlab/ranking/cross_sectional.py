@@ -36,6 +36,17 @@ FROZEN_Q70_QUALITY_RANK_V1 = CandidateRankingPolicy(
     ),),
 )
 
+FROZEN_Q70_VOLUME_RATIO_RANK_V1 = CandidateRankingPolicy(
+    name="FROZEN_Q70_VOLUME_RATIO_RANK_V1",
+    version="1",
+    factors=(RankingFactor(
+        field_name="volume_ratio",
+        weight=1.0,
+        direction=RankingDirection.HIGHER_IS_BETTER,
+        missing_value_policy=MissingValuePolicy.WORST,
+    ),),
+)
+
 
 def _finite(value: Any) -> float | None:
     if value is None or isinstance(value, bool):

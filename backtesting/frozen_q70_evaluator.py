@@ -5,6 +5,7 @@ from __future__ import annotations
 from collections import Counter, defaultdict
 from dataclasses import dataclass, replace
 from datetime import datetime
+from hashlib import sha256
 import math
 from typing import Any, Iterable, Literal
 
@@ -21,7 +22,8 @@ from backtesting.engine import (
 )
 from backtesting.exit_models import ATRExitModel
 from backtesting.paper_parity import BacktestPaperParityConfig
-from backtesting.portfolio_simulator import PortfolioSimulator
+from backtesting.portfolio_simulator import CandidatePriorityEvidence, PortfolioSimulator
+from backtesting.ranking import RankingMethod, rank_candidates
 from backtesting.trade import Trade
 from config.strategy_config import Q70_FROZEN
 from core.database_coverage import CoverageUniverseIndex, build_database_coverage_index
@@ -30,12 +32,19 @@ from core.universe import get_vn100_symbols
 from execution.signal_executor import PaperExecutionConfig
 from strategy.hybrid_trend_donchian_entry import HybridTrendDonchianEntryModel
 from strategy.paper_v2_gate import PaperV2QualityGate, QUALITY_FEATURES
+from quantlab.ranking import (
+    CandidateRankingPolicy,
+    FROZEN_Q70_VOLUME_RATIO_RANK_V1,
+)
 
 
 UniverseMode = Literal["current_vn100", "database_coverage"]
 _Q70_THRESHOLD = 0.70
 _ATR_STOP = 2.0
 _ATR_TARGET = 5.0
+CANONICAL_SIGNAL_SCORE_PRIORITY_FINGERPRINT = sha256(
+    b"frozen_q70_canonical_signal_score_priority_v1"
+).hexdigest()
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +74,29 @@ class FrozenQ70Decision:
     executed_trade_key: str | None
 
 
+@dataclass(frozen=True, slots=True)
+class FrozenQ70AcceptedCandidateAudit:
+    candidate_key: str
+    symbol: str
+    signal_date: datetime
+    entry_date: datetime
+    entry_price: float
+    exit_date: datetime
+    exit_price: float
+    exit_reason: str
+    execution: str
+    signal_score: float | None
+    relative_strength_20d: float | None
+    adx: float | None
+    volume_ratio: float | None
+    atr: float | None
+    stop_price: float | None
+    market_regime: str | None
+    entry_model: str | None
+    q70_quality_score: float
+    q70_gate_reason: str
+
+
 def _normalize_symbols(symbols: Iterable[str]) -> list[str]:
     return sorted(
         {
@@ -82,6 +114,137 @@ def _key(symbol: str, signal_date: datetime) -> tuple[str, datetime]:
 def _candidate_key(symbol: str, signal_date: datetime) -> str:
     normalized_symbol, normalized_date = _key(symbol, signal_date)
     return f"{normalized_symbol}|{normalized_date.isoformat()}"
+
+
+def _finite_or_none(value: Any) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        number = float(value)
+    except (TypeError, ValueError):
+        return None
+    return number if math.isfinite(number) else None
+
+
+def _raw_numeric_or_none(value: Any) -> float | None:
+    if value is None or isinstance(value, bool):
+        return None
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return None
+
+
+def _build_priority_evidence(
+    candidates: list[Trade],
+    quality_by_key: dict[str, float],
+    *,
+    use_volume_priority: bool,
+) -> tuple[CandidatePriorityEvidence, ...]:
+    fingerprint = (
+        FROZEN_Q70_VOLUME_RATIO_RANK_V1.fingerprint
+        if use_volume_priority
+        else CANONICAL_SIGNAL_SCORE_PRIORITY_FINGERPRINT
+    )
+    grouped: dict[datetime, list[Trade]] = defaultdict(list)
+    for candidate in candidates:
+        grouped[candidate.entry_date].append(candidate)
+    result: list[CandidatePriorityEvidence] = []
+    for entry_date in sorted(grouped):
+        event_order = sorted(grouped[entry_date], key=lambda item: item.symbol)
+        baseline = rank_candidates(event_order, RankingMethod.SIGNAL_SCORE)
+        baseline_ordinal = {
+            _candidate_key(item.symbol, item.signal_date): ordinal
+            for ordinal, item in enumerate(baseline, start=1)
+        }
+        signal_groups: dict[datetime, list[Trade]] = defaultdict(list)
+        for item in baseline:
+            if item.signal_date is None:
+                raise ValueError("accepted frozen-Q70 candidate requires signal_date")
+            signal_groups[item.signal_date].append(item)
+        final_ordinal: dict[str, int] = dict(baseline_ordinal)
+        variant_ordinal: dict[str, int] = {}
+        slots_by_key: dict[str, tuple[int, ...]] = {}
+        group_size_by_key: dict[str, int] = {}
+        for signal_date in sorted(signal_groups):
+            group = signal_groups[signal_date]
+            slots = tuple(sorted(
+                baseline_ordinal[_candidate_key(item.symbol, item.signal_date)]
+                for item in group
+            ))
+            variant = sorted(
+                group,
+                key=lambda item: (
+                    _finite_or_none(item.volume_ratio) is None,
+                    -(_finite_or_none(item.volume_ratio) or 0.0),
+                    -quality_by_key[_candidate_key(item.symbol, item.signal_date)],
+                    item.symbol,
+                    _candidate_key(item.symbol, item.signal_date),
+                ),
+            )
+            for ordinal, item in enumerate(variant, start=1):
+                key = _candidate_key(item.symbol, item.signal_date)
+                variant_ordinal[key] = ordinal
+                slots_by_key[key] = slots
+                group_size_by_key[key] = len(group)
+                if use_volume_priority:
+                    final_ordinal[key] = slots[ordinal - 1]
+        for item in baseline:
+            key = _candidate_key(item.symbol, item.signal_date)
+            volume = _raw_numeric_or_none(item.volume_ratio)
+            finite_volume = _finite_or_none(item.volume_ratio)
+            result.append(CandidatePriorityEvidence(
+                candidate_key=key,
+                symbol=item.symbol,
+                signal_date=item.signal_date,
+                entry_date=item.entry_date,
+                volume_ratio=volume,
+                volume_ratio_finite=finite_volume is not None,
+                q70_quality_score=quality_by_key[key],
+                baseline_signal_score=_finite_or_none(item.signal_score),
+                baseline_within_entry_date_ordinal=baseline_ordinal[key],
+                signal_date_group_key=item.signal_date.date().isoformat(),
+                signal_date_group_size=group_size_by_key[key],
+                signal_date_group_slot_ordinals=slots_by_key[key],
+                variant_within_signal_date_ordinal=variant_ordinal[key],
+                final_simulator_priority_ordinal=final_ordinal[key],
+                ranking_policy_fingerprint=fingerprint,
+            ))
+    return tuple(sorted(
+        result,
+        key=lambda item: (item.entry_date, item.final_simulator_priority_ordinal, item.candidate_key),
+    ))
+
+
+def _accepted_candidate_audit(
+    candidates: list[Trade],
+    quality_by_key: dict[str, float],
+    reason_by_key: dict[str, str],
+) -> tuple[FrozenQ70AcceptedCandidateAudit, ...]:
+    return tuple(
+        FrozenQ70AcceptedCandidateAudit(
+            candidate_key=_candidate_key(item.symbol, item.signal_date),
+            symbol=item.symbol,
+            signal_date=item.signal_date,
+            entry_date=item.entry_date,
+            entry_price=float(item.entry_price),
+            exit_date=item.exit_date,
+            exit_price=float(item.exit_price),
+            exit_reason=str(getattr(item.exit_reason, "value", item.exit_reason)),
+            execution=str(getattr(item.execution, "value", item.execution)),
+            signal_score=_finite_or_none(item.signal_score),
+            relative_strength_20d=_finite_or_none(item.relative_strength),
+            adx=_finite_or_none(item.adx),
+            volume_ratio=_raw_numeric_or_none(item.volume_ratio),
+            atr=_finite_or_none(item.atr),
+            stop_price=_finite_or_none(item.stop_price),
+            market_regime=item.market_regime,
+            entry_model=item.entry_model,
+            q70_quality_score=quality_by_key[_candidate_key(item.symbol, item.signal_date)],
+            q70_gate_reason=reason_by_key[_candidate_key(item.symbol, item.signal_date)],
+        )
+        for item in sorted(candidates, key=lambda row: (row.signal_date, row.symbol, _candidate_key(row.symbol, row.signal_date)))
+    )
 
 
 def _validate_frozen_policy() -> None:
@@ -152,6 +315,8 @@ def run_frozen_q70_backtest(
     collect_decision_ledger: bool = False,
     decision_phase: str = "unspecified",
     allowed_entry_states: Iterable[str] | None = None,
+    candidate_priority_policy: CandidateRankingPolicy | None = None,
+    collect_priority_ledger: bool = False,
 ) -> tuple[list[Trade], dict[str, Any], pd.DataFrame]:
     """Evaluate the immutable Q70 policy using existing candidates and simulator.
 
@@ -164,6 +329,11 @@ def run_frozen_q70_backtest(
         raise ValueError("universe_mode is not supported")
     if minimum_history_sessions < 0 or maximum_staleness_sessions < 0:
         raise ValueError("coverage thresholds must be non-negative")
+    if candidate_priority_policy is not None:
+        if not isinstance(candidate_priority_policy, CandidateRankingPolicy):
+            raise TypeError("candidate_priority_policy must be CandidateRankingPolicy or None")
+        if candidate_priority_policy.fingerprint != FROZEN_Q70_VOLUME_RATIO_RANK_V1.fingerprint:
+            raise ValueError("only FROZEN_Q70_VOLUME_RATIO_RANK_V1 is supported")
     allowed_states = (
         None
         if allowed_entry_states is None
@@ -278,6 +448,8 @@ def run_frozen_q70_backtest(
         sector_universe_symbols=tuple(selected_symbols),
     )
     accepted_candidates: list[Trade] = []
+    accepted_quality_by_key: dict[str, float] = {}
+    accepted_reason_by_key: dict[str, str] = {}
     gate_decisions: dict[str, FrozenQ70Decision] = {}
     rejection_counts: Counter[str] = Counter()
     rejection_state_counts: Counter[str] = Counter()
@@ -366,7 +538,26 @@ def run_frozen_q70_backtest(
             candidate = candidates_by_key[_key(
                 str(accepted_signal["symbol"]), signal_date
             )]
+            accepted_quality_by_key[candidate_key] = float(accepted_signal["paper_v2_quality"])
+            accepted_reason_by_key[candidate_key] = str(accepted_signal["paper_v2_gate"])
             accepted_candidates.append(candidate)
+
+    if candidate_priority_policy is not None or collect_priority_ledger:
+        priority_evidence = _build_priority_evidence(
+            accepted_candidates,
+            accepted_quality_by_key,
+            use_volume_priority=candidate_priority_policy is not None,
+        )
+        accepted_audit = _accepted_candidate_audit(
+            accepted_candidates,
+            accepted_quality_by_key,
+            accepted_reason_by_key,
+        )
+    else:
+        # Preserve the canonical/default evaluator path: no research ranking or
+        # audit materialization occurs unless explicitly requested.
+        priority_evidence = ()
+        accepted_audit = ()
 
     simulator = PortfolioSimulator(
         initial_cash=parity.initial_cash,
@@ -379,6 +570,13 @@ def run_frozen_q70_backtest(
         max_new_positions_per_day=paper.maximum_orders_per_scan,
         maximum_gross_exposure_pct=parity.maximum_gross_exposure_pct,
         minimum_cash_buffer_pct=parity.minimum_cash_buffer_pct,
+        candidate_priority_evidence=(
+            priority_evidence if candidate_priority_policy is not None else None
+        ),
+        candidate_priority_policy_fingerprint=(
+            candidate_priority_policy.fingerprint
+            if candidate_priority_policy is not None else None
+        ),
     )
     result = simulator.simulate(accepted_candidates)
     if collect_decision_ledger:
@@ -510,5 +708,13 @@ def run_frozen_q70_backtest(
     if collect_decision_ledger:
         metrics["decision_ledger"] = tuple(
             sorted(gate_decisions.values(), key=lambda row: (row.signal_date, row.symbol, row.candidate_key))
+        )
+    if collect_priority_ledger or candidate_priority_policy is not None:
+        metrics["candidate_priority_ledger"] = priority_evidence
+        metrics["accepted_candidate_audit"] = accepted_audit
+        metrics["candidate_priority_policy_fingerprint"] = (
+            candidate_priority_policy.fingerprint
+            if candidate_priority_policy is not None
+            else CANONICAL_SIGNAL_SCORE_PRIORITY_FINGERPRINT
         )
     return result.executed_trades, metrics, result.equity_curve

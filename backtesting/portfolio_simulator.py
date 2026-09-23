@@ -2,6 +2,9 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from datetime import datetime
+import math
+from types import MappingProxyType
+from typing import Mapping
 
 import pandas as pd
 
@@ -54,6 +57,70 @@ class ReplacementOpportunity:
     decision: CandidateDecision
     event_date: datetime
 
+
+@dataclass(frozen=True, slots=True)
+class CandidatePriorityEvidence:
+    """Immutable research-only priority evidence for one accepted candidate."""
+
+    candidate_key: str
+    symbol: str
+    signal_date: datetime
+    entry_date: datetime
+    volume_ratio: float | None
+    volume_ratio_finite: bool
+    q70_quality_score: float
+    baseline_signal_score: float | None
+    baseline_within_entry_date_ordinal: int
+    signal_date_group_key: str
+    signal_date_group_size: int
+    signal_date_group_slot_ordinals: tuple[int, ...]
+    variant_within_signal_date_ordinal: int
+    final_simulator_priority_ordinal: int
+    ranking_policy_fingerprint: str
+
+    def __post_init__(self) -> None:
+        symbol = str(self.symbol).strip().upper()
+        key = str(self.candidate_key).strip()
+        fingerprint = str(self.ranking_policy_fingerprint).strip()
+        if not symbol or not key or not fingerprint:
+            raise ValueError("priority evidence requires candidate key, symbol, and policy fingerprint")
+        if not isinstance(self.signal_date, datetime) or not isinstance(self.entry_date, datetime):
+            raise TypeError("priority evidence dates must be datetime values")
+        try:
+            raw_volume = None if self.volume_ratio is None else float(self.volume_ratio)
+        except (TypeError, ValueError) as exc:
+            raise ValueError("volume_ratio must be numeric or None") from exc
+        finite = raw_volume is not None and math.isfinite(raw_volume)
+        if bool(self.volume_ratio_finite) != finite:
+            raise ValueError("volume_ratio_finite does not match volume_ratio")
+        quality = float(self.q70_quality_score)
+        if not math.isfinite(quality):
+            raise ValueError("q70_quality_score must be finite")
+        ordinals = (
+            self.baseline_within_entry_date_ordinal,
+            self.signal_date_group_size,
+            self.variant_within_signal_date_ordinal,
+            self.final_simulator_priority_ordinal,
+        )
+        if any(isinstance(value, bool) or not isinstance(value, int) or value < 1 for value in ordinals):
+            raise ValueError("priority ordinals and group size must be positive integers")
+        slots = tuple(self.signal_date_group_slot_ordinals)
+        if len(slots) != self.signal_date_group_size or tuple(sorted(set(slots))) != slots:
+            raise ValueError("signal-date subgroup slots must be unique canonical ordinals")
+        if self.baseline_within_entry_date_ordinal not in slots:
+            raise ValueError("baseline ordinal must belong to the signal-date subgroup slot set")
+        if self.final_simulator_priority_ordinal not in slots:
+            raise ValueError("final ordinal must preserve the signal-date subgroup slot set")
+        expected_group = self.signal_date.date().isoformat()
+        if self.signal_date_group_key != expected_group:
+            raise ValueError("signal-date group key does not match signal_date")
+        object.__setattr__(self, "symbol", symbol)
+        object.__setattr__(self, "candidate_key", key)
+        object.__setattr__(self, "volume_ratio", raw_volume)
+        object.__setattr__(self, "q70_quality_score", quality)
+        object.__setattr__(self, "signal_date_group_slot_ordinals", slots)
+        object.__setattr__(self, "ranking_policy_fingerprint", fingerprint)
+
 @dataclass(slots=True)
 class PortfolioSimulationResult:
     executed_trades: list[Trade]
@@ -88,6 +155,8 @@ class PortfolioSimulator:
         max_new_positions_per_day: int | None = None,
         maximum_gross_exposure_pct: float | None = None,
         minimum_cash_buffer_pct: float = 0.0,
+        candidate_priority_evidence: tuple[CandidatePriorityEvidence, ...] | None = None,
+        candidate_priority_policy_fingerprint: str | None = None,
     ) -> None:
         if initial_cash <= 0:
             raise ValueError(
@@ -194,6 +263,130 @@ class PortfolioSimulator:
         self.minimum_cash_buffer_pct = float(
             minimum_cash_buffer_pct
         )
+        evidence = None if candidate_priority_evidence is None else tuple(candidate_priority_evidence)
+        if evidence is None:
+            if candidate_priority_policy_fingerprint is not None:
+                raise ValueError("priority fingerprint requires candidate priority evidence")
+            self._candidate_priority_by_key: Mapping[str, CandidatePriorityEvidence] | None = None
+            self.candidate_priority_policy_fingerprint = None
+        else:
+            fingerprint = str(candidate_priority_policy_fingerprint or "").strip()
+            if not fingerprint:
+                raise ValueError("candidate priority evidence requires a policy fingerprint")
+            if not all(isinstance(item, CandidatePriorityEvidence) for item in evidence):
+                raise TypeError("candidate priority evidence must contain immutable evidence records")
+            keys = tuple(item.candidate_key for item in evidence)
+            if len(set(keys)) != len(keys):
+                raise ValueError("duplicate candidate priority evidence key")
+            if any(item.ranking_policy_fingerprint != fingerprint for item in evidence):
+                raise ValueError("candidate priority policy fingerprint mismatch")
+            self._candidate_priority_by_key = MappingProxyType({item.candidate_key: item for item in evidence})
+            self.candidate_priority_policy_fingerprint = fingerprint
+
+    @staticmethod
+    def _candidate_key(candidate: Trade) -> str:
+        if candidate.signal_date is None:
+            raise ValueError("priority-ranked candidate requires signal_date")
+        return f"{candidate.symbol.strip().upper()}|{candidate.signal_date.isoformat()}"
+
+    @staticmethod
+    def _finite_or_none(value: object) -> float | None:
+        if value is None or isinstance(value, bool):
+            return None
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return None
+        return number if math.isfinite(number) else None
+
+    @staticmethod
+    def _numeric_signature(value: object) -> tuple[str, float | None]:
+        if value is None:
+            return "none", None
+        try:
+            number = float(value)
+        except (TypeError, ValueError):
+            return "invalid", None
+        if math.isnan(number):
+            return "nan", None
+        if math.isinf(number):
+            return ("positive_infinity" if number > 0 else "negative_infinity"), None
+        return "finite", number
+
+    def _rank_entry_candidates(
+        self,
+        candidates: list[Trade],
+        *,
+        event_date: datetime,
+    ) -> list[Trade]:
+        baseline = rank_candidates(candidates, method=self.ranking_method)
+        evidence_by_key = self._candidate_priority_by_key
+        if evidence_by_key is None:
+            return baseline
+
+        records: list[CandidatePriorityEvidence] = []
+        for ordinal, candidate in enumerate(baseline, start=1):
+            key = self._candidate_key(candidate)
+            try:
+                evidence = evidence_by_key[key]
+            except KeyError as exc:
+                raise ValueError(f"missing candidate priority evidence: {key}") from exc
+            if evidence.symbol != candidate.symbol.strip().upper():
+                raise ValueError(f"priority evidence symbol mismatch: {key}")
+            if evidence.signal_date != candidate.signal_date or evidence.entry_date != candidate.entry_date:
+                raise ValueError(f"priority evidence date mismatch: {key}")
+            if evidence.entry_date != event_date:
+                raise ValueError(f"priority evidence entry group mismatch: {key}")
+            if self._numeric_signature(candidate.volume_ratio) != self._numeric_signature(evidence.volume_ratio):
+                raise ValueError(f"priority evidence volume ratio mismatch: {key}")
+            actual_score = self._finite_or_none(candidate.signal_score)
+            if actual_score != evidence.baseline_signal_score:
+                raise ValueError(f"priority evidence signal score mismatch: {key}")
+            if evidence.baseline_within_entry_date_ordinal != ordinal:
+                raise ValueError(f"non-canonical baseline priority ordinal: {key}")
+            records.append(evidence)
+
+        expected_ordinals = tuple(range(1, len(baseline) + 1))
+        final_ordinals = tuple(sorted(item.final_simulator_priority_ordinal for item in records))
+        if final_ordinals != expected_ordinals:
+            raise ValueError("final simulator priority ordinals must be contiguous")
+
+        baseline_by_key = {self._candidate_key(candidate): candidate for candidate in baseline}
+        groups: dict[str, list[CandidatePriorityEvidence]] = {}
+        for evidence in records:
+            groups.setdefault(evidence.signal_date_group_key, []).append(evidence)
+        for group_key, group in groups.items():
+            baseline_slots = tuple(sorted(item.baseline_within_entry_date_ordinal for item in group))
+            if any(item.signal_date_group_slot_ordinals != baseline_slots for item in group):
+                raise ValueError(f"signal-date subgroup slot-set mismatch: {group_key}")
+            if tuple(sorted(item.final_simulator_priority_ordinal for item in group)) != baseline_slots:
+                raise ValueError(f"attempted cross-signal-date slot reorder: {group_key}")
+            expected_variant = tuple(sorted(
+                group,
+                key=lambda item: (
+                    not item.volume_ratio_finite,
+                    -(item.volume_ratio if item.volume_ratio_finite else 0.0),
+                    -item.q70_quality_score,
+                    item.symbol,
+                    item.candidate_key,
+                ),
+            ))
+            if tuple(item.variant_within_signal_date_ordinal for item in expected_variant) != tuple(
+                range(1, len(group) + 1)
+            ):
+                raise ValueError(f"non-canonical volume priority ordering: {group_key}")
+            expected_final = dict(zip(
+                (item.candidate_key for item in expected_variant),
+                baseline_slots,
+                strict=True,
+            ))
+            if any(item.final_simulator_priority_ordinal != expected_final[item.candidate_key] for item in group):
+                raise ValueError(f"final priority does not match slot-preserving volume order: {group_key}")
+
+        return [
+            baseline_by_key[item.candidate_key]
+            for item in sorted(records, key=lambda item: item.final_simulator_priority_ordinal)
+        ]
 
     def _calculate_quantity(
         self,
@@ -1050,6 +1243,22 @@ class PortfolioSimulator:
                     )
                 )
 
+        if self._candidate_priority_by_key is not None:
+            candidate_keys = tuple(
+                self._candidate_key(trade)
+                for trade in candidate_trades
+                if trade.is_closed
+            )
+            if len(set(candidate_keys)) != len(candidate_keys):
+                raise ValueError("candidate priority keys must be unique")
+            evidence_keys = set(self._candidate_priority_by_key)
+            missing = sorted(set(candidate_keys) - evidence_keys)
+            extra = sorted(evidence_keys - set(candidate_keys))
+            if missing:
+                raise ValueError("missing candidate priority evidence: " + ", ".join(missing))
+            if extra:
+                raise ValueError("extra candidate priority evidence: " + ", ".join(extra))
+
         events.sort(
             key=lambda item: (
                 item[0],
@@ -1138,13 +1347,9 @@ class PortfolioSimulator:
                     ),
                 )
 
-            ranked_candidates = (
-                rank_candidates(
-                    entry_candidates,
-                    method=(
-                        self.ranking_method
-                    ),
-                )
+            ranked_candidates = self._rank_entry_candidates(
+                entry_candidates,
+                event_date=event_date,
             )
 
             allocated_candidates = (

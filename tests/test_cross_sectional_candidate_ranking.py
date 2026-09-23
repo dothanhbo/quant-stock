@@ -13,6 +13,7 @@ from quantlab.candidates import FrozenQ70CandidateBatch, FrozenQ70CandidateRecor
 from quantlab.ranking import (
     CandidateRankingPolicy,
     FROZEN_Q70_QUALITY_RANK_V1,
+    FROZEN_Q70_VOLUME_RATIO_RANK_V1,
     MissingValuePolicy,
     RANKABLE_NUMERIC_FIELDS,
     RankingDirection,
@@ -269,6 +270,39 @@ def test_ranking_invokes_no_data_feature_q70_trade_or_simulator_path(monkeypatch
     monkeypatch.setattr(portfolio_module, "PortfolioSimulator", forbidden)
     result = rank_candidate_batch(_batch(_record("AAA")), FROZEN_Q70_QUALITY_RANK_V1)
     assert result[0].ranked_candidates[0].candidate_key == f"AAA:{DAY_1}"
+
+
+def test_builtin_volume_ratio_policy_is_exact_and_preserves_membership() -> None:
+    policy = FROZEN_Q70_VOLUME_RATIO_RANK_V1
+    assert policy.name == "FROZEN_Q70_VOLUME_RATIO_RANK_V1"
+    assert policy.version == "1"
+    assert len(policy.factors) == 1
+    factor = policy.factors[0]
+    assert (factor.field_name, factor.weight) == ("volume_ratio", 1.0)
+    assert factor.direction is RankingDirection.HIGHER_IS_BETTER
+    assert factor.missing_value_policy is MissingValuePolicy.WORST
+    assert policy.fingerprint == FROZEN_Q70_VOLUME_RATIO_RANK_V1.fingerprint
+
+    records = (
+        _record("HIGH", volume_ratio=2.0, quality_score=.71),
+        _record("TIEB", volume_ratio=1.5, quality_score=.80),
+        _record("TIEA", volume_ratio=1.5, quality_score=.90),
+        _record("NONE", volume_ratio=None),
+        _record("NAN", volume_ratio=float("nan")),
+        _record("PINF", volume_ratio=float("inf")),
+        _record("NINF", volume_ratio=float("-inf")),
+    )
+    source = _batch(*records)
+    ranked = rank_candidate_batch(source, policy)[0]
+    assert tuple(item.candidate.symbol for item in ranked.ranked_candidates) == (
+        "HIGH", "TIEA", "TIEB", "NAN", "NINF", "NONE", "PINF",
+    )
+    assert ranked.excluded_candidate_keys == ()
+    assert {item.candidate_key for item in ranked.ranked_candidates} == {
+        item.candidate_key for item in source.candidates
+    }
+    assert all(item.candidate in source.candidates for item in ranked.ranked_candidates)
+    assert all(item.candidate.q70_threshold == .70 for item in ranked.ranked_candidates)
 
 
 def test_fresh_process_import_has_no_database_cache_or_network_side_effect(tmp_path: Path) -> None:
