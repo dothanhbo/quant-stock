@@ -95,6 +95,8 @@ EXECUTED_COMPARISON_COLUMNS = (
     "baseline_executed", "variant_executed", "baseline_entry_ordinal",
     "variant_entry_ordinal", "volume_ratio", "q70_quality", "signal_score",
     "baseline_disposition", "variant_disposition",
+    "divergence_classification", "causal_anchor_fold",
+    "causal_anchor_entry_date", "causal_anchor_identity",
 )
 RANKING_CHANGE_COLUMNS = (
     "fold", "entry_date", "accepted_entry_event_count",
@@ -102,6 +104,8 @@ RANKING_CHANGE_COLUMNS = (
     "baseline_top_three_keys", "variant_top_three_keys", "top_three_overlap_count",
     "daily_order_cap_selection_changed", "baseline_executed_count",
     "variant_executed_count", "baseline_rejection_counts", "variant_rejection_counts",
+    "ranking_change_identity", "direct_execution_divergence_count",
+    "downstream_divergence_count", "unexpected_divergence_count",
 )
 
 
@@ -483,6 +487,24 @@ def _ranking_changes(baseline: dict[str, Any], variant: dict[str, Any]) -> pd.Da
                 raise ValueError(f"signal-date subgroup slots changed: {fold}/{entry_date}/{group_key}")
         left_dispositions = Counter(left_group["execution_disposition"].astype(str))
         right_dispositions = Counter(right_group["execution_disposition"].astype(str))
+        identity = _hash_payload({
+            "fold": int(fold),
+            "entry_date": pd.Timestamp(entry_date).isoformat(),
+            "baseline_order": left_order,
+            "variant_order": right_order,
+            "signal_date_slot_sets": [
+                {
+                    "signal_date_group_key": str(group_key),
+                    "baseline_slots": list(sorted(
+                        left.loc[subgroup.index, "baseline_within_entry_date_ordinal"].astype(int)
+                    )),
+                    "variant_slots": list(sorted(
+                        subgroup["final_simulator_priority_ordinal"].astype(int)
+                    )),
+                }
+                for group_key, subgroup in right.groupby("signal_date_group_key", sort=True)
+            ],
+        })
         rows.append({
             "fold": int(fold), "entry_date": entry_date,
             "accepted_entry_event_count": len(left),
@@ -496,8 +518,105 @@ def _ranking_changes(baseline: dict[str, Any], variant: dict[str, Any]) -> pd.Da
             "variant_executed_count": int((right_group["execution_disposition"] == "executed").sum()),
             "baseline_rejection_counts": json.dumps(dict(left_dispositions), sort_keys=True),
             "variant_rejection_counts": json.dumps(dict(right_dispositions), sort_keys=True),
+            "ranking_change_identity": identity,
+            "direct_execution_divergence_count": 0,
+            "downstream_divergence_count": 0,
+            "unexpected_divergence_count": 0,
         })
     return pd.DataFrame(rows, columns=RANKING_CHANGE_COLUMNS)
+
+
+def _event_key(fold: Any, entry_date: Any) -> tuple[int, pd.Timestamp]:
+    return int(fold), pd.Timestamp(entry_date)
+
+
+def _has_disposition_divergence(row: pd.Series) -> bool:
+    return (
+        bool(row["baseline_executed"]) != bool(row["variant_executed"])
+        or str(row["baseline_disposition"]) != str(row["variant_disposition"])
+    )
+
+
+def _classify_execution_divergence(
+    executed: pd.DataFrame,
+    ranking: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame, dict[str, int]]:
+    """Classify arm divergence along the runner's chained OOS timeline.
+
+    The audit is chronological/path-based.  It proves that all divergence
+    begins on a permitted direct priority-change date; without simulator state
+    snapshots it does not claim candidate-level counterfactual causality for
+    later downstream rows.
+    """
+    classified = executed.copy()
+    changes = ranking.copy()
+    for column in (
+        "divergence_classification", "causal_anchor_fold",
+        "causal_anchor_entry_date", "causal_anchor_identity",
+    ):
+        if column not in classified:
+            classified[column] = None
+
+    direct_by_event = {
+        _event_key(row.fold, row.entry_date): str(row.ranking_change_identity)
+        for row in changes.itertuples()
+        if int(row.changed_final_ordinal_count) > 0
+    }
+    divergent_indexes = [
+        index for index, row in classified.iterrows()
+        if _has_disposition_divergence(row)
+    ]
+    divergent_indexes.sort(key=lambda index: (
+        *_event_key(classified.at[index, "fold"], classified.at[index, "entry_date"]),
+        str(classified.at[index, "candidate_key"]),
+    ))
+
+    anchor_event: tuple[int, pd.Timestamp] | None = None
+    anchor_identity: str | None = None
+    for index in divergent_indexes:
+        event = _event_key(classified.at[index, "fold"], classified.at[index, "entry_date"])
+        if event in direct_by_event:
+            classification = "direct_priority"
+            if anchor_event is None:
+                anchor_event, anchor_identity = event, direct_by_event[event]
+            row_anchor, row_identity = event, direct_by_event[event]
+        elif anchor_event is not None and event > anchor_event:
+            classification = "downstream_portfolio_state"
+            row_anchor, row_identity = anchor_event, anchor_identity
+        else:
+            classification = "unexpected"
+            row_anchor, row_identity = None, None
+        classified.at[index, "divergence_classification"] = classification
+        if row_anchor is not None:
+            classified.at[index, "causal_anchor_fold"] = row_anchor[0]
+            classified.at[index, "causal_anchor_entry_date"] = row_anchor[1].isoformat()
+            classified.at[index, "causal_anchor_identity"] = row_identity
+
+    for column in (
+        "direct_execution_divergence_count", "downstream_divergence_count",
+        "unexpected_divergence_count",
+    ):
+        changes[column] = 0
+    for index in divergent_indexes:
+        event = _event_key(classified.at[index, "fold"], classified.at[index, "entry_date"])
+        mask = (
+            changes["fold"].astype(int).eq(event[0])
+            & pd.to_datetime(changes["entry_date"]).eq(event[1])
+        )
+        classification = classified.at[index, "divergence_classification"]
+        column = {
+            "direct_priority": "direct_execution_divergence_count",
+            "downstream_portfolio_state": "downstream_divergence_count",
+            "unexpected": "unexpected_divergence_count",
+        }[classification]
+        if bool(mask.any()):
+            changes.loc[mask, column] += 1
+
+    counts = {
+        name: int((classified["divergence_classification"] == name).sum())
+        for name in ("direct_priority", "downstream_portfolio_state", "unexpected")
+    }
+    return classified.loc[:, EXECUTED_COMPARISON_COLUMNS], changes.loc[:, RANKING_CHANGE_COLUMNS], counts
 
 
 def _validate_canonical_baseline(frame: pd.DataFrame, reference: Path = CANONICAL_TRADE_PATH) -> dict[str, Any]:
@@ -521,7 +640,10 @@ def _validate_canonical_baseline(frame: pd.DataFrame, reference: Path = CANONICA
     }
 
 
-def _comparison(arms: dict[str, dict[str, Any]], folds: list[WalkForwardFold]) -> pd.DataFrame:
+def _comparison(
+    arms: dict[str, dict[str, Any]], folds: list[WalkForwardFold],
+    divergence_counts: dict[str, int],
+) -> pd.DataFrame:
     baseline = arms["baseline_signal_score_priority"]
     variant = arms["volume_ratio_priority"]
     executed = _executed_comparison(baseline, variant)
@@ -540,12 +662,34 @@ def _comparison(arms: dict[str, dict[str, Any]], folds: list[WalkForwardFold]) -
             "executed_key_overlap_count": len(baseline_keys & variant_keys),
             "executed_keys_unique_to_baseline": len(baseline_keys - variant_keys),
             "executed_keys_unique_to_variant": len(variant_keys - baseline_keys),
+            "direct_priority_divergence_count": divergence_counts["direct_priority"],
+            "downstream_portfolio_state_divergence_count": divergence_counts["downstream_portfolio_state"],
+            "unexpected_divergence_count": divergence_counts["unexpected"],
         })
         rows.append(summary)
     return pd.DataFrame(rows)
 
 
-def _validate_reconciliation(arms: dict[str, dict[str, Any]], accepted: pd.DataFrame) -> None:
+def _normalized_trade_audit(frame: pd.DataFrame, *, before: tuple[int, pd.Timestamp] | None) -> pd.DataFrame:
+    selected = frame.copy()
+    if before is not None and not selected.empty:
+        entry_events = list(zip(selected["fold"].astype(int), pd.to_datetime(selected["entry_date"])))
+        selected = selected.loc[[event < before for event in entry_events]]
+    columns = (
+        "fold", "symbol", "signal_date", "entry_date", "exit_date", "entry_price",
+        "exit_price", "quantity", "net_pnl", "buy_commission", "sell_commission",
+        "sell_tax", "total_transaction_cost", "exit_reason",
+    )
+    return selected.loc[:, columns].sort_values(
+        ["fold", "signal_date", "symbol"], kind="stable",
+    ).reset_index(drop=True)
+
+
+def _validate_reconciliation(
+    arms: dict[str, dict[str, Any]], accepted: pd.DataFrame,
+    executed: pd.DataFrame, ranking: pd.DataFrame,
+    divergence_counts: dict[str, int],
+) -> None:
     if not bool(accepted["parity"].all()):
         raise ValueError("accepted-candidate parity is incomplete")
     for name, payload in arms.items():
@@ -563,16 +707,61 @@ def _validate_reconciliation(arms: dict[str, dict[str, Any]], accepted: pd.DataF
         cost = float(trades["total_transaction_cost"].sum())
         if not math.isclose(cost, float(summary["total_transaction_cost"]), rel_tol=0, abs_tol=1e-5):
             raise ValueError(f"transaction-cost reconciliation failed: {name}")
-    executed = _executed_comparison(
-        arms["baseline_signal_score_priority"], arms["volume_ratio_priority"],
-    )
-    divergent = executed.loc[executed["baseline_executed"] != executed["variant_executed"]]
+    divergent = executed.loc[executed["divergence_classification"].notna()]
+    direct = divergent.loc[divergent["divergence_classification"] == "direct_priority"]
+    if not divergent.empty and direct.empty:
+        raise ValueError("arm divergence has no direct priority causal anchor")
+    if divergence_counts["unexpected"]:
+        raise ValueError("unexpected arm divergence precedes any direct priority causal anchor")
     if not divergent.empty:
-        untraced = divergent.loc[
-            divergent["baseline_entry_ordinal"] == divergent["variant_entry_ordinal"]
-        ]
-        if not untraced.empty:
-            raise ValueError("executed-set divergence lacks a changed priority ordinal")
+        first = divergent.assign(
+            _entry=pd.to_datetime(divergent["entry_date"]),
+        ).sort_values(["fold", "_entry", "candidate_key"], kind="stable").iloc[0]
+        if first["divergence_classification"] != "direct_priority":
+            raise ValueError("first chronological arm divergence is not a direct priority change")
+        anchor = _event_key(first["fold"], first["entry_date"])
+    else:
+        anchor = None
+
+    baseline = arms["baseline_signal_score_priority"]
+    variant = arms["volume_ratio_priority"]
+    try:
+        pd.testing.assert_frame_equal(
+            _normalized_trade_audit(baseline["trades"], before=anchor),
+            _normalized_trade_audit(variant["trades"], before=anchor),
+            check_dtype=False,
+        )
+    except AssertionError as exc:
+        raise ValueError("trade quantity/cost divergence occurs before the first direct priority change") from exc
+    if anchor is not None:
+        left_folds = baseline["folds"].sort_values("fold", kind="stable")
+        right_folds = variant["folds"].sort_values("fold", kind="stable")
+        pre_columns = (
+            "fold", "test_initial_equity", "test_final_equity", "test_return_pct",
+            "test_trades", "test_total_transaction_cost", "test_total_buy_commission",
+            "test_total_sell_commission", "test_total_sell_tax",
+        )
+        try:
+            pd.testing.assert_frame_equal(
+                left_folds.loc[left_folds["fold"] < anchor[0], list(pre_columns)].reset_index(drop=True),
+                right_folds.loc[right_folds["fold"] < anchor[0], list(pre_columns)].reset_index(drop=True),
+                check_dtype=False,
+            )
+        except AssertionError as exc:
+            raise ValueError("completed-fold portfolio results diverge before the causal anchor") from exc
+        left_start = float(left_folds.loc[left_folds["fold"] == anchor[0], "test_initial_equity"].iloc[0])
+        right_start = float(right_folds.loc[right_folds["fold"] == anchor[0], "test_initial_equity"].iloc[0])
+        if not math.isclose(left_start, right_start, rel_tol=0, abs_tol=1e-6):
+            raise ValueError("causal-anchor fold starts from unequal capital")
+
+    # Every direct classification must point to a real, slot-validated change.
+    direct_events = {
+        _event_key(row.fold, row.entry_date)
+        for row in ranking.itertuples()
+        if int(row.changed_final_ordinal_count) > 0
+    }
+    if any(_event_key(row.fold, row.entry_date) not in direct_events for row in direct.itertuples()):
+        raise ValueError("direct divergence lacks a validated ranking-change event")
 
 
 def _write_outputs(
@@ -677,9 +866,10 @@ def run_frozen_q70_volume_priority_wfo(
     accepted = _accepted_parity(arms[ARM_SPECS[0][0]], arms[ARM_SPECS[1][0]])
     executed = _executed_comparison(arms[ARM_SPECS[0][0]], arms[ARM_SPECS[1][0]])
     ranking = _ranking_changes(arms[ARM_SPECS[0][0]], arms[ARM_SPECS[1][0]])
-    _validate_reconciliation(arms, accepted)
+    executed, ranking, divergence_counts = _classify_execution_divergence(executed, ranking)
+    _validate_reconciliation(arms, accepted, executed, ranking, divergence_counts)
     canonical = _validate_canonical_baseline(arms[ARM_SPECS[0][0]]["trades"], reference)
-    comparison = _comparison(arms, folds)
+    comparison = _comparison(arms, folds, divergence_counts)
     database_hash_after = _file_hash(db)
     if database_hash_after != database_hash_before:
         raise ValueError("market database changed during read-only experiment")
@@ -700,6 +890,16 @@ def run_frozen_q70_volume_priority_wfo(
         "accepted_candidate_parity_sha256": _hash_payload(accepted.to_dict("records")),
         "executed_comparison_row_count": len(executed),
         "ranking_change_row_count": len(ranking),
+        "direct_priority_divergence_count": divergence_counts["direct_priority"],
+        "downstream_portfolio_state_divergence_count": divergence_counts["downstream_portfolio_state"],
+        "unexpected_divergence_count": divergence_counts["unexpected"],
+        "divergence_causality_scope": (
+            "All arm divergence begins at a permitted direct priority change; "
+            "later divergence is chronologically consistent with deterministic "
+            "downstream portfolio path dependence. Candidate-level counterfactual "
+            "causality is not claimed because simulator state snapshots are unavailable."
+        ),
+        "oos_capital_semantics": "capital is chained across every OOS fold; train diagnostics reset and are excluded",
         "temporal_block_specification_fingerprint": FROZEN_Q70_VOLUME_RSI_TEMPORAL_STABILITY_V1.fingerprint,
         "network_access": "forbidden",
     }

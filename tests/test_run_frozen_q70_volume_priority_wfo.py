@@ -151,6 +151,17 @@ def test_paired_runner_reuses_dependencies_and_writes_exact_artifact_set(
         assert len(pd.read_csv(output / arm / "folds.csv")) == 13
     assert pd.read_csv(output / "accepted_candidate_parity.csv")["parity"].all()
     assert set(pd.read_csv(output / "comparison.csv")["total_trades"]) == {0}
+    executed = pd.read_csv(output / "executed_candidate_comparison.csv")
+    ranking = pd.read_csv(output / "ranking_change_by_date.csv")
+    assert tuple(executed.columns) == runner.EXECUTED_COMPARISON_COLUMNS
+    assert tuple(ranking.columns) == runner.RANKING_CHANGE_COLUMNS
+    comparison = pd.read_csv(output / "comparison.csv")
+    assert set(comparison["direct_priority_divergence_count"]) == {0}
+    assert set(comparison["downstream_portfolio_state_divergence_count"]) == {0}
+    assert set(comparison["unexpected_divergence_count"]) == {0}
+    manifest = result["manifest"]
+    assert manifest["unexpected_divergence_count"] == 0
+    assert "chronologically consistent" in manifest["divergence_causality_scope"]
 
 
 def test_train_diagnostics_are_excluded_and_capital_chaining_is_arm_local(
@@ -223,6 +234,197 @@ def test_ranking_change_audit_preserves_subgroup_slots_and_traces_top_three() ->
     assert audit["changed_final_ordinal_count"] == 4
     assert audit["daily_order_cap_selection_changed"]
     assert audit["top_three_overlap_count"] == 2
+    assert len(audit["ranking_change_identity"]) == 64
+
+
+def _execution_row(
+    key: str, *, fold: int, entry_date: str, baseline_ordinal: int,
+    variant_ordinal: int, baseline_disposition: str, variant_disposition: str,
+) -> dict[str, object]:
+    return {
+        "fold": fold, "candidate_key": key, "signal_date": entry_date,
+        "entry_date": entry_date, "symbol": key,
+        "baseline_executed": baseline_disposition == "executed",
+        "variant_executed": variant_disposition == "executed",
+        "baseline_entry_ordinal": baseline_ordinal,
+        "variant_entry_ordinal": variant_ordinal,
+        "volume_ratio": 1.0, "q70_quality": .9, "signal_score": 80.0,
+        "baseline_disposition": baseline_disposition,
+        "variant_disposition": variant_disposition,
+    }
+
+
+def _ranking_row(
+    *, fold: int, entry_date: str, changed: int, identity: str,
+) -> dict[str, object]:
+    return {
+        "fold": fold, "entry_date": entry_date, "accepted_entry_event_count": 2,
+        "distinct_signal_date_subgroup_count": 1,
+        "changed_final_ordinal_count": changed,
+        "baseline_top_three_keys": "[]", "variant_top_three_keys": "[]",
+        "top_three_overlap_count": 0, "daily_order_cap_selection_changed": changed > 0,
+        "baseline_executed_count": 1, "variant_executed_count": 1,
+        "baseline_rejection_counts": "{}", "variant_rejection_counts": "{}",
+        "ranking_change_identity": identity,
+        "direct_execution_divergence_count": 0,
+        "downstream_divergence_count": 0, "unexpected_divergence_count": 0,
+    }
+
+
+def _causal_fixture(*, later_fold: int = 1) -> tuple[pd.DataFrame, pd.DataFrame]:
+    execution = pd.DataFrame([
+        _execution_row(
+            "A", fold=1, entry_date="2020-01-02", baseline_ordinal=1,
+            variant_ordinal=2, baseline_disposition="executed",
+            variant_disposition="maximum_orders_per_scan",
+        ),
+        _execution_row(
+            "B", fold=1, entry_date="2020-01-02", baseline_ordinal=2,
+            variant_ordinal=1, baseline_disposition="maximum_orders_per_scan",
+            variant_disposition="executed",
+        ),
+        _execution_row(
+            "C", fold=later_fold, entry_date="2020-01-03", baseline_ordinal=1,
+            variant_ordinal=1, baseline_disposition="executed",
+            variant_disposition="insufficient_cash",
+        ),
+    ])
+    ranking = pd.DataFrame([
+        _ranking_row(fold=1, entry_date="2020-01-02", changed=2, identity="a" * 64),
+        _ranking_row(fold=later_fold, entry_date="2020-01-03", changed=0, identity="b" * 64),
+    ], columns=runner.RANKING_CHANGE_COLUMNS)
+    return execution, ranking
+
+
+def _empty_reconciliation_arms() -> dict[str, dict[str, object]]:
+    folds = pd.DataFrame([{
+        "fold": 1, "test_initial_equity": 100.0, "test_final_equity": 100.0,
+        "test_return_pct": 0.0, "test_trades": 0,
+        "test_total_transaction_cost": 0.0, "test_total_buy_commission": 0.0,
+        "test_total_sell_commission": 0.0, "test_total_sell_tax": 0.0,
+    }])
+    trades = pd.DataFrame(columns=runner.TRADE_COLUMNS)
+    summary = {"initial_equity": 100.0, "final_equity": 100.0, "total_transaction_cost": 0.0}
+    return {
+        "baseline_signal_score_priority": {"folds": folds.copy(), "trades": trades.copy(), "summary": dict(summary)},
+        "volume_ratio_priority": {"folds": folds.copy(), "trades": trades.copy(), "summary": dict(summary)},
+    }
+
+
+def test_no_ranking_change_and_identical_arms_passes_causal_reconciliation() -> None:
+    execution = pd.DataFrame([
+        _execution_row(
+            "A", fold=1, entry_date="2020-01-02", baseline_ordinal=1,
+            variant_ordinal=1, baseline_disposition="executed", variant_disposition="executed",
+        )
+    ])
+    ranking = pd.DataFrame([
+        _ranking_row(fold=1, entry_date="2020-01-02", changed=0, identity="a" * 64)
+    ], columns=runner.RANKING_CHANGE_COLUMNS)
+    classified, changes, counts = runner._classify_execution_divergence(execution, ranking)
+    assert counts == {"direct_priority": 0, "downstream_portfolio_state": 0, "unexpected": 0}
+    runner._validate_reconciliation(
+        _empty_reconciliation_arms(), pd.DataFrame({"parity": [True]}),
+        classified, changes, counts,
+    )
+
+
+def test_no_ranking_change_with_execution_divergence_is_unexpected_and_fails() -> None:
+    execution = pd.DataFrame([
+        _execution_row(
+            "A", fold=1, entry_date="2020-01-02", baseline_ordinal=1,
+            variant_ordinal=1, baseline_disposition="executed",
+            variant_disposition="insufficient_cash",
+        )
+    ])
+    ranking = pd.DataFrame([
+        _ranking_row(fold=1, entry_date="2020-01-02", changed=0, identity="a" * 64)
+    ], columns=runner.RANKING_CHANGE_COLUMNS)
+    classified, changes, counts = runner._classify_execution_divergence(execution, ranking)
+    assert classified.iloc[0]["divergence_classification"] == "unexpected"
+    with pytest.raises(ValueError, match="no direct priority causal anchor"):
+        runner._validate_reconciliation(
+            _empty_reconciliation_arms(), pd.DataFrame({"parity": [True]}),
+            classified, changes, counts,
+        )
+
+
+def test_divergence_before_first_ranking_change_is_unexpected() -> None:
+    execution, ranking = _causal_fixture()
+    early = _execution_row(
+        "EARLY", fold=1, entry_date="2020-01-01", baseline_ordinal=1,
+        variant_ordinal=1, baseline_disposition="executed",
+        variant_disposition="insufficient_cash",
+    )
+    execution = pd.concat([pd.DataFrame([early]), execution], ignore_index=True)
+    ranking = pd.concat([
+        pd.DataFrame([_ranking_row(fold=1, entry_date="2020-01-01", changed=0, identity="c" * 64)]),
+        ranking,
+    ], ignore_index=True).loc[:, runner.RANKING_CHANGE_COLUMNS]
+    classified, _, counts = runner._classify_execution_divergence(execution, ranking)
+    assert classified.loc[classified["candidate_key"] == "EARLY", "divergence_classification"].item() == "unexpected"
+    assert counts["unexpected"] == 1
+
+
+def test_direct_then_unchanged_ordinal_divergence_is_classified_downstream() -> None:
+    execution, ranking = _causal_fixture()
+    classified, changes, counts = runner._classify_execution_divergence(execution, ranking)
+    assert list(classified["divergence_classification"]) == [
+        "direct_priority", "direct_priority", "downstream_portfolio_state",
+    ]
+    later = classified.loc[classified["candidate_key"] == "C"].iloc[0]
+    assert later["baseline_entry_ordinal"] == later["variant_entry_ordinal"] == 1
+    assert later["causal_anchor_fold"] == 1
+    assert later["causal_anchor_entry_date"] == pd.Timestamp("2020-01-02").isoformat()
+    assert later["causal_anchor_identity"] == "a" * 64
+    assert counts == {"direct_priority": 2, "downstream_portfolio_state": 1, "unexpected": 0}
+    assert changes["direct_execution_divergence_count"].sum() == 2
+    assert changes["downstream_divergence_count"].sum() == 1
+    runner._validate_reconciliation(
+        _empty_reconciliation_arms(), pd.DataFrame({"parity": [True]}),
+        classified, changes, counts,
+    )
+
+
+def test_chained_fold_boundary_retains_prior_direct_causal_anchor() -> None:
+    execution, ranking = _causal_fixture(later_fold=2)
+    classified, _, counts = runner._classify_execution_divergence(execution, ranking)
+    later = classified.loc[classified["candidate_key"] == "C"].iloc[0]
+    assert later["divergence_classification"] == "downstream_portfolio_state"
+    assert later["causal_anchor_fold"] == 1
+    assert counts["unexpected"] == 0
+
+
+def test_causal_classification_and_ranking_identities_are_deterministic() -> None:
+    execution, ranking = _causal_fixture()
+    first = runner._classify_execution_divergence(execution, ranking)
+    second = runner._classify_execution_divergence(execution, ranking)
+    pd.testing.assert_frame_equal(first[0], second[0])
+    pd.testing.assert_frame_equal(first[1], second[1])
+    assert first[2] == second[2]
+
+
+def test_slot_crossing_still_fails_before_causal_classification() -> None:
+    base = pd.DataFrame([
+        {"fold": 1, "entry_date": "2020-01-02", "candidate_key": key,
+         "signal_date_group_key": group, "baseline_within_entry_date_ordinal": ordinal,
+         "final_simulator_priority_ordinal": ordinal, "execution_disposition": "executed"}
+        for key, group, ordinal in (("A", "d1", 1), ("B", "d2", 2))
+    ])
+    variant = base.copy()
+    variant["final_simulator_priority_ordinal"] = [2, 1]
+    with pytest.raises(ValueError, match="subgroup slots changed"):
+        runner._ranking_changes({"priority": base}, {"priority": variant})
+
+
+def test_accepted_candidate_parity_failure_remains_strict() -> None:
+    execution, ranking = _causal_fixture()
+    classified, changes, counts = runner._classify_execution_divergence(execution, ranking)
+    with pytest.raises(ValueError, match="accepted-candidate parity"):
+        runner._validate_reconciliation(
+            _empty_reconciliation_arms(), pd.DataFrame({"parity": [False]}),
+            classified, changes, counts,
+        )
 
 
 def test_fresh_process_import_does_not_call_network_or_create_output(tmp_path: Path) -> None:
