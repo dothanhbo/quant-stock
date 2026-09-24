@@ -1,6 +1,7 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime
+from hashlib import sha256
 from pathlib import Path
 from types import SimpleNamespace
 import csv
@@ -8,6 +9,7 @@ import subprocess
 import sys
 
 import pandas as pd
+import numpy as np
 import pytest
 
 import research.run_frozen_q70_volume_priority_wfo as runner
@@ -209,6 +211,10 @@ def test_canonical_baseline_validation_compares_exact_ordered_content(
 ) -> None:
     row = {column: index for index, column in enumerate(runner.TRADE_COLUMNS)}
     row["symbol"] = "AAA"
+    row["signal_date"] = "2020-08-17"
+    row["entry_date"] = "2020-08-18"
+    row["exit_date"] = "2020-08-19"
+    row["exit_reason"] = "Time Exit"
     frame = pd.DataFrame([row])
     reference = tmp_path / "canonical.csv"
     frame.to_csv(reference, index=False, lineterminator="\n")
@@ -219,6 +225,137 @@ def test_canonical_baseline_validation_compares_exact_ordered_content(
     changed.loc[0, "symbol"] = "DIFFERENT"
     with pytest.raises(ValueError, match="does not match"):
         runner._validate_canonical_baseline(changed, reference)
+
+
+def _canonical_trade_fixture(**overrides: object) -> pd.DataFrame:
+    row: dict[str, object] = {
+        "fold": 1, "symbol": "AAA", "signal_date": "2020-08-17",
+        "entry_date": "2020-08-18", "exit_date": "2020-08-19",
+        "entry_price": 10.5, "exit_price": 11.25, "quantity": 100,
+        "return_pct": 6.5, "net_pnl": 65.0, "buy_commission": 1.5,
+        "sell_commission": 1.6, "sell_tax": 1.0,
+        "total_transaction_cost": 4.1, "exit_reason": "Time Exit",
+    }
+    row.update(overrides)
+    return pd.DataFrame([row], columns=runner.TRADE_COLUMNS)
+
+
+@pytest.mark.parametrize(
+    "value",
+    [
+        date(2020, 8, 17), datetime(2020, 8, 17),
+        pd.Timestamp("2020-08-17 00:00:00"), np.datetime64("2020-08-17"),
+        "2020-08-17", "2020-08-17T00:00:00", "2020-08-17 00:00:00",
+    ],
+)
+def test_daily_trade_date_representations_normalize_identically(value: object) -> None:
+    assert runner._canonical_daily_date(value, column="signal_date") == "2020-08-17"
+
+
+def test_exact_observed_timestamp_versus_iso_date_parity_regression(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path,
+) -> None:
+    expected = _canonical_trade_fixture(signal_date="2020-08-17")
+    actual = _canonical_trade_fixture(signal_date=pd.Timestamp("2020-08-17 00:00:00"))
+    reference = tmp_path / "canonical.csv"
+    expected.to_csv(reference, index=False, lineterminator="\r\n")
+    monkeypatch.setattr(runner, "CANONICAL_TRADE_SHA256", runner._file_hash(reference).upper())
+    result = runner._validate_canonical_baseline(actual, reference)
+    assert result["parsed_exact_content_equal"]
+    assert result["raw_csv_hash_equal"]
+
+
+def test_all_trade_date_columns_normalize_without_mutating_input() -> None:
+    frame = _canonical_trade_fixture(
+        signal_date=pd.Timestamp("2020-08-17"),
+        entry_date=datetime(2020, 8, 18),
+        exit_date=np.datetime64("2020-08-19"),
+    )
+    original = frame.copy(deep=True)
+    normalized = runner._canonical_trade_frame(frame)
+    assert tuple(normalized.loc[0, runner.TRADE_DATE_COLUMNS]) == (
+        "2020-08-17", "2020-08-18", "2020-08-19",
+    )
+    pd.testing.assert_frame_equal(frame, original)
+
+
+@pytest.mark.parametrize(
+    ("value", "message"),
+    [
+        ("2020-08-17 00:00:01", "must be midnight"),
+        (datetime(2020, 8, 17, 1, 0), "must be midnight"),
+        ("not-a-date", "invalid"),
+        (None, "missing"),
+    ],
+)
+def test_invalid_missing_and_intraday_trade_dates_fail_clearly(value: object, message: str) -> None:
+    with pytest.raises(ValueError, match=message):
+        runner._canonical_trade_frame(_canonical_trade_fixture(signal_date=value))
+
+
+def test_mixed_date_representations_sort_deterministically() -> None:
+    frame = pd.concat([
+        _canonical_trade_fixture(symbol="BBB", signal_date=pd.Timestamp("2020-08-18")),
+        _canonical_trade_fixture(symbol="CCC", signal_date=np.datetime64("2020-08-17")),
+        _canonical_trade_fixture(symbol="AAA", signal_date="2020-08-17T00:00:00"),
+    ], ignore_index=True)
+    normalized = runner._canonical_trade_frame(frame)
+    assert list(zip(normalized["signal_date"], normalized["symbol"])) == [
+        ("2020-08-17", "AAA"), ("2020-08-17", "CCC"), ("2020-08-18", "BBB"),
+    ]
+
+
+@pytest.mark.parametrize(
+    ("field", "different"),
+    [
+        ("signal_date", "2020-08-16"), ("entry_date", "2020-08-20"),
+        ("exit_date", "2020-08-21"), ("symbol", "BBB"), ("fold", 2),
+        ("quantity", 200), ("entry_price", 10.6), ("exit_price", 11.3),
+        ("net_pnl", 66.0), ("buy_commission", 1.6), ("sell_commission", 1.7),
+        ("sell_tax", 1.1), ("total_transaction_cost", 4.2),
+        ("exit_reason", "Take Profit"),
+    ],
+)
+def test_canonical_trade_parity_remains_strict_for_real_content_changes(
+    monkeypatch: pytest.MonkeyPatch, tmp_path: Path, field: str, different: object,
+) -> None:
+    expected = _canonical_trade_fixture()
+    reference = tmp_path / "canonical.csv"
+    expected.to_csv(reference, index=False, lineterminator="\r\n")
+    monkeypatch.setattr(runner, "CANONICAL_TRADE_SHA256", runner._file_hash(reference).upper())
+    actual = _canonical_trade_fixture(**{field: different})
+    with pytest.raises(ValueError, match="does not match"):
+        runner._validate_canonical_baseline(actual, reference)
+
+
+def test_trade_output_uses_canonical_dates_columns_crlf_and_deterministic_hash(tmp_path: Path) -> None:
+    frame = _canonical_trade_fixture(
+        signal_date=pd.Timestamp("2020-08-17"),
+        entry_date=datetime(2020, 8, 18), exit_date=np.datetime64("2020-08-19"),
+    )
+    output = tmp_path / "trades.csv"
+    runner._write_trade_frame(output, frame)
+    emitted = output.read_bytes()
+    assert b"00:00:00" not in emitted
+    assert b"\r\n" in emitted and emitted.count(b"\r\n") == 2
+    assert tuple(pd.read_csv(output).columns) == runner.TRADE_COLUMNS
+    expected_text = (
+        ",".join(runner.TRADE_COLUMNS) + "\r\n"
+        "1,AAA,2020-08-17,2020-08-18,2020-08-19,10.5,11.25,100,6.5,65.0,1.5,1.6,1.0,4.1,Time Exit\r\n"
+    ).encode("utf-8")
+    assert emitted == expected_text
+    expected_hash = sha256(expected_text).hexdigest().upper()
+    assert runner._trade_frame_csv_hash(frame) == expected_hash
+    assert runner.CANONICAL_TRADE_SHA256 == "F6596DAE7F86D094542EA4564C8A264846F23D6EAD3FA85FC9825F5FE384116C"
+
+
+def test_empty_trade_frame_retains_canonical_schema_and_serialization(tmp_path: Path) -> None:
+    frame = pd.DataFrame(columns=runner.TRADE_COLUMNS)
+    normalized = runner._canonical_trade_frame(frame)
+    assert tuple(normalized.columns) == runner.TRADE_COLUMNS
+    output = tmp_path / "empty.csv"
+    runner._write_trade_frame(output, frame)
+    assert output.read_bytes() == (",".join(runner.TRADE_COLUMNS) + "\r\n").encode("utf-8")
 
 
 def test_ranking_change_audit_preserves_subgroup_slots_and_traces_top_three() -> None:

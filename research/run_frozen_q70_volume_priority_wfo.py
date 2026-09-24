@@ -10,6 +10,7 @@ It is sensitivity evidence, not a production policy or fresh OOS validation.
 import argparse
 from collections import Counter
 from dataclasses import asdict, replace
+from datetime import date, datetime
 from hashlib import sha256
 import json
 import math
@@ -21,6 +22,7 @@ from typing import Any, Iterable
 from uuid import uuid4
 
 import pandas as pd
+import numpy as np
 
 if __package__ in {None, ""}:
     import sys
@@ -75,6 +77,7 @@ TRADE_COLUMNS = (
     "exit_price", "quantity", "return_pct", "net_pnl", "buy_commission",
     "sell_commission", "sell_tax", "total_transaction_cost", "exit_reason",
 )
+TRADE_DATE_COLUMNS = ("signal_date", "entry_date", "exit_date")
 PRIORITY_COLUMNS = (
     "fold", "candidate_key", "symbol", "signal_date", "entry_date", "volume_ratio",
     "volume_ratio_finite", "q70_quality_score", "baseline_signal_score",
@@ -147,10 +150,63 @@ def _file_hash(path: Path) -> str:
     return digest.hexdigest()
 
 
+def _canonical_daily_date(value: Any, *, column: str) -> str:
+    if value is None or value is pd.NA:
+        raise ValueError(f"canonical trade date is missing: {column}")
+    if isinstance(value, bool) or not isinstance(
+        value, (str, date, datetime, pd.Timestamp, np.datetime64),
+    ):
+        raise ValueError(f"canonical trade date has unsupported type: {column}")
+    if pd.isna(value):
+        raise ValueError(f"canonical trade date is missing: {column}")
+    try:
+        timestamp = pd.Timestamp(value.strip() if isinstance(value, str) else value)
+    except (TypeError, ValueError, OverflowError) as exc:
+        raise ValueError(f"canonical trade date is invalid: {column}={value!r}") from exc
+    if pd.isna(timestamp):
+        raise ValueError(f"canonical trade date is invalid: {column}={value!r}")
+    if any((
+        timestamp.hour, timestamp.minute, timestamp.second,
+        timestamp.microsecond, timestamp.nanosecond,
+    )):
+        raise ValueError(f"canonical trade date must be midnight: {column}={value!r}")
+    return timestamp.date().isoformat()
+
+
+def _normalize_trade_date_columns(frame: pd.DataFrame) -> pd.DataFrame:
+    missing = sorted(set(TRADE_DATE_COLUMNS) - set(frame.columns))
+    if missing:
+        raise ValueError(f"canonical trade frame is missing date columns: {missing}")
+    normalized = frame.copy(deep=True)
+    for column in TRADE_DATE_COLUMNS:
+        normalized[column] = pd.Series(
+            [_canonical_daily_date(value, column=column) for value in normalized[column]],
+            index=normalized.index, dtype="string",
+        )
+    return normalized
+
+
+def _canonical_trade_frame(frame: pd.DataFrame) -> pd.DataFrame:
+    missing = sorted(set(TRADE_COLUMNS) - set(frame.columns))
+    if missing:
+        raise ValueError(f"canonical trade frame is missing columns: {missing}")
+    normalized = _normalize_trade_date_columns(frame.loc[:, TRADE_COLUMNS])
+    return normalized.sort_values(
+        ["fold", "signal_date", "symbol", "entry_date", "exit_date"],
+        kind="stable",
+    ).reset_index(drop=True)
+
+
 def _trade_frame_csv_hash(frame: pd.DataFrame) -> str:
     stream = StringIO(newline="")
-    frame.loc[:, TRADE_COLUMNS].to_csv(stream, index=False, lineterminator="\n")
+    _canonical_trade_frame(frame).to_csv(stream, index=False, lineterminator="\r\n")
     return sha256(stream.getvalue().encode("utf-8")).hexdigest().upper()
+
+
+def _write_trade_frame(path: Path, frame: pd.DataFrame) -> None:
+    _canonical_trade_frame(frame).to_csv(
+        path, index=False, encoding="utf-8", lineterminator="\r\n",
+    )
 
 
 def _safe_value(value: Any) -> Any:
@@ -728,9 +784,12 @@ def _validate_canonical_baseline(frame: pd.DataFrame, reference: Path = CANONICA
     if expected_hash != CANONICAL_TRADE_SHA256:
         raise ValueError("canonical reference artifact hash does not match the approved SHA-256")
     expected = pd.read_csv(reference)
-    actual = frame.loc[:, expected.columns].copy()
+    if tuple(expected.columns) != TRADE_COLUMNS:
+        raise ValueError("canonical reference trade columns do not match the approved schema")
+    actual = _canonical_trade_frame(frame)
+    normalized_expected = _canonical_trade_frame(expected)
     try:
-        pd.testing.assert_frame_equal(actual.reset_index(drop=True), expected.reset_index(drop=True), check_dtype=False)
+        pd.testing.assert_frame_equal(actual, normalized_expected, check_dtype=False)
     except AssertionError as exc:
         raise ValueError("baseline trade content does not match canonical database-coverage arm") from exc
     emitted_hash = _trade_frame_csv_hash(frame)
@@ -777,7 +836,7 @@ def _comparison(
 
 
 def _normalized_trade_audit(frame: pd.DataFrame, *, before: tuple[int, pd.Timestamp] | None) -> pd.DataFrame:
-    selected = frame.copy()
+    selected = _normalize_trade_date_columns(frame)
     if before is not None and not selected.empty:
         entry_events = list(zip(selected["fold"].astype(int), pd.to_datetime(selected["entry_date"])))
         selected = selected.loc[[event < before for event in entry_events]]
@@ -896,7 +955,7 @@ def _write_outputs(
         payload = arms[name]
         payload["folds"].to_csv(arm_dir / "folds.csv", index=False, encoding="utf-8", lineterminator="\n")
         pd.DataFrame([payload["summary"]]).to_csv(arm_dir / "summary.csv", index=False, encoding="utf-8", lineterminator="\n")
-        _write_frame(arm_dir / "trade_level_oos.csv", payload["trades"], TRADE_COLUMNS)
+        _write_trade_frame(arm_dir / "trade_level_oos.csv", payload["trades"])
         payload["decisions"].to_csv(arm_dir / "candidate_decision_oos.csv", index=False, encoding="utf-8", lineterminator="\n")
         _write_frame(arm_dir / "candidate_priority_oos.csv", payload["priority"], PRIORITY_COLUMNS)
         _write_json(arm_dir / "policy_fingerprint.json", {
