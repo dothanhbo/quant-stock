@@ -15,6 +15,12 @@ from .feature_contracts import (
     PointInTimeFeaturePanelSpec,
 )
 from .feature_panel import attach_features_to_observation_index
+from .neutral_features import (
+    NEUTRAL_RESEARCH_FEATURE_PANEL_V1,
+    NEUTRAL_RESEARCH_NUMERIC_FEATURES_V1,
+    build_neutral_research_feature_panel,
+    prepare_neutral_research_feature_source,
+)
 
 __all__ = [
     "ObservationAvailability",
@@ -28,4 +34,8 @@ __all__ = [
     "PointInTimeFeaturePanelSpec",
     "PointInTimeFeaturePanel",
     "attach_features_to_observation_index",
+    "NEUTRAL_RESEARCH_NUMERIC_FEATURES_V1",
+    "NEUTRAL_RESEARCH_FEATURE_PANEL_V1",
+    "prepare_neutral_research_feature_source",
+    "build_neutral_research_feature_panel",
 ]

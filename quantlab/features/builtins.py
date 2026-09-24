@@ -11,6 +11,30 @@ from .contracts import FeatureDefinition, FeatureRequest, FeatureScope
 from .universe_context import BREADTH_CONTEXT_KEY, PointInTimeUniverseContext
 
 
+NEUTRAL_RESEARCH_SOURCE_TO_CANONICAL_V1 = (
+    ("close", "close"),
+    ("volume", "volume"),
+    ("EMA10", "ema_10"),
+    ("EMA20", "ema_20"),
+    ("EMA50", "ema_50"),
+    ("ATR14", "atr_14"),
+    ("ATR_Percent", "atr_percent_14"),
+    ("RSI", "rsi_14"),
+    ("ADX14", "adx_14"),
+    ("Vol_MA20", "volume_ma_20"),
+    ("Vol_Ratio", "volume_ratio_20"),
+    ("Stock_Return_20D", "stock_return_20d_pct"),
+    ("Index_Return_20D", "benchmark_return_20d_pct"),
+    ("Relative_Strength_20D", "relative_strength_20d_pct_points"),
+    ("Distance_EMA20_Pct", "ema20_distance_pct"),
+    ("Return_3D_Pct", "return_3d_pct"),
+    ("breadth_ema50_pct", "breadth_ema50_pct"),
+    ("breadth_ema50_change_10d", "breadth_ema50_change_10d_pct_points"),
+)
+NEUTRAL_RESEARCH_BENCHMARK_ROLE_V1 = "explicit_exact_date_benchmark_reference_v1"
+NEUTRAL_RESEARCH_UNIVERSE_ROLE_V1 = "point_in_time_breadth_membership_context_v1"
+
+
 def _period(parameters: Mapping[str, object]) -> int:
     period = parameters.get("period", 14)
     if not isinstance(period, int) or isinstance(period, bool) or period <= 0:
@@ -302,6 +326,76 @@ def _historical_candidate_breadth_context_subset(frames, dependencies, parameter
     return {symbol: frame.merge(breadth, on="time", how="left") for symbol, frame in core.items()}
 
 
+def _neutral_research_parameters(parameters: Mapping[str, object]) -> tuple[str, tuple[str, ...]]:
+    benchmark = _benchmark_symbol(parameters)
+    raw_primary = parameters.get("primary_symbols", ())
+    if not isinstance(raw_primary, (list, tuple)):
+        raise ValueError("neutral research primary_symbols must be a sequence")
+    primary = tuple(sorted({str(symbol).strip().upper() for symbol in raw_primary if str(symbol).strip()} - {benchmark}))
+    raw_mapping = parameters.get("source_to_canonical_mapping", ())
+    if not isinstance(raw_mapping, (list, tuple)) or not all(
+        isinstance(item, Mapping) for item in raw_mapping
+    ):
+        raise ValueError("neutral research source-to-canonical mapping must be an ordered sequence")
+    supplied_mapping = tuple(
+        (str(item.get("source", "")), str(item.get("canonical", "")))
+        for item in raw_mapping
+    )
+    if supplied_mapping != NEUTRAL_RESEARCH_SOURCE_TO_CANONICAL_V1:
+        raise ValueError("neutral research source-to-canonical mapping must match v1")
+    if parameters.get("benchmark_role") != NEUTRAL_RESEARCH_BENCHMARK_ROLE_V1:
+        raise ValueError("neutral research benchmark role must match v1")
+    if parameters.get("universe_context_role") != NEUTRAL_RESEARCH_UNIVERSE_ROLE_V1:
+        raise ValueError("neutral research universe-context role must match v1")
+    return benchmark, primary
+
+
+def _neutral_research_dependencies(request: FeatureRequest) -> tuple[FeatureRequest, ...]:
+    benchmark, _primary = _neutral_research_parameters(request.parameter_mapping)
+    return (
+        FeatureRequest("historical_candidate_per_symbol_subset", "v2"),
+        FeatureRequest("benchmark_relative_context", "v1", {
+            "benchmark_symbol": benchmark,
+            "period": 20,
+        }),
+        FeatureRequest("historical_breadth_context", "v1"),
+    )
+
+
+def _neutral_research_numeric_features(_frames, dependencies, parameters, context):
+    if not isinstance(context, PointInTimeUniverseContext):
+        raise ValueError("neutral research numeric features require PointInTimeUniverseContext")
+    benchmark, primary = _neutral_research_parameters(parameters)
+    per_symbol = dependencies[FeatureRequest("historical_candidate_per_symbol_subset", "v2")]
+    relative = dependencies[FeatureRequest("benchmark_relative_context", "v1", {
+        "benchmark_symbol": benchmark,
+        "period": 20,
+    })]
+    breadth = dependencies[FeatureRequest("historical_breadth_context", "v1")][BREADTH_CONTEXT_KEY]
+    result = {}
+    per_symbol_columns = (
+        "close", "volume", "EMA10", "EMA20", "EMA50", "ATR14",
+        "ATR_Percent", "RSI", "ADX14", "Vol_MA20", "Vol_Ratio",
+        "Distance_EMA20_Pct", "Return_3D_Pct",
+    )
+    relative_columns = ("Stock_Return_20D", "Index_Return_20D", "Relative_Strength_20D")
+    breadth_columns = ("breadth_ema50_pct", "breadth_ema50_change_10d")
+    rename = dict(NEUTRAL_RESEARCH_SOURCE_TO_CANONICAL_V1)
+    canonical_columns = tuple(canonical for _source, canonical in NEUTRAL_RESEARCH_SOURCE_TO_CANONICAL_V1)
+    for symbol in primary:
+        base = per_symbol.get(symbol)
+        reference = relative.get(symbol)
+        if base is None or reference is None:
+            continue
+        frame = base.loc[:, ("time", *per_symbol_columns)].merge(
+            reference.loc[:, ("time", *relative_columns)], on="time", how="left",
+        ).merge(
+            breadth.loc[:, ("time", *breadth_columns)], on="time", how="left",
+        ).rename(columns=rename)
+        result[symbol] = frame.loc[:, ("time", *canonical_columns)]
+    return result
+
+
 PAPER_STATE_CONTEXT_KEY = "__QUANTLAB_HISTORICAL_PAPER_STATE_CONTEXT__"
 
 
@@ -387,6 +481,7 @@ def builtin_definitions() -> tuple[FeatureDefinition, ...]:
         FeatureDefinition("historical_candidate_market_context_subset", "v4", FeatureScope.PER_SYMBOL, ("time", "open", "high", "low", "close", "volume"), dependencies=_market_context_dependencies, direct_warmup_sessions=0, output_columns=("time", "open", "high", "low", "close", "volume", "EMA10", "EMA20", "EMA50", "ATR14", "Previous_20D_High", "Breakout_20D", "RSI", "Vol_MA20", "Vol_Ratio", "Previous_5D_Max_Volume", "Volume_Breakout_5D", "ATR_Percent", "ADX14", "EMA20_Rising", "Recent_Breakout_10D", "Touched_EMA10", "Reclaimed_EMA10", "Distance_EMA20_Pct", "Return_3D_Pct", "Body_Ratio", "Green_Candle", "Close_Upper_Half", "Stock_Return_20D", "Index_Return_20D", "Relative_Strength_20D", "Market_Regime"), compute=_historical_candidate_market_context_subset),
         FeatureDefinition("historical_breadth_context", "v1", FeatureScope.CROSS_SECTIONAL, ("time", "close"), uses_execution_context=True, direct_warmup_sessions=50, output_columns=("time", "breadth_ema50_pct", "breadth_ema50_change_10d", "breadth_universe_count"), compute=_historical_breadth_context),
         FeatureDefinition("historical_candidate_breadth_context_subset", "v5", FeatureScope.PER_SYMBOL, ("time", "open", "high", "low", "close", "volume"), dependencies=_breadth_context_dependencies, direct_warmup_sessions=0, output_columns=("time", "open", "high", "low", "close", "volume", "EMA10", "EMA20", "EMA50", "ATR14", "Previous_20D_High", "Breakout_20D", "RSI", "Vol_MA20", "Vol_Ratio", "Previous_5D_Max_Volume", "Volume_Breakout_5D", "ATR_Percent", "ADX14", "EMA20_Rising", "Recent_Breakout_10D", "Touched_EMA10", "Reclaimed_EMA10", "Distance_EMA20_Pct", "Return_3D_Pct", "Body_Ratio", "Green_Candle", "Close_Upper_Half", "Stock_Return_20D", "Index_Return_20D", "Relative_Strength_20D", "Market_Regime", "breadth_ema50_pct", "breadth_ema50_change_10d", "breadth_universe_count"), compute=_historical_candidate_breadth_context_subset),
+        FeatureDefinition("neutral_research_numeric_features", "v1", FeatureScope.CROSS_SECTIONAL, ("time", "open", "high", "low", "close", "volume"), dependencies=_neutral_research_dependencies, uses_execution_context=True, direct_warmup_sessions=0, output_columns=("time", *(canonical for _source, canonical in NEUTRAL_RESEARCH_SOURCE_TO_CANONICAL_V1)), compute=_neutral_research_numeric_features),
         FeatureDefinition("historical_paper_market_state", "v1", FeatureScope.CROSS_SECTIONAL, ("time",), dependencies=_paper_state_dependencies, uses_execution_context=True, direct_warmup_sessions=0, output_columns=("time", "paper_v2_state"), compute=_historical_paper_market_state),
         FeatureDefinition("historical_candidate_paper_state_subset", "v6", FeatureScope.PER_SYMBOL, ("time", "open", "high", "low", "close", "volume"), dependencies=_paper_state_composite_dependencies, direct_warmup_sessions=0, output_columns=("time", "open", "high", "low", "close", "volume", "EMA10", "EMA20", "EMA50", "ATR14", "Previous_20D_High", "Breakout_20D", "RSI", "Vol_MA20", "Vol_Ratio", "Previous_5D_Max_Volume", "Volume_Breakout_5D", "ATR_Percent", "ADX14", "EMA20_Rising", "Recent_Breakout_10D", "Touched_EMA10", "Reclaimed_EMA10", "Distance_EMA20_Pct", "Return_3D_Pct", "Body_Ratio", "Green_Candle", "Close_Upper_Half", "Stock_Return_20D", "Index_Return_20D", "Relative_Strength_20D", "Market_Regime", "breadth_ema50_pct", "breadth_ema50_change_10d", "breadth_universe_count", "paper_v2_state"), compute=_historical_candidate_paper_state_subset),
     )
