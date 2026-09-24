@@ -28,6 +28,13 @@ from .outcome_contracts import (
     PointInTimeOutcomePanelSpec,
 )
 from .outcome_panel import build_point_in_time_outcome_panel
+from .research_dataset_contracts import (
+    POINT_IN_TIME_NEUTRAL_RESEARCH_DATASET_V1,
+    PointInTimeResearchDataset,
+    PointInTimeResearchDatasetSpec,
+    ResearchDatasetUse,
+)
+from .research_dataset import build_point_in_time_research_dataset
 
 __all__ = [
     "ObservationAvailability",
@@ -50,4 +57,9 @@ __all__ = [
     "PointInTimeOutcomePanel",
     "POINT_IN_TIME_FORWARD_OUTCOMES_5_10_20_V1",
     "build_point_in_time_outcome_panel",
+    "ResearchDatasetUse",
+    "PointInTimeResearchDatasetSpec",
+    "PointInTimeResearchDataset",
+    "POINT_IN_TIME_NEUTRAL_RESEARCH_DATASET_V1",
+    "build_point_in_time_research_dataset",
 ]
