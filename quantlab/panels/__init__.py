@@ -21,6 +21,13 @@ from .neutral_features import (
     build_neutral_research_feature_panel,
     prepare_neutral_research_feature_source,
 )
+from .outcome_contracts import (
+    POINT_IN_TIME_FORWARD_OUTCOMES_5_10_20_V1,
+    PanelForwardOutcomeAvailability,
+    PointInTimeOutcomePanel,
+    PointInTimeOutcomePanelSpec,
+)
+from .outcome_panel import build_point_in_time_outcome_panel
 
 __all__ = [
     "ObservationAvailability",
@@ -38,4 +45,9 @@ __all__ = [
     "NEUTRAL_RESEARCH_FEATURE_PANEL_V1",
     "prepare_neutral_research_feature_source",
     "build_neutral_research_feature_panel",
+    "PanelForwardOutcomeAvailability",
+    "PointInTimeOutcomePanelSpec",
+    "PointInTimeOutcomePanel",
+    "POINT_IN_TIME_FORWARD_OUTCOMES_5_10_20_V1",
+    "build_point_in_time_outcome_panel",
 ]
