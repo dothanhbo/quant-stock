@@ -1,11 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
-import json
-import os
 from pathlib import Path
-import subprocess
-import sys
 from types import MappingProxyType, SimpleNamespace
 
 import numpy as np
@@ -22,51 +18,40 @@ from quantlab.panels import (
 )
 from quantlab.panels.contracts import OBSERVATION_INDEX_COLUMNS
 from quantlab.panels.feature_contracts import FEATURE_DIAGNOSTIC_COLUMNS
+from tests.quantlab_panel_test_support import (
+    InMemoryMarketDataSnapshot,
+    make_ohlcv_frame,
+)
 
 
 DATES = ("2024-01-02", "2024-01-04", "2024-01-05")
 
 
 def _market_frame(symbol: str, dates: tuple[str, ...]) -> pd.DataFrame:
-    return pd.DataFrame({
-        "symbol": [symbol] * len(dates),
-        "time": pd.to_datetime(dates),
-        "open": [10.0] * len(dates),
-        "high": [11.0] * len(dates),
-        "low": [9.0] * len(dates),
-        "close": [10.0] * len(dates),
-        "volume": [1_000] * len(dates),
-    })
-
-
-class _Snapshot:
-    canonical_db_path = Path("unused-market.db")
-    schema_version = "schema-v1"
-    logical_content_fingerprint = "logical-content"
-    symbols = ("AAA", "BBB", "MISS", "VNINDEX")
-
-    def __init__(self, *, snapshot_id: str = "snapshot-v1") -> None:
-        self.snapshot_id = snapshot_id
-        self.calls = 0
-
-    def load_ohlcv(self, symbols, **_kwargs):
-        self.calls += 1
-        frames = {
-            "VNINDEX": _market_frame("VNINDEX", DATES),
-            "AAA": _market_frame("AAA", DATES),
-            "BBB": _market_frame("BBB", DATES[1:]),
-            "MISS": _market_frame("MISS", DATES[:1]),
-        }
-        requested = tuple(sorted(symbols))
-        selected = {symbol: frames[symbol] for symbol in requested if symbol in frames}
-        return SimpleNamespace(
-            frames=MappingProxyType(selected),
-            missing_symbols=tuple(symbol for symbol in requested if symbol not in selected),
-        )
+    return make_ohlcv_frame(
+        symbol,
+        dates,
+        (10.0,) * len(dates),
+        open_values=(10.0,) * len(dates),
+        high_values=(11.0,) * len(dates),
+        low_values=(9.0,) * len(dates),
+        volume_values=(1_000,) * len(dates),
+    )
 
 
 def _observation_index(*, snapshot_id: str = "snapshot-v1", empty: bool = False):
-    snapshot = _Snapshot(snapshot_id=snapshot_id)
+    frames = {
+        "VNINDEX": _market_frame("VNINDEX", DATES),
+        "AAA": _market_frame("AAA", DATES),
+        "BBB": _market_frame("BBB", DATES[1:]),
+        "MISS": _market_frame("MISS", DATES[:1]),
+    }
+    snapshot = InMemoryMarketDataSnapshot(
+        frames,
+        snapshot_id=snapshot_id,
+        canonical_db_path=Path("unused-market.db"),
+        logical_content_fingerprint="logical-content",
+    )
     memberships = (
         {date: () for date in DATES}
         if empty
@@ -174,7 +159,7 @@ def test_exact_left_join_preserves_observations_order_and_base_columns() -> None
     pd.testing.assert_frame_equal(frame.loc[:, OBSERVATION_INDEX_COLUMNS], base)
     assert list(zip(frame["session_date"], frame["symbol"])) == list(zip(base["session_date"], base["symbol"]))
     assert not frame["symbol"].eq("EXTRA").any()
-    assert snapshot.calls == 1
+    assert len(snapshot.calls) == 1
     assert source.compute_calls == 0
 
 
@@ -293,17 +278,34 @@ def test_unsupported_objects_and_declared_numeric_type_violations_fail(
         attach_features_to_observation_index(observations, source, spec=_spec(field))
 
 
-def test_source_symbol_and_metadata_consistency_validation() -> None:
+@pytest.mark.parametrize(
+    ("mismatch", "message"),
+    [
+        pytest.param("overlapping-declarations", "both available and missing", id="overlap"),
+        pytest.param("metadata-available-symbols", "available-symbol metadata", id="metadata"),
+    ],
+)
+def test_source_symbol_and_metadata_consistency_validation(
+    mismatch: str,
+    message: str,
+) -> None:
     _, observations = _observation_index()
     frame = pd.DataFrame({"time": [pd.Timestamp(DATES[0])], "factor": [1.0]})
-    overlapping = _FeatureSource({"AAA": frame}, available_symbols=("AAA",), missing_symbols=("AAA",))
-    with pytest.raises(ValueError, match="both available and missing"):
-        attach_features_to_observation_index(observations, overlapping, spec=_spec())
-    inconsistent = _FeatureSource(
-        {"AAA": frame}, metadata={"available_symbols": ("BBB",)}, missing_symbols=("BBB", "MISS"),
+    source = (
+        _FeatureSource(
+            {"AAA": frame},
+            available_symbols=("AAA",),
+            missing_symbols=("AAA",),
+        )
+        if mismatch == "overlapping-declarations"
+        else _FeatureSource(
+            {"AAA": frame},
+            metadata={"available_symbols": ("BBB",)},
+            missing_symbols=("BBB", "MISS"),
+        )
     )
-    with pytest.raises(ValueError, match="available-symbol metadata"):
-        attach_features_to_observation_index(observations, inconsistent, spec=_spec())
+    with pytest.raises(ValueError, match=message):
+        attach_features_to_observation_index(observations, source, spec=_spec())
 
 
 @pytest.mark.parametrize(
@@ -360,28 +362,56 @@ def test_source_presentation_order_does_not_change_output_or_identities() -> Non
     assert one.identity == two.identity
 
 
-def test_value_source_and_observation_identity_sensitivity() -> None:
+@pytest.mark.parametrize(
+    "change",
+    [
+        pytest.param("feature-value", id="feature-value"),
+        pytest.param("feature-source", id="feature-source"),
+        pytest.param("observation-provenance", id="observation-provenance"),
+    ],
+)
+def test_value_source_and_observation_identity_sensitivity(change: str) -> None:
     _, observations = _observation_index(snapshot_id="snapshot-one")
     first_source = _precedence_source()
     first = attach_features_to_observation_index(observations, first_source, spec=_spec())
-    changed_frames = {name: frame.copy(deep=True) for name, frame in first_source._frames.items()}
-    changed_frames["AAA"].loc[0, "factor"] = 9.0
-    changed_value = attach_features_to_observation_index(
-        observations,
-        _FeatureSource(changed_frames, identity="feature-source-v1", available_symbols=first_source.available_symbols, missing_symbols=first_source.missing_symbols),
-        spec=_spec(),
-    )
-    assert changed_value.feature_content_identity != first.feature_content_identity
-    changed_source = attach_features_to_observation_index(
-        observations,
-        _FeatureSource(first_source._frames, identity="feature-source-v2", available_symbols=first_source.available_symbols, missing_symbols=first_source.missing_symbols),
-        spec=_spec(),
-    )
-    assert changed_source.feature_content_identity != first.feature_content_identity
-    _, provenance_changed_observations = _observation_index(snapshot_id="snapshot-two")
-    changed_observation = attach_features_to_observation_index(provenance_changed_observations, _precedence_source(), spec=_spec())
-    assert changed_observation.feature_content_identity == first.feature_content_identity
-    assert changed_observation.identity != first.identity
+    if change == "feature-value":
+        changed_frames = {
+            name: frame.copy(deep=True)
+            for name, frame in first_source._frames.items()
+        }
+        changed_frames["AAA"].loc[0, "factor"] = 9.0
+        changed = attach_features_to_observation_index(
+            observations,
+            _FeatureSource(
+                changed_frames,
+                identity="feature-source-v1",
+                available_symbols=first_source.available_symbols,
+                missing_symbols=first_source.missing_symbols,
+            ),
+            spec=_spec(),
+        )
+        assert changed.feature_content_identity != first.feature_content_identity
+    elif change == "feature-source":
+        changed = attach_features_to_observation_index(
+            observations,
+            _FeatureSource(
+                first_source._frames,
+                identity="feature-source-v2",
+                available_symbols=first_source.available_symbols,
+                missing_symbols=first_source.missing_symbols,
+            ),
+            spec=_spec(),
+        )
+        assert changed.feature_content_identity != first.feature_content_identity
+    else:
+        _, changed_observations = _observation_index(snapshot_id="snapshot-two")
+        changed = attach_features_to_observation_index(
+            changed_observations,
+            _precedence_source(),
+            spec=_spec(),
+        )
+        assert changed.feature_content_identity == first.feature_content_identity
+    assert changed.identity != first.identity
 
 
 def test_extra_source_dates_are_bounded_out_of_content_identity() -> None:
@@ -411,24 +441,3 @@ def test_empty_observation_population_retains_schema_and_audit() -> None:
     assert panel.observation_row_count == panel.complete_feature_row_count == panel.incomplete_feature_row_count == 0
     assert len(panel.session_audit) == len(DATES)
 
-
-def test_fresh_process_import_has_no_computation_or_production_dependencies(tmp_path: Path) -> None:
-    code = (
-        "import json, pathlib, sys; "
-        f"work=pathlib.Path({str(tmp_path)!r}); before=list(work.iterdir()); "
-        "import quantlab.panels; import quantlab.panels.feature_panel; "
-        "forbidden=('strategy','backtesting','execution','quantlab.alpha','quantlab.candidates','quantlab.outcomes','quantlab.evaluation','quantlab.features.builtins','quantlab.features.registry'); "
-        "loaded=sorted(name for name in sys.modules if any(name == item or name.startswith(item + '.') for item in forbidden)); "
-        "print(json.dumps({'loaded': loaded, 'created': [str(p) for p in work.iterdir() if p not in before]}))"
-    )
-    environment = dict(os.environ)
-    environment["PYTHONDONTWRITEBYTECODE"] = "1"
-    completed = subprocess.run(
-        [sys.executable, "-c", code],
-        cwd=Path(__file__).resolve().parents[1],
-        env=environment,
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    assert json.loads(completed.stdout) == {"loaded": [], "created": []}

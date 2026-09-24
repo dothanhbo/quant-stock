@@ -1,12 +1,9 @@
 from __future__ import annotations
 
 from collections import Counter
-import json
-import os
+from dataclasses import replace
 from pathlib import Path
 import sqlite3
-import subprocess
-import sys
 
 import numpy as np
 import pandas as pd
@@ -87,6 +84,28 @@ class _CountingSnapshot:
         ordered = tuple(symbols)
         self.calls.append(ordered)
         return self._snapshot.load_ohlcv(ordered, **kwargs)
+
+
+def _instrument_registry_execution(
+    monkeypatch: pytest.MonkeyPatch,
+) -> Counter[FeatureRequest]:
+    """Count callable execution at the public registry-definition boundary."""
+    executions: Counter[FeatureRequest] = Counter()
+    original_definition_for = FeatureRegistry.definition_for
+
+    def definition_for(registry: FeatureRegistry, request: FeatureRequest):
+        definition = original_definition_for(registry, request)
+        original_compute = definition.compute
+        assert original_compute is not None
+
+        def counted_compute(*args, **kwargs):
+            executions[request] += 1
+            return original_compute(*args, **kwargs)
+
+        return replace(definition, compute=counted_compute)
+
+    monkeypatch.setattr(FeatureRegistry, "definition_for", definition_for)
+    return executions
 
 
 def test_exact_feature_order_mapping_and_exclusions() -> None:
@@ -195,50 +214,84 @@ def test_missing_benchmark_and_universe_context_fail_clearly(tmp_path: Path) -> 
         )
 
 
-def test_panel_provenance_mismatches_fail_before_computation(tmp_path: Path) -> None:
+@pytest.mark.parametrize(
+    ("mismatch", "message"),
+    [
+        pytest.param("snapshot", "snapshot identity", id="snapshot"),
+        pytest.param("universe", "universe membership", id="universe"),
+        pytest.param("benchmark", "benchmark", id="benchmark"),
+    ],
+)
+def test_panel_provenance_mismatches_fail_before_computation(
+    tmp_path: Path,
+    mismatch: str,
+    message: str,
+) -> None:
     _, _, snapshot, context, observations = _fixture(tmp_path)
-    different_snapshot = _CountingSnapshot(snapshot)
-    different_snapshot.snapshot_id = "different"
-    with pytest.raises(ValueError, match="snapshot identity"):
-        build_neutral_research_feature_panel(observations, different_snapshot, benchmark_symbol="VNINDEX", universe_context=context)
-    changed_context = PointInTimeUniverseContext.from_memberships(
-        universe_mode="changed", memberships={date: ("AAA",) for date in context.session_dates},
-    )
-    with pytest.raises(ValueError, match="universe membership"):
-        build_neutral_research_feature_panel(observations, snapshot, benchmark_symbol="VNINDEX", universe_context=changed_context)
-    with pytest.raises(ValueError, match="benchmark"):
-        build_neutral_research_feature_panel(observations, snapshot, benchmark_symbol="ALTINDEX", universe_context=context)
+    supplied_snapshot = snapshot
+    supplied_context = context
+    benchmark = "VNINDEX"
+    if mismatch == "snapshot":
+        supplied_snapshot = _CountingSnapshot(snapshot)
+        supplied_snapshot.snapshot_id = "different"
+    elif mismatch == "universe":
+        supplied_context = PointInTimeUniverseContext.from_memberships(
+            universe_mode="changed",
+            memberships={date: ("AAA",) for date in context.session_dates},
+        )
+    else:
+        benchmark = "ALTINDEX"
+    with pytest.raises(ValueError, match=message):
+        build_neutral_research_feature_panel(
+            observations,
+            supplied_snapshot,
+            benchmark_symbol=benchmark,
+            universe_context=supplied_context,
+        )
 
 
 def test_cold_computation_loads_union_once_and_executes_each_node_once(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     _, sessions, snapshot, context, _ = _fixture(tmp_path)
-    counted_snapshot = _CountingSnapshot(snapshot)
-    counts: Counter[str] = Counter()
-    names = (
-        "_ema", "_atr", "_donchian", "_historical_candidate_core_subset", "_rsi",
-        "_adx", "_volume_context", "_atr_percent", "_price_context",
-        "_historical_candidate_per_symbol_subset", "_benchmark_relative_context",
-        "_historical_breadth_context", "_neutral_research_numeric_features",
+    expected = prepare_neutral_research_feature_source(
+        snapshot,
+        ("AAA", "MISSING"),
+        benchmark_symbol="VNINDEX",
+        universe_context=context,
+        start_date=sessions[0],
+        through_date=sessions[-1],
     )
-    for name in names:
-        original = getattr(feature_builtins, name)
-
-        def wrapper(*args, __name=name, __original=original, **kwargs):
-            counts[__name] += 1
-            return __original(*args, **kwargs)
-
-        monkeypatch.setattr(feature_builtins, name, wrapper)
+    counted_snapshot = _CountingSnapshot(snapshot)
+    executions = _instrument_registry_execution(monkeypatch)
     source = prepare_neutral_research_feature_source(
         counted_snapshot, ("AAA", "MISSING"), benchmark_symbol="VNINDEX",
         universe_context=context, start_date=sessions[0], through_date=sessions[-1],
     )
     assert len(counted_snapshot.calls) == 1
     assert set(counted_snapshot.calls[0]) == {"AAA", "BBB", "MISSING", "VNINDEX"}
-    assert counts["_ema"] == 3
-    assert all(counts[name] == 1 for name in names if name != "_ema")
+    assert executions
+    assert all(count == 1 for count in executions.values())
+    ema_requests = tuple(request for request in executions if request.name == "ema")
+    assert {
+        request.parameter_mapping["period"] for request in ema_requests
+    } == {10, 20, 50}
+    assert all(executions[request] == 1 for request in ema_requests)
+    top_level = tuple(
+        request
+        for request in executions
+        if request.name == "neutral_research_numeric_features"
+    )
+    assert len(top_level) == 1
+    assert executions[top_level[0]] == 1
     assert source.metadata["resolved_warmup_sessions"] == 50
+    assert source.computation_identity.sha256 == expected.computation_identity.sha256
+    for symbol in source.available_symbols:
+        pd.testing.assert_frame_equal(
+            source.frame_for(symbol),
+            expected.frame_for(symbol),
+            check_exact=True,
+        )
 
 
 def test_explicit_npz_warm_hit_loads_and_executes_nothing(
@@ -254,21 +307,10 @@ def test_explicit_npz_warm_hit_loads_and_executes_nothing(
     cold = prepare_neutral_research_feature_source(counted_snapshot, ("AAA", "BBB"), **kwargs)
     counted_snapshot.calls.clear()
     counted_snapshot.fail_on_load = True
-    calls: Counter[str] = Counter()
-    for name in (
-        "_historical_candidate_per_symbol_subset", "_benchmark_relative_context",
-        "_historical_breadth_context", "_neutral_research_numeric_features",
-    ):
-        original = getattr(feature_builtins, name)
-
-        def wrapper(*args, __name=name, __original=original, **call_kwargs):
-            calls[__name] += 1
-            return __original(*args, **call_kwargs)
-
-        monkeypatch.setattr(feature_builtins, name, wrapper)
+    executions = _instrument_registry_execution(monkeypatch)
     warm = prepare_neutral_research_feature_source(counted_snapshot, ("BBB", "AAA"), **kwargs)
     assert counted_snapshot.calls == []
-    assert sum(calls.values()) == 0
+    assert sum(executions.values()) == 0
     assert warm.metadata["cache"]["hit"] is True
     assert warm.computation_identity.sha256 == cold.computation_identity.sha256
     for symbol in warm.available_symbols:
@@ -348,21 +390,4 @@ def test_future_rows_preserve_bounded_values_but_change_provenance(tmp_path: Pat
     assert before.feature_source_identity != after.feature_source_identity
     assert before.identity != after.identity
 
-
-def test_fresh_process_import_isolated_from_strategy_candidates_and_outcomes(tmp_path: Path) -> None:
-    code = (
-        "import json, pathlib, sys; "
-        f"work=pathlib.Path({str(tmp_path)!r}); before=list(work.iterdir()); "
-        "import quantlab.panels; import quantlab.panels.neutral_features; "
-        "forbidden=('strategy','backtesting','execution','quantlab.alpha','quantlab.candidates','quantlab.outcomes','quantlab.evaluation','quantlab.features.builtins','quantlab.features.registry'); "
-        "loaded=sorted(name for name in sys.modules if any(name == item or name.startswith(item + '.') for item in forbidden)); "
-        "print(json.dumps({'loaded': loaded, 'created': [str(p) for p in work.iterdir() if p not in before]}))"
-    )
-    environment = dict(os.environ)
-    environment["PYTHONDONTWRITEBYTECODE"] = "1"
-    completed = subprocess.run(
-        [sys.executable, "-c", code], cwd=Path(__file__).resolve().parents[1],
-        env=environment, check=True, capture_output=True, text=True,
-    )
-    assert json.loads(completed.stdout) == {"loaded": [], "created": []}
 

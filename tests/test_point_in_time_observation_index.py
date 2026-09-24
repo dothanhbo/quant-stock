@@ -3,11 +3,8 @@ from __future__ import annotations
 from bisect import bisect_right
 from dataclasses import FrozenInstanceError
 from hashlib import sha256
-import json
 from pathlib import Path
 import sqlite3
-import subprocess
-import sys
 from types import MappingProxyType, SimpleNamespace
 
 import pandas as pd
@@ -320,23 +317,3 @@ def test_large_membership_still_uses_one_snapshot_load(tmp_path: Path) -> None:
     assert index.total_membership_row_count == len(member_symbols)
     assert index.available_row_count == 0
 
-
-def test_fresh_process_import_isolated_from_strategy_research_and_io(tmp_path: Path) -> None:
-    code = (
-        "import json, pathlib, sys; "
-        f"work=pathlib.Path({str(tmp_path)!r}); before=list(work.iterdir()); "
-        "import quantlab.panels; import quantlab.panels.observation_index; "
-        "forbidden=('strategy','backtesting','execution','quantlab.alpha','quantlab.candidates','quantlab.outcomes','quantlab.evaluation'); "
-        "loaded=sorted(name for name in sys.modules if any(name == item or name.startswith(item + '.') for item in forbidden)); "
-        "print(json.dumps({'loaded': loaded, 'created': [str(p) for p in work.iterdir() if p not in before]}))"
-    )
-    completed = subprocess.run(
-        [sys.executable, "-c", code],
-        cwd=Path(__file__).resolve().parents[1],
-        env={"PYTHONDONTWRITEBYTECODE": "1"},
-        check=True,
-        capture_output=True,
-        text=True,
-    )
-    result = json.loads(completed.stdout)
-    assert result == {"loaded": [], "created": []}

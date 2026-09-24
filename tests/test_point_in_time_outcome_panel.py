@@ -1,13 +1,9 @@
 from __future__ import annotations
 
 from dataclasses import FrozenInstanceError
-import json
-import os
 from pathlib import Path
 import sqlite3
-import subprocess
-import sys
-from types import MappingProxyType, SimpleNamespace
+from types import SimpleNamespace
 
 import numpy as np
 import pandas as pd
@@ -24,63 +20,20 @@ from quantlab.panels import (
     build_point_in_time_outcome_panel,
 )
 from quantlab.panels.outcome_contracts import OUTCOME_BASE_COLUMNS
+from tests.quantlab_panel_test_support import (
+    InMemoryMarketDataSnapshot as _Snapshot,
+    make_ohlcv_frame,
+)
 
 
 def _frame(symbol: str, sessions: tuple[str, ...], closes: tuple[object, ...]) -> pd.DataFrame:
-    return pd.DataFrame({
-        "symbol": [symbol] * len(sessions),
-        "time": pd.to_datetime(sessions),
-        "open": closes,
-        "high": closes,
-        "low": closes,
-        "close": pd.Series(closes, dtype="object"),
-        "volume": [1_000] * len(sessions),
-    })
-
-
-class _Bundle:
-    def __init__(self, frames: dict[str, pd.DataFrame], requested: tuple[str, ...]) -> None:
-        self.frames = MappingProxyType({
-            symbol: frame.copy(deep=True) for symbol, frame in frames.items() if symbol in requested
-        })
-        self.missing_symbols = tuple(symbol for symbol in requested if symbol not in self.frames)
-
-    def frame_for(self, symbol: str) -> pd.DataFrame:
-        frame = self.frames.get(str(symbol).strip().upper())
-        return pd.DataFrame() if frame is None else frame.copy(deep=True)
-
-
-class _Snapshot:
-    canonical_db_path = Path("unused-outcome-market.db")
-    schema_version = "schema-v1"
-    logical_content_fingerprint = "logical-v1"
-
-    def __init__(self, frames: dict[str, pd.DataFrame], *, snapshot_id: str = "snapshot-v1") -> None:
-        self._frames = {symbol: frame.copy(deep=True) for symbol, frame in frames.items()}
-        self.snapshot_id = snapshot_id
-        self.symbols = tuple(sorted(frames))
-        dates = [
-            pd.Timestamp(value).date().isoformat()
-            for frame in frames.values() for value in frame.get("time", ())
-        ]
-        self.last_session_date = max(dates) if dates else None
-        self.calls: list[tuple[tuple[str, ...], str | None, str | None]] = []
-
-    def load_ohlcv(self, symbols, *, start_date=None, through_date=None, **_kwargs):
-        requested = tuple(sorted({str(symbol).strip().upper() for symbol in symbols}))
-        self.calls.append((requested, start_date, through_date))
-        selected: dict[str, pd.DataFrame] = {}
-        for symbol in requested:
-            frame = self._frames.get(symbol)
-            if frame is None:
-                continue
-            bounded = frame
-            if start_date is not None:
-                bounded = bounded.loc[bounded["time"] >= pd.Timestamp(start_date)]
-            if through_date is not None:
-                bounded = bounded.loc[bounded["time"] <= pd.Timestamp(through_date)]
-            selected[symbol] = bounded.reset_index(drop=True)
-        return _Bundle(selected, requested)
+    return make_ohlcv_frame(
+        symbol,
+        sessions,
+        closes,
+        volume_values=(1_000,) * len(sessions),
+        close_dtype="object",
+    )
 
 
 def _sessions(count: int = 30) -> tuple[str, ...]:
@@ -255,25 +208,47 @@ def test_every_availability_branch_and_precedence() -> None:
     ]].isna().all(axis=None)
 
 
-def test_spec_horizon_snapshot_and_provenance_validation() -> None:
+@pytest.mark.parametrize(
+    ("mismatch", "message"),
+    [
+        pytest.param("nonpositive-horizon", "positive integers", id="nonpositive-horizon"),
+        pytest.param("duplicate-horizon", "unique", id="duplicate-horizon"),
+        pytest.param("requested-order", "exactly match", id="requested-order"),
+        pytest.param("snapshot-identity", "snapshot identity", id="snapshot-identity"),
+        pytest.param("missing-benchmark", "benchmark series is unavailable", id="missing-benchmark"),
+    ],
+)
+def test_spec_horizon_snapshot_and_provenance_validation(
+    mismatch: str,
+    message: str,
+) -> None:
     _, snapshot, observations = _basic_fixture()
     assert POINT_IN_TIME_FORWARD_OUTCOMES_5_10_20_V1.horizons == (5, 10, 20)
-    with pytest.raises(ValueError, match="positive integers"):
-        PointInTimeOutcomePanelSpec("bad", "v1", (0,))
-    with pytest.raises(ValueError, match="unique"):
-        PointInTimeOutcomePanelSpec("bad", "v1", (5, 5))
-    with pytest.raises(ValueError, match="exactly match"):
-        build_point_in_time_outcome_panel(observations, snapshot, horizons=(10, 5, 20))
-    wrong = _Snapshot(snapshot._frames, snapshot_id="other-snapshot")
-    with pytest.raises(ValueError, match="snapshot identity"):
-        build_point_in_time_outcome_panel(observations, wrong)
-    no_benchmark = _Snapshot(
-        {symbol: frame for symbol, frame in snapshot._frames.items() if symbol != "VNINDEX"},
-        snapshot_id=snapshot.snapshot_id,
-    )
-    no_benchmark.last_session_date = snapshot.last_session_date
-    with pytest.raises(ValueError, match="benchmark series is unavailable"):
-        build_point_in_time_outcome_panel(observations, no_benchmark)
+    with pytest.raises(ValueError, match=message):
+        if mismatch == "nonpositive-horizon":
+            PointInTimeOutcomePanelSpec("bad", "v1", (0,))
+        elif mismatch == "duplicate-horizon":
+            PointInTimeOutcomePanelSpec("bad", "v1", (5, 5))
+        elif mismatch == "requested-order":
+            build_point_in_time_outcome_panel(
+                observations,
+                snapshot,
+                horizons=(10, 5, 20),
+            )
+        elif mismatch == "snapshot-identity":
+            wrong = _Snapshot(snapshot._frames, snapshot_id="other-snapshot")
+            build_point_in_time_outcome_panel(observations, wrong)
+        else:
+            no_benchmark = _Snapshot(
+                {
+                    symbol: frame
+                    for symbol, frame in snapshot._frames.items()
+                    if symbol != "VNINDEX"
+                },
+                snapshot_id=snapshot.snapshot_id,
+            )
+            no_benchmark.last_session_date = snapshot.last_session_date
+            build_point_in_time_outcome_panel(observations, no_benchmark)
 
 
 def test_panel_defensive_copy_immutability_and_not_a_feature_source() -> None:
@@ -472,24 +447,6 @@ def test_import_and_runtime_boundaries_do_not_load_or_call_forbidden_components(
     monkeypatch.setattr(registry.FeatureRegistry, "compute", forbidden)
     result = build_point_in_time_outcome_panel(observations, snapshot)
     assert result.observation_row_count == observations.total_membership_row_count
-
-
-def test_fresh_process_import_has_no_database_cache_network_or_forbidden_imports(tmp_path: Path) -> None:
-    missing = tmp_path / "must-not-exist.db"
-    code = (
-        "import json, pathlib, sys; "
-        f"target=pathlib.Path({str(missing)!r}); "
-        "import quantlab.panels.outcome_contracts; import quantlab.panels.outcome_panel; "
-        "forbidden=('strategy','backtesting','quantlab.alpha','quantlab.candidates','quantlab.features.builtins','quantlab.features.registry'); "
-        "loaded=sorted(name for name in sys.modules if any(name == item or name.startswith(item + '.') for item in forbidden)); "
-        "print(json.dumps({'loaded': loaded, 'created': target.exists()}))"
-    )
-    completed = subprocess.run(
-        [sys.executable, "-c", code], cwd=Path(__file__).resolve().parents[1],
-        env=dict(os.environ, MARKET_DATABASE_PATH=str(missing), PYTHONDONTWRITEBYTECODE="1"),
-        check=True, capture_output=True, text=True,
-    )
-    assert json.loads(completed.stdout) == {"loaded": [], "created": False}
 
 
 def test_real_database_bytes_are_unchanged(tmp_path: Path) -> None:

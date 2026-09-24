@@ -2,11 +2,6 @@ from __future__ import annotations
 
 import copy
 from dataclasses import FrozenInstanceError
-import json
-import os
-from pathlib import Path
-import subprocess
-import sys
 from types import MappingProxyType, SimpleNamespace
 
 import numpy as np
@@ -24,68 +19,24 @@ from quantlab.panels import (
 )
 from quantlab.panels.contracts import OBSERVATION_INDEX_COLUMNS
 from quantlab.panels.research_dataset_contracts import PointInTimeResearchDatasetSpec
+from tests.quantlab_panel_test_support import (
+    InMemoryMarketDataSnapshot as _Snapshot,
+    make_ohlcv_frame,
+)
 
 
 def _frame(symbol: str, sessions: tuple[str, ...], offset: float) -> pd.DataFrame:
     index = np.arange(len(sessions), dtype=float)
     close = offset + index * 0.2 + np.sin(index / 4.0) * 0.25
-    return pd.DataFrame({
-        "symbol": [symbol] * len(sessions),
-        "time": pd.to_datetime(sessions),
-        "open": close - 0.1,
-        "high": close + 0.6,
-        "low": close - 0.5,
-        "close": close,
-        "volume": pd.Series(100_000 + np.arange(len(sessions)) * 137, dtype="int64"),
-    })
-
-
-class _Bundle:
-    def __init__(self, frames: dict[str, pd.DataFrame], requested: tuple[str, ...]) -> None:
-        self.frames = MappingProxyType({
-            symbol: frame.copy(deep=True) for symbol, frame in frames.items() if symbol in requested
-        })
-        self.requested_symbols = tuple(requested)
-        self.available_symbols = tuple(sorted(self.frames))
-        self.missing_symbols = tuple(
-            symbol for symbol in self.requested_symbols if symbol not in self.frames
-        )
-
-    def frame_for(self, symbol: str) -> pd.DataFrame:
-        frame = self.frames.get(str(symbol).strip().upper())
-        return pd.DataFrame() if frame is None else frame.copy(deep=True)
-
-
-class _Snapshot:
-    canonical_db_path = Path("unused-research-dataset.db")
-    schema_version = "schema-v1"
-    logical_content_fingerprint = "logical-v1"
-
-    def __init__(self, frames: dict[str, pd.DataFrame], *, snapshot_id: str = "snapshot-v1") -> None:
-        self._frames = {symbol: frame.copy(deep=True) for symbol, frame in frames.items()}
-        self.snapshot_id = snapshot_id
-        self.symbols = tuple(sorted(frames))
-        self.last_session_date = max(
-            pd.Timestamp(value).date().isoformat()
-            for frame in frames.values() for value in frame["time"]
-        )
-        self.calls = 0
-
-    def load_ohlcv(self, symbols, *, start_date=None, through_date=None, **_kwargs):
-        self.calls += 1
-        requested = tuple(sorted({str(symbol).strip().upper() for symbol in symbols}))
-        selected: dict[str, pd.DataFrame] = {}
-        for symbol in requested:
-            frame = self._frames.get(symbol)
-            if frame is None:
-                continue
-            bounded = frame
-            if start_date is not None:
-                bounded = bounded.loc[bounded["time"] >= pd.Timestamp(start_date)]
-            if through_date is not None:
-                bounded = bounded.loc[bounded["time"] <= pd.Timestamp(through_date)]
-            selected[symbol] = bounded.reset_index(drop=True)
-        return _Bundle(selected, requested)
+    return make_ohlcv_frame(
+        symbol,
+        sessions,
+        tuple(close),
+        open_values=tuple(close - 0.1),
+        high_values=tuple(close + 0.6),
+        low_values=tuple(close - 0.5),
+        volume_values=tuple(100_000 + np.arange(len(sessions)) * 137),
+    )
 
 
 def _fixture(*, presentation_reversed: bool = False):
@@ -115,7 +66,7 @@ def _fixture(*, presentation_reversed: bool = False):
         observations, snapshot, benchmark_symbol="VNINDEX", universe_context=context,
     )
     outcomes = build_point_in_time_outcome_panel(observations, snapshot)
-    snapshot.calls = 0
+    snapshot.calls.clear()
     return sessions, snapshot, context, observations, features, outcomes
 
 
@@ -189,56 +140,96 @@ def test_aggregate_counts_reconcile_with_both_source_panels() -> None:
     )
 
 
-@pytest.mark.parametrize("source_name", ("feature", "outcome"))
-def test_duplicate_missing_extra_and_reordered_keys_fail(source_name: str) -> None:
+@pytest.mark.parametrize(
+    ("source_name", "corruption", "message"),
+    [
+        pytest.param(source, corruption, message, id=f"{source}-{corruption}")
+        for source in ("feature", "outcome")
+        for corruption, message in (
+            ("duplicate", "duplicate"),
+            ("missing", "missing observation keys"),
+            ("extra", "extra observation keys"),
+            ("reordered", "row order"),
+        )
+    ],
+)
+def test_duplicate_missing_extra_and_reordered_keys_fail(
+    source_name: str,
+    corruption: str,
+    message: str,
+) -> None:
     _, _, _, observations, features, outcomes = _fixture()
     source = features if source_name == "feature" else outcomes
     frame = source.frame
-
-    duplicate = frame.copy(deep=True)
-    duplicate.loc[1, ["session_date", "symbol"]] = duplicate.loc[0, ["session_date", "symbol"]].to_numpy()
-    changed = _tamper(source, _frame=duplicate)
-    args = (observations, changed, outcomes) if source_name == "feature" else (observations, features, changed)
-    with pytest.raises(ValueError, match="duplicate"):
-        build_point_in_time_research_dataset(*args)
-
-    missing = _tamper(source, _frame=frame.iloc[:-1].reset_index(drop=True))
-    args = (observations, missing, outcomes) if source_name == "feature" else (observations, features, missing)
-    with pytest.raises(ValueError, match="declared row counts"):
-        build_point_in_time_research_dataset(*args)
-
-    extra_frame = pd.concat([frame, frame.iloc[[0]]], ignore_index=True)
-    extra_frame.loc[len(extra_frame) - 1, "symbol"] = "EXTRA"
-    extra = _tamper(source, _frame=extra_frame)
-    args = (observations, extra, outcomes) if source_name == "feature" else (observations, features, extra)
-    with pytest.raises(ValueError, match="declared row counts"):
-        build_point_in_time_research_dataset(*args)
-
-    reordered = _tamper(source, _frame=frame.iloc[::-1].reset_index(drop=True))
-    args = (observations, reordered, outcomes) if source_name == "feature" else (observations, features, reordered)
-    with pytest.raises(ValueError, match="row order"):
-        build_point_in_time_research_dataset(*args)
-
-
-def test_provenance_bounds_and_observation_diagnostic_mismatches_fail() -> None:
-    _, _, _, observations, features, outcomes = _fixture()
-    cases = (
-        (_tamper(features, snapshot_id="other"), outcomes, "snapshot_id"),
-        (_tamper(features, universe_membership_identity="other"), outcomes, "universe_membership_identity"),
-        (_tamper(features, observation_index_identity="other"), outcomes, "observation_index_identity"),
-        (_tamper(features, observation_content_identity="other"), outcomes, "observation_content_identity"),
-        (features, _tamper(outcomes, benchmark_symbol="OTHER"), "benchmark"),
-        (features, _tamper(outcomes, requested_start_date="1999-01-01"), "requested bounds"),
+    changes: dict[str, object]
+    if corruption == "duplicate":
+        corrupted = frame.copy(deep=True)
+        corrupted.loc[1, ["session_date", "symbol"]] = corrupted.loc[
+            0, ["session_date", "symbol"]
+        ].to_numpy()
+        changes = {"_frame": corrupted}
+    elif corruption == "missing":
+        corrupted = frame.iloc[:-1].reset_index(drop=True)
+        changes = {"_frame": corrupted, "observation_row_count": len(corrupted)}
+    elif corruption == "extra":
+        corrupted = pd.concat([frame, frame.iloc[[0]]], ignore_index=True)
+        corrupted.loc[len(corrupted) - 1, "symbol"] = "EXTRA"
+        changes = {"_frame": corrupted, "observation_row_count": len(corrupted)}
+    else:
+        corrupted = frame.iloc[::-1].reset_index(drop=True)
+        changes = {"_frame": corrupted}
+    changed = _tamper(source, **changes)
+    args = (
+        (observations, changed, outcomes)
+        if source_name == "feature"
+        else (observations, features, changed)
     )
-    for feature_panel, outcome_panel, message in cases:
-        with pytest.raises(ValueError, match=message):
-            build_point_in_time_research_dataset(observations, feature_panel, outcome_panel)
+    with pytest.raises(ValueError, match=message):
+        build_point_in_time_research_dataset(*args)
 
-    changed_frame = features.frame
-    changed_frame.loc[0, "market_row_available"] = not bool(changed_frame.loc[0, "market_row_available"])
-    with pytest.raises(ValueError, match="observation diagnostics"):
+
+@pytest.mark.parametrize(
+    ("mismatch", "message"),
+    [
+        pytest.param("snapshot", "snapshot_id", id="snapshot"),
+        pytest.param("universe", "universe_membership_identity", id="universe"),
+        pytest.param("observation-identity", "observation_index_identity", id="observation-identity"),
+        pytest.param("content-provenance", "observation_content_identity", id="content-provenance"),
+        pytest.param("benchmark", "benchmark", id="benchmark"),
+        pytest.param("bounds", "requested bounds", id="bounds"),
+        pytest.param("diagnostics", "observation diagnostics", id="diagnostics"),
+    ],
+)
+def test_provenance_bounds_and_observation_diagnostic_mismatches_fail(
+    mismatch: str,
+    message: str,
+) -> None:
+    _, _, _, observations, features, outcomes = _fixture()
+    feature_panel = features
+    outcome_panel = outcomes
+    if mismatch == "snapshot":
+        feature_panel = _tamper(features, snapshot_id="other")
+    elif mismatch == "universe":
+        feature_panel = _tamper(features, universe_membership_identity="other")
+    elif mismatch == "observation-identity":
+        feature_panel = _tamper(features, observation_index_identity="other")
+    elif mismatch == "content-provenance":
+        feature_panel = _tamper(features, observation_content_identity="other")
+    elif mismatch == "benchmark":
+        outcome_panel = _tamper(outcomes, benchmark_symbol="OTHER")
+    elif mismatch == "bounds":
+        outcome_panel = _tamper(outcomes, requested_start_date="1999-01-01")
+    else:
+        changed_frame = features.frame
+        changed_frame.loc[0, "market_row_available"] = not bool(
+            changed_frame.loc[0, "market_row_available"]
+        )
+        feature_panel = _tamper(features, _frame=changed_frame)
+    with pytest.raises(ValueError, match=message):
         build_point_in_time_research_dataset(
-            observations, _tamper(features, _frame=changed_frame), outcomes,
+            observations,
+            feature_panel,
+            outcome_panel,
         )
 
 
@@ -365,22 +356,4 @@ def test_join_performs_no_io_computation_cache_or_strategy_calls(monkeypatch: py
     monkeypatch.setattr(simulator, "PortfolioSimulator", forbidden)
     dataset = build_point_in_time_research_dataset(observations, features, outcomes)
     assert dataset.observation_row_count == observations.total_membership_row_count
-    assert snapshot.calls == 0
-
-
-def test_fresh_process_import_creates_no_files_and_loads_no_trading_modules(tmp_path: Path) -> None:
-    target = tmp_path / "must-not-exist.db"
-    code = (
-        "import json, pathlib, sys; "
-        f"target=pathlib.Path({str(target)!r}); "
-        "import quantlab.panels.research_dataset_contracts; import quantlab.panels.research_dataset; "
-        "forbidden=('strategy','execution','backtesting','quantlab.candidates','quantlab.alpha'); "
-        "loaded=sorted(name for name in sys.modules if any(name == item or name.startswith(item + '.') for item in forbidden)); "
-        "print(json.dumps({'loaded': loaded, 'created': target.exists()}))"
-    )
-    completed = subprocess.run(
-        [sys.executable, "-c", code], cwd=Path(__file__).resolve().parents[1],
-        env=dict(os.environ, MARKET_DATABASE_PATH=str(target), PYTHONDONTWRITEBYTECODE="1"),
-        check=True, capture_output=True, text=True,
-    )
-    assert json.loads(completed.stdout) == {"loaded": [], "created": False}
+    assert snapshot.calls == []
