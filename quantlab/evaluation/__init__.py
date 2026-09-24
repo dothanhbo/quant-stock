@@ -18,6 +18,13 @@ _EXPORT_MODULES = {
     "CandidateFactorTemporalStabilityResult": ".temporal_stability_contracts",
     "FROZEN_Q70_VOLUME_RSI_TEMPORAL_STABILITY_V1": ".temporal_stability_contracts",
     "evaluate_candidate_factor_temporal_stability": ".temporal_stability",
+    "PanelFactorDirection": ".panel_factor_contracts",
+    "PanelFactorEvaluationSpec": ".panel_factor_contracts",
+    "PanelDailyFactorEvaluation": ".panel_factor_contracts",
+    "PanelFactorHorizonSummary": ".panel_factor_contracts",
+    "PointInTimePanelFactorEvaluationResult": ".panel_factor_contracts",
+    "NEUTRAL_TECHNICAL_FACTOR_EVALUATION_5_10_20_V1": ".panel_factor_contracts",
+    "evaluate_point_in_time_panel_factors": ".panel_factor_analysis",
 }
 
 __all__ = tuple(_EXPORT_MODULES)
