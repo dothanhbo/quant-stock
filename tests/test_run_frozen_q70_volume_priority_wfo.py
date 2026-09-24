@@ -158,6 +158,9 @@ def test_paired_runner_reuses_dependencies_and_writes_exact_artifact_set(
     assert tuple(ranking.columns) == runner.RANKING_CHANGE_COLUMNS
     comparison = pd.read_csv(output / "comparison.csv")
     assert set(comparison["direct_priority_divergence_count"]) == {0}
+    assert set(comparison["direct_executed_set_divergence_count"]) == {0}
+    assert set(comparison["direct_quantity_only_divergence_count"]) == {0}
+    assert set(comparison["direct_cost_only_divergence_count"]) == {0}
     assert set(comparison["downstream_portfolio_state_divergence_count"]) == {0}
     assert set(comparison["unexpected_divergence_count"]) == {0}
     manifest = result["manifest"]
@@ -236,22 +239,106 @@ def test_ranking_change_audit_preserves_subgroup_slots_and_traces_top_three() ->
     assert audit["daily_order_cap_selection_changed"]
     assert audit["top_three_overlap_count"] == 2
     assert len(audit["ranking_change_identity"]) == 64
+    assert bool(audit["top_cap_set_changed"])
+    assert not bool(audit["top_cap_order_changed"])
+    assert not bool(audit["below_cap_only_changed"])
+
+
+def test_same_top_three_set_with_changed_order_is_effective_intervention() -> None:
+    base = pd.DataFrame([
+        {"fold": 1, "entry_date": "2020-01-10", "candidate_key": key,
+         "signal_date_group_key": "d1", "baseline_within_entry_date_ordinal": ordinal,
+         "final_simulator_priority_ordinal": ordinal, "execution_disposition": "executed"}
+        for ordinal, key in enumerate(("A", "B", "C", "D"), start=1)
+    ])
+    variant = base.copy()
+    variant["final_simulator_priority_ordinal"] = [2, 1, 3, 4]
+    audit = runner._ranking_changes({"priority": base}, {"priority": variant}).iloc[0]
+    assert not bool(audit["top_cap_set_changed"])
+    assert bool(audit["top_cap_order_changed"])
+    assert not bool(audit["below_cap_only_changed"])
+
+
+def test_executed_comparison_projects_quantity_and_opening_cost_by_candidate_key() -> None:
+    signal_date = datetime(2020, 1, 1)
+    key = f"AAA|{signal_date.isoformat()}"
+    priority = pd.DataFrame([{
+        "fold": 1, "candidate_key": key, "signal_date": signal_date,
+        "entry_date": datetime(2020, 1, 2), "symbol": "AAA", "volume_ratio": 2.0,
+        "q70_quality_score": .9, "baseline_signal_score": 80.0,
+        "final_simulator_priority_ordinal": 1, "execution_disposition": "executed",
+    }])
+    base_trade = {column: None for column in runner.TRADE_COLUMNS}
+    base_trade.update({
+        "fold": 1, "symbol": "AAA", "signal_date": signal_date,
+        "entry_date": datetime(2020, 1, 2), "exit_date": datetime(2020, 1, 3),
+        "quantity": 596_600, "buy_commission": 100.0,
+        "total_transaction_cost": 200.0, "net_pnl": 1_000.0,
+    })
+    variant_trade = dict(base_trade, quantity=596_400, buy_commission=99.9,
+                         total_transaction_cost=199.8, net_pnl=999.0)
+    compared = runner._executed_comparison(
+        {"priority": priority, "trades": pd.DataFrame([base_trade])},
+        {"priority": priority, "trades": pd.DataFrame([variant_trade])},
+    ).iloc[0]
+    assert compared["baseline_quantity"] == 596_600
+    assert compared["variant_quantity"] == 596_400
+    assert compared["baseline_opening_cost"] == 100.0
+    assert compared["variant_opening_cost"] == 99.9
+    assert bool(compared["quantity_diverged"])
+    assert bool(compared["opening_cost_diverged"])
+    assert bool(compared["realized_financials_diverged"])
+
+
+def test_change_only_below_order_cap_is_not_effective_intervention() -> None:
+    base = pd.DataFrame([
+        {"fold": 1, "entry_date": "2020-01-10", "candidate_key": key,
+         "signal_date_group_key": "d1", "baseline_within_entry_date_ordinal": ordinal,
+         "final_simulator_priority_ordinal": ordinal, "execution_disposition": "executed"}
+        for ordinal, key in enumerate(("A", "B", "C", "D", "E"), start=1)
+    ])
+    variant = base.copy()
+    variant["final_simulator_priority_ordinal"] = [1, 2, 3, 5, 4]
+    audit = runner._ranking_changes({"priority": base}, {"priority": variant}).iloc[0]
+    assert not bool(audit["top_cap_set_changed"])
+    assert not bool(audit["top_cap_order_changed"])
+    assert bool(audit["below_cap_only_changed"])
 
 
 def _execution_row(
     key: str, *, fold: int, entry_date: str, baseline_ordinal: int,
     variant_ordinal: int, baseline_disposition: str, variant_disposition: str,
+    baseline_quantity: float | None = None, variant_quantity: float | None = None,
+    baseline_opening_cost: float | None = None, variant_opening_cost: float | None = None,
 ) -> dict[str, object]:
+    baseline_executed = baseline_disposition == "executed"
+    variant_executed = variant_disposition == "executed"
+    both_executed = baseline_executed and variant_executed
+    quantity_diverged = both_executed and not runner._numbers_equal(baseline_quantity, variant_quantity)
+    opening_cost_diverged = both_executed and not runner._numbers_equal(
+        baseline_opening_cost, variant_opening_cost,
+    )
     return {
         "fold": fold, "candidate_key": key, "signal_date": entry_date,
         "entry_date": entry_date, "symbol": key,
-        "baseline_executed": baseline_disposition == "executed",
-        "variant_executed": variant_disposition == "executed",
+        "baseline_executed": baseline_executed,
+        "variant_executed": variant_executed,
         "baseline_entry_ordinal": baseline_ordinal,
         "variant_entry_ordinal": variant_ordinal,
         "volume_ratio": 1.0, "q70_quality": .9, "signal_score": 80.0,
         "baseline_disposition": baseline_disposition,
         "variant_disposition": variant_disposition,
+        "baseline_quantity": baseline_quantity, "variant_quantity": variant_quantity,
+        "baseline_opening_cost": baseline_opening_cost,
+        "variant_opening_cost": variant_opening_cost,
+        "baseline_total_transaction_cost": baseline_opening_cost,
+        "variant_total_transaction_cost": variant_opening_cost,
+        "baseline_net_pnl": None, "variant_net_pnl": None,
+        "execution_membership_diverged": baseline_executed != variant_executed,
+        "disposition_diverged": baseline_disposition != variant_disposition,
+        "quantity_diverged": quantity_diverged,
+        "opening_cost_diverged": opening_cost_diverged,
+        "realized_financials_diverged": False,
     }
 
 
@@ -266,8 +353,14 @@ def _ranking_row(
         "top_three_overlap_count": 0, "daily_order_cap_selection_changed": changed > 0,
         "baseline_executed_count": 1, "variant_executed_count": 1,
         "baseline_rejection_counts": "{}", "variant_rejection_counts": "{}",
+        "top_cap_set_changed": False,
+        "top_cap_order_changed": changed > 0,
+        "below_cap_only_changed": False,
         "ranking_change_identity": identity,
-        "direct_execution_divergence_count": 0,
+        "direct_execution_membership_divergence_count": 0,
+        "direct_disposition_divergence_count": 0,
+        "direct_quantity_divergence_count": 0,
+        "direct_opening_cost_divergence_count": 0,
         "downstream_divergence_count": 0, "unexpected_divergence_count": 0,
     }
 
@@ -323,7 +416,11 @@ def test_no_ranking_change_and_identical_arms_passes_causal_reconciliation() -> 
         _ranking_row(fold=1, entry_date="2020-01-02", changed=0, identity="a" * 64)
     ], columns=runner.RANKING_CHANGE_COLUMNS)
     classified, changes, counts = runner._classify_execution_divergence(execution, ranking)
-    assert counts == {"direct_priority": 0, "downstream_portfolio_state": 0, "unexpected": 0}
+    assert counts == {
+        "direct_priority": 0, "downstream_portfolio_state": 0, "unexpected": 0,
+        "direct_execution_membership": 0, "direct_quantity_only": 0,
+        "direct_cost_only": 0,
+    }
     runner._validate_reconciliation(
         _empty_reconciliation_arms(), pd.DataFrame({"parity": [True]}),
         classified, changes, counts,
@@ -378,13 +475,180 @@ def test_direct_then_unchanged_ordinal_divergence_is_classified_downstream() -> 
     assert later["causal_anchor_fold"] == 1
     assert later["causal_anchor_entry_date"] == pd.Timestamp("2020-01-02").isoformat()
     assert later["causal_anchor_identity"] == "a" * 64
-    assert counts == {"direct_priority": 2, "downstream_portfolio_state": 1, "unexpected": 0}
-    assert changes["direct_execution_divergence_count"].sum() == 2
+    assert counts == {
+        "direct_priority": 2, "downstream_portfolio_state": 1, "unexpected": 0,
+        "direct_execution_membership": 2, "direct_quantity_only": 0,
+        "direct_cost_only": 0,
+    }
+    assert changes["direct_execution_membership_divergence_count"].sum() == 2
     assert changes["downstream_divergence_count"].sum() == 1
     runner._validate_reconciliation(
         _empty_reconciliation_arms(), pd.DataFrame({"parity": [True]}),
         classified, changes, counts,
     )
+
+
+def test_top_cap_order_change_with_same_executed_keys_and_quantity_difference_is_direct() -> None:
+    execution = pd.DataFrame([
+        _execution_row(
+            "A", fold=1, entry_date="2020-01-02", baseline_ordinal=1,
+            variant_ordinal=2, baseline_disposition="executed", variant_disposition="executed",
+            baseline_quantity=596_600, variant_quantity=596_400,
+            baseline_opening_cost=100.0, variant_opening_cost=99.9,
+        ),
+        _execution_row(
+            "B", fold=1, entry_date="2020-01-02", baseline_ordinal=2,
+            variant_ordinal=1, baseline_disposition="executed", variant_disposition="executed",
+            baseline_quantity=418_600, variant_quantity=418_700,
+            baseline_opening_cost=80.0, variant_opening_cost=80.1,
+        ),
+    ])
+    ranking = pd.DataFrame([
+        _ranking_row(fold=1, entry_date="2020-01-02", changed=2, identity="q" * 64)
+    ], columns=runner.RANKING_CHANGE_COLUMNS)
+    classified, changes, counts = runner._classify_execution_divergence(execution, ranking)
+    assert set(classified["divergence_classification"]) == {"direct_priority"}
+    assert not classified["execution_membership_diverged"].any()
+    assert classified["quantity_diverged"].all()
+    assert counts["direct_execution_membership"] == 0
+    assert counts["direct_quantity_only"] == 2
+    assert counts["direct_cost_only"] == 0
+    assert changes["direct_quantity_divergence_count"].sum() == 2
+    assert changes["direct_opening_cost_divergence_count"].sum() == 2
+
+
+def test_below_cap_only_change_cannot_anchor_quantity_divergence() -> None:
+    execution = pd.DataFrame([
+        _execution_row(
+            "D", fold=1, entry_date="2020-01-02", baseline_ordinal=4,
+            variant_ordinal=5, baseline_disposition="executed", variant_disposition="executed",
+            baseline_quantity=100, variant_quantity=200,
+            baseline_opening_cost=1.0, variant_opening_cost=2.0,
+        )
+    ])
+    row = _ranking_row(fold=1, entry_date="2020-01-02", changed=2, identity="b" * 64)
+    row.update({"top_cap_order_changed": False, "below_cap_only_changed": True})
+    ranking = pd.DataFrame([row], columns=runner.RANKING_CHANGE_COLUMNS)
+    classified, _, counts = runner._classify_execution_divergence(execution, ranking)
+    assert classified.iloc[0]["divergence_classification"] == "unexpected"
+    assert counts["unexpected"] == 1
+
+
+def test_quantity_divergence_before_effective_intervention_is_unexpected() -> None:
+    early = _execution_row(
+        "EARLY", fold=1, entry_date="2020-01-01", baseline_ordinal=1,
+        variant_ordinal=1, baseline_disposition="executed", variant_disposition="executed",
+        baseline_quantity=100, variant_quantity=200,
+        baseline_opening_cost=1.0, variant_opening_cost=2.0,
+    )
+    later = _execution_row(
+        "LATER", fold=1, entry_date="2020-01-02", baseline_ordinal=1,
+        variant_ordinal=2, baseline_disposition="executed", variant_disposition="executed",
+        baseline_quantity=100, variant_quantity=200,
+        baseline_opening_cost=1.0, variant_opening_cost=2.0,
+    )
+    ranking = pd.DataFrame([
+        _ranking_row(fold=1, entry_date="2020-01-01", changed=0, identity="n" * 64),
+        _ranking_row(fold=1, entry_date="2020-01-02", changed=2, identity="e" * 64),
+    ], columns=runner.RANKING_CHANGE_COLUMNS)
+    classified, _, counts = runner._classify_execution_divergence(
+        pd.DataFrame([early, later]), ranking,
+    )
+    assert classified.loc[classified["candidate_key"] == "EARLY", "divergence_classification"].item() == "unexpected"
+    assert classified.loc[classified["candidate_key"] == "LATER", "divergence_classification"].item() == "direct_priority"
+    assert counts["unexpected"] == 1
+
+
+def test_later_unchanged_order_quantity_difference_is_downstream() -> None:
+    direct = _execution_row(
+        "DIRECT", fold=1, entry_date="2020-01-02", baseline_ordinal=1,
+        variant_ordinal=2, baseline_disposition="executed", variant_disposition="executed",
+        baseline_quantity=100, variant_quantity=200,
+        baseline_opening_cost=1.0, variant_opening_cost=2.0,
+    )
+    later = _execution_row(
+        "LATER", fold=1, entry_date="2020-01-03", baseline_ordinal=1,
+        variant_ordinal=1, baseline_disposition="executed", variant_disposition="executed",
+        baseline_quantity=300, variant_quantity=400,
+        baseline_opening_cost=3.0, variant_opening_cost=4.0,
+    )
+    ranking = pd.DataFrame([
+        _ranking_row(fold=1, entry_date="2020-01-02", changed=2, identity="d" * 64),
+        _ranking_row(fold=1, entry_date="2020-01-03", changed=0, identity="l" * 64),
+    ], columns=runner.RANKING_CHANGE_COLUMNS)
+    classified, changes, counts = runner._classify_execution_divergence(
+        pd.DataFrame([direct, later]), ranking,
+    )
+    assert classified.loc[classified["candidate_key"] == "DIRECT", "divergence_classification"].item() == "direct_priority"
+    assert classified.loc[classified["candidate_key"] == "LATER", "divergence_classification"].item() == "downstream_portfolio_state"
+    assert changes["downstream_divergence_count"].sum() == 1
+    assert counts["direct_quantity_only"] == 1
+
+
+def test_entry_date_pre_anchor_filter_is_strict_and_ignores_exit_chronology() -> None:
+    rows = pd.DataFrame([
+        {
+            "fold": 1, "symbol": "PRE", "signal_date": "2019-12-31",
+            "entry_date": "2020-01-01", "exit_date": "2020-02-01",
+            "entry_price": 10.0, "exit_price": 11.0, "quantity": 100,
+            "net_pnl": 90.0, "buy_commission": 5.0, "sell_commission": 3.0,
+            "sell_tax": 2.0, "total_transaction_cost": 10.0, "exit_reason": "time",
+        },
+        {
+            "fold": 1, "symbol": "SAME", "signal_date": "2020-01-01",
+            "entry_date": "2020-01-02", "exit_date": "2020-01-03",
+            "entry_price": 10.0, "exit_price": 11.0, "quantity": 100,
+            "net_pnl": 90.0, "buy_commission": 5.0, "sell_commission": 3.0,
+            "sell_tax": 2.0, "total_transaction_cost": 10.0, "exit_reason": "time",
+        },
+    ])
+    filtered = runner._normalized_trade_audit(
+        rows, before=(1, pd.Timestamp("2020-01-02")),
+    )
+    assert list(filtered["symbol"]) == ["PRE"]
+    assert filtered.iloc[0]["exit_date"] == "2020-02-01"
+
+
+def test_ranking_changes_without_realized_portfolio_difference_report_zero() -> None:
+    execution = pd.DataFrame([
+        _execution_row(
+            "A", fold=1, entry_date="2020-01-02", baseline_ordinal=1,
+            variant_ordinal=2, baseline_disposition="executed", variant_disposition="executed",
+            baseline_quantity=100, variant_quantity=100,
+            baseline_opening_cost=1.0, variant_opening_cost=1.0,
+        )
+    ])
+    ranking = pd.DataFrame([
+        _ranking_row(fold=1, entry_date="2020-01-02", changed=2, identity="z" * 64)
+    ], columns=runner.RANKING_CHANGE_COLUMNS)
+    classified, changes, counts = runner._classify_execution_divergence(execution, ranking)
+    assert classified["divergence_classification"].isna().all()
+    assert counts["direct_priority"] == counts["downstream_portfolio_state"] == counts["unexpected"] == 0
+    assert changes["direct_quantity_divergence_count"].sum() == 0
+
+
+def test_fold_result_divergence_without_candidate_anchor_fails() -> None:
+    execution = pd.DataFrame([
+        _execution_row(
+            "A", fold=1, entry_date="2020-01-02", baseline_ordinal=1,
+            variant_ordinal=1, baseline_disposition="executed", variant_disposition="executed",
+            baseline_quantity=100, variant_quantity=100,
+            baseline_opening_cost=1.0, variant_opening_cost=1.0,
+        )
+    ])
+    ranking = pd.DataFrame([
+        _ranking_row(fold=1, entry_date="2020-01-02", changed=0, identity="z" * 64)
+    ], columns=runner.RANKING_CHANGE_COLUMNS)
+    classified, changes, counts = runner._classify_execution_divergence(execution, ranking)
+    arms = _empty_reconciliation_arms()
+    arms["volume_ratio_priority"]["folds"].loc[0, "test_initial_equity"] = 99.0
+    arms["volume_ratio_priority"]["folds"].loc[0, "test_final_equity"] = 99.0
+    arms["volume_ratio_priority"]["summary"]["initial_equity"] = 99.0
+    arms["volume_ratio_priority"]["summary"]["final_equity"] = 99.0
+    with pytest.raises(ValueError, match="portfolio results diverge without"):
+        runner._validate_reconciliation(
+            arms, pd.DataFrame({"parity": [True]}), classified, changes, counts,
+        )
 
 
 def test_chained_fold_boundary_retains_prior_direct_causal_anchor() -> None:
@@ -452,7 +716,11 @@ def test_causal_output_columns_use_explicit_nullable_dtypes_and_assign_all_class
         "divergence_classification", "causal_anchor_fold",
         "causal_anchor_entry_date", "causal_anchor_identity",
     ))
-    assert counts == {"direct_priority": 2, "downstream_portfolio_state": 1, "unexpected": 1}
+    assert counts == {
+        "direct_priority": 2, "downstream_portfolio_state": 1, "unexpected": 1,
+        "direct_execution_membership": 2, "direct_quantity_only": 0,
+        "direct_cost_only": 0,
+    }
 
     output = tmp_path / "executed.csv"
     runner._write_frame(output, classified, runner.EXECUTED_COMPARISON_COLUMNS)
@@ -483,7 +751,11 @@ def test_empty_causal_input_has_exact_nullable_schema() -> None:
     assert isinstance(classified["causal_anchor_entry_date"].dtype, pd.StringDtype)
     assert isinstance(classified["causal_anchor_identity"].dtype, pd.StringDtype)
     assert str(classified["causal_anchor_fold"].dtype) == "Int64"
-    assert counts == {"direct_priority": 0, "downstream_portfolio_state": 0, "unexpected": 0}
+    assert counts == {
+        "direct_priority": 0, "downstream_portfolio_state": 0, "unexpected": 0,
+        "direct_execution_membership": 0, "direct_quantity_only": 0,
+        "direct_cost_only": 0,
+    }
 
 
 def test_causal_classification_is_independent_of_input_presentation_order() -> None:

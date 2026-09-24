@@ -95,6 +95,12 @@ EXECUTED_COMPARISON_COLUMNS = (
     "baseline_executed", "variant_executed", "baseline_entry_ordinal",
     "variant_entry_ordinal", "volume_ratio", "q70_quality", "signal_score",
     "baseline_disposition", "variant_disposition",
+    "baseline_quantity", "variant_quantity",
+    "baseline_opening_cost", "variant_opening_cost",
+    "baseline_total_transaction_cost", "variant_total_transaction_cost",
+    "baseline_net_pnl", "variant_net_pnl",
+    "execution_membership_diverged", "disposition_diverged",
+    "quantity_diverged", "opening_cost_diverged", "realized_financials_diverged",
     "divergence_classification", "causal_anchor_fold",
     "causal_anchor_entry_date", "causal_anchor_identity",
 )
@@ -104,7 +110,10 @@ RANKING_CHANGE_COLUMNS = (
     "baseline_top_three_keys", "variant_top_three_keys", "top_three_overlap_count",
     "daily_order_cap_selection_changed", "baseline_executed_count",
     "variant_executed_count", "baseline_rejection_counts", "variant_rejection_counts",
-    "ranking_change_identity", "direct_execution_divergence_count",
+    "top_cap_set_changed", "top_cap_order_changed", "below_cap_only_changed",
+    "ranking_change_identity", "direct_execution_membership_divergence_count",
+    "direct_disposition_divergence_count", "direct_quantity_divergence_count",
+    "direct_opening_cost_divergence_count",
     "downstream_divergence_count", "unexpected_divergence_count",
 )
 
@@ -435,30 +444,83 @@ def _accepted_parity(baseline: dict[str, Any], variant: dict[str, Any]) -> pd.Da
     return pd.DataFrame(rows, columns=ACCEPTED_PARITY_COLUMNS)
 
 
+def _numbers_equal(left: Any, right: Any) -> bool:
+    if left is None or right is None:
+        return left is None and right is None
+    try:
+        left_number, right_number = float(left), float(right)
+    except (TypeError, ValueError):
+        return left == right
+    if math.isnan(left_number) or math.isnan(right_number):
+        return math.isnan(left_number) and math.isnan(right_number)
+    return math.isclose(left_number, right_number, rel_tol=1e-12, abs_tol=1e-9)
+
+
 def _executed_comparison(baseline: dict[str, Any], variant: dict[str, Any]) -> pd.DataFrame:
     def lookup(payload: dict[str, Any]) -> dict[tuple[int, str], dict[str, Any]]:
         result = {}
         for row in payload["priority"].to_dict("records"):
             result[(int(row["fold"]), str(row["candidate_key"]))] = row
         return result
+    def trade_lookup(payload: dict[str, Any]) -> dict[tuple[int, str], dict[str, Any]]:
+        result = {}
+        for row in payload["trades"].to_dict("records"):
+            signal_date = pd.Timestamp(row["signal_date"]).to_pydatetime().isoformat()
+            key = f"{str(row['symbol']).strip().upper()}|{signal_date}"
+            result[(int(row["fold"]), key)] = row
+        return result
+
     left, right = lookup(baseline), lookup(variant)
+    left_trades, right_trades = trade_lookup(baseline), trade_lookup(variant)
     rows = []
     for fold, key in sorted(set(left) | set(right)):
         a, b = left.get((fold, key)), right.get((fold, key))
         source = a or b
         if source is None:
             continue
+        left_trade, right_trade = left_trades.get((fold, key)), right_trades.get((fold, key))
+        baseline_executed = bool(a and a["execution_disposition"] == "executed")
+        variant_executed = bool(b and b["execution_disposition"] == "executed")
+        baseline_quantity = None if left_trade is None else left_trade["quantity"]
+        variant_quantity = None if right_trade is None else right_trade["quantity"]
+        baseline_opening_cost = None if left_trade is None else left_trade["buy_commission"]
+        variant_opening_cost = None if right_trade is None else right_trade["buy_commission"]
+        baseline_total_cost = None if left_trade is None else left_trade["total_transaction_cost"]
+        variant_total_cost = None if right_trade is None else right_trade["total_transaction_cost"]
+        baseline_net_pnl = None if left_trade is None else left_trade["net_pnl"]
+        variant_net_pnl = None if right_trade is None else right_trade["net_pnl"]
+        both_executed = baseline_executed and variant_executed
+        quantity_diverged = both_executed and not _numbers_equal(baseline_quantity, variant_quantity)
+        opening_cost_diverged = both_executed and not _numbers_equal(baseline_opening_cost, variant_opening_cost)
+        realized_financials_diverged = both_executed and (
+            not _numbers_equal(baseline_total_cost, variant_total_cost)
+            or not _numbers_equal(baseline_net_pnl, variant_net_pnl)
+        )
         rows.append({
             "fold": fold, "candidate_key": key, "signal_date": source["signal_date"],
             "entry_date": source["entry_date"], "symbol": source["symbol"],
-            "baseline_executed": bool(a and a["execution_disposition"] == "executed"),
-            "variant_executed": bool(b and b["execution_disposition"] == "executed"),
+            "baseline_executed": baseline_executed,
+            "variant_executed": variant_executed,
             "baseline_entry_ordinal": None if a is None else a["final_simulator_priority_ordinal"],
             "variant_entry_ordinal": None if b is None else b["final_simulator_priority_ordinal"],
             "volume_ratio": source["volume_ratio"], "q70_quality": source["q70_quality_score"],
             "signal_score": source["baseline_signal_score"],
             "baseline_disposition": None if a is None else a["execution_disposition"],
             "variant_disposition": None if b is None else b["execution_disposition"],
+            "baseline_quantity": baseline_quantity, "variant_quantity": variant_quantity,
+            "baseline_opening_cost": baseline_opening_cost,
+            "variant_opening_cost": variant_opening_cost,
+            "baseline_total_transaction_cost": baseline_total_cost,
+            "variant_total_transaction_cost": variant_total_cost,
+            "baseline_net_pnl": baseline_net_pnl, "variant_net_pnl": variant_net_pnl,
+            "execution_membership_diverged": baseline_executed != variant_executed,
+            "disposition_diverged": (
+                (None if a is None else a["execution_disposition"])
+                != (None if b is None else b["execution_disposition"])
+            ),
+            "quantity_diverged": quantity_diverged,
+            "opening_cost_diverged": opening_cost_diverged,
+            "realized_financials_diverged": realized_financials_diverged,
         })
     return pd.DataFrame(rows, columns=EXECUTED_COMPARISON_COLUMNS)
 
@@ -505,21 +567,32 @@ def _ranking_changes(baseline: dict[str, Any], variant: dict[str, Any]) -> pd.Da
                 for group_key, subgroup in right.groupby("signal_date_group_key", sort=True)
             ],
         })
+        baseline_top = left_order[:3]
+        variant_top = right_order[:3]
+        top_cap_set_changed = set(baseline_top) != set(variant_top)
+        top_cap_order_changed = not top_cap_set_changed and baseline_top != variant_top
+        below_cap_only_changed = changed > 0 and not top_cap_set_changed and not top_cap_order_changed
         rows.append({
             "fold": int(fold), "entry_date": entry_date,
             "accepted_entry_event_count": len(left),
             "distinct_signal_date_subgroup_count": int(left["signal_date_group_key"].nunique()),
             "changed_final_ordinal_count": changed,
-            "baseline_top_three_keys": json.dumps(left_order[:3]),
-            "variant_top_three_keys": json.dumps(right_order[:3]),
-            "top_three_overlap_count": len(set(left_order[:3]) & set(right_order[:3])),
-            "daily_order_cap_selection_changed": set(left_order[:3]) != set(right_order[:3]),
+            "baseline_top_three_keys": json.dumps(baseline_top),
+            "variant_top_three_keys": json.dumps(variant_top),
+            "top_three_overlap_count": len(set(baseline_top) & set(variant_top)),
+            "daily_order_cap_selection_changed": top_cap_set_changed,
             "baseline_executed_count": int((left_group["execution_disposition"] == "executed").sum()),
             "variant_executed_count": int((right_group["execution_disposition"] == "executed").sum()),
             "baseline_rejection_counts": json.dumps(dict(left_dispositions), sort_keys=True),
             "variant_rejection_counts": json.dumps(dict(right_dispositions), sort_keys=True),
+            "top_cap_set_changed": top_cap_set_changed,
+            "top_cap_order_changed": top_cap_order_changed,
+            "below_cap_only_changed": below_cap_only_changed,
             "ranking_change_identity": identity,
-            "direct_execution_divergence_count": 0,
+            "direct_execution_membership_divergence_count": 0,
+            "direct_disposition_divergence_count": 0,
+            "direct_quantity_divergence_count": 0,
+            "direct_opening_cost_divergence_count": 0,
             "downstream_divergence_count": 0,
             "unexpected_divergence_count": 0,
         })
@@ -530,11 +603,11 @@ def _event_key(fold: Any, entry_date: Any) -> tuple[int, pd.Timestamp]:
     return int(fold), pd.Timestamp(entry_date)
 
 
-def _has_disposition_divergence(row: pd.Series) -> bool:
-    return (
-        bool(row["baseline_executed"]) != bool(row["variant_executed"])
-        or str(row["baseline_disposition"]) != str(row["variant_disposition"])
-    )
+def _has_observable_divergence(row: pd.Series) -> bool:
+    return any(bool(row[column]) for column in (
+        "execution_membership_diverged", "disposition_diverged",
+        "quantity_diverged", "opening_cost_diverged", "realized_financials_diverged",
+    ))
 
 
 def _classify_execution_divergence(
@@ -564,14 +637,14 @@ def _classify_execution_divergence(
         index=row_index,
     )
 
-    direct_by_event = {
+    effective_by_event = {
         _event_key(row.fold, row.entry_date): str(row.ranking_change_identity)
         for row in changes.itertuples()
-        if int(row.changed_final_ordinal_count) > 0
+        if bool(row.top_cap_set_changed) or bool(row.top_cap_order_changed)
     }
     divergent_indexes = [
         index for index, row in classified.iterrows()
-        if _has_disposition_divergence(row)
+        if _has_observable_divergence(row)
     ]
     divergent_indexes.sort(key=lambda index: (
         *_event_key(classified.at[index, "fold"], classified.at[index, "entry_date"]),
@@ -582,11 +655,11 @@ def _classify_execution_divergence(
     anchor_identity: str | None = None
     for index in divergent_indexes:
         event = _event_key(classified.at[index, "fold"], classified.at[index, "entry_date"])
-        if event in direct_by_event:
+        if event in effective_by_event:
             classification = "direct_priority"
             if anchor_event is None:
-                anchor_event, anchor_identity = event, direct_by_event[event]
-            row_anchor, row_identity = event, direct_by_event[event]
+                anchor_event, anchor_identity = event, effective_by_event[event]
+            row_anchor, row_identity = event, effective_by_event[event]
         elif anchor_event is not None and event > anchor_event:
             classification = "downstream_portfolio_state"
             row_anchor, row_identity = anchor_event, anchor_identity
@@ -600,7 +673,9 @@ def _classify_execution_divergence(
             classified.at[index, "causal_anchor_identity"] = row_identity
 
     for column in (
-        "direct_execution_divergence_count", "downstream_divergence_count",
+        "direct_execution_membership_divergence_count",
+        "direct_disposition_divergence_count", "direct_quantity_divergence_count",
+        "direct_opening_cost_divergence_count", "downstream_divergence_count",
         "unexpected_divergence_count",
     ):
         changes[column] = 0
@@ -611,18 +686,38 @@ def _classify_execution_divergence(
             & pd.to_datetime(changes["entry_date"]).eq(event[1])
         )
         classification = classified.at[index, "divergence_classification"]
-        column = {
-            "direct_priority": "direct_execution_divergence_count",
-            "downstream_portfolio_state": "downstream_divergence_count",
-            "unexpected": "unexpected_divergence_count",
-        }[classification]
         if bool(mask.any()):
-            changes.loc[mask, column] += 1
+            if classification == "direct_priority":
+                for flag, column in (
+                    ("execution_membership_diverged", "direct_execution_membership_divergence_count"),
+                    ("disposition_diverged", "direct_disposition_divergence_count"),
+                    ("quantity_diverged", "direct_quantity_divergence_count"),
+                    ("opening_cost_diverged", "direct_opening_cost_divergence_count"),
+                ):
+                    if bool(classified.at[index, flag]):
+                        changes.loc[mask, column] += 1
+            elif classification == "downstream_portfolio_state":
+                changes.loc[mask, "downstream_divergence_count"] += 1
+            else:
+                changes.loc[mask, "unexpected_divergence_count"] += 1
 
     counts = {
         name: int((classified["divergence_classification"] == name).sum())
         for name in ("direct_priority", "downstream_portfolio_state", "unexpected")
     }
+    direct_rows = classified["divergence_classification"].eq("direct_priority")
+    membership_diverged = classified["execution_membership_diverged"].fillna(False).astype(bool)
+    quantity_diverged = classified["quantity_diverged"].fillna(False).astype(bool)
+    opening_cost_diverged = classified["opening_cost_diverged"].fillna(False).astype(bool)
+    counts.update({
+        "direct_execution_membership": int((direct_rows & membership_diverged).sum()),
+        "direct_quantity_only": int((
+            direct_rows & ~membership_diverged & quantity_diverged
+        ).sum()),
+        "direct_cost_only": int((
+            direct_rows & ~membership_diverged & ~quantity_diverged & opening_cost_diverged
+        ).sum()),
+    })
     return classified.loc[:, EXECUTED_COMPARISON_COLUMNS], changes.loc[:, RANKING_CHANGE_COLUMNS], counts
 
 
@@ -670,8 +765,12 @@ def _comparison(
             "executed_keys_unique_to_baseline": len(baseline_keys - variant_keys),
             "executed_keys_unique_to_variant": len(variant_keys - baseline_keys),
             "direct_priority_divergence_count": divergence_counts["direct_priority"],
+            "direct_executed_set_divergence_count": divergence_counts["direct_execution_membership"],
+            "direct_quantity_only_divergence_count": divergence_counts["direct_quantity_only"],
+            "direct_cost_only_divergence_count": divergence_counts["direct_cost_only"],
             "downstream_portfolio_state_divergence_count": divergence_counts["downstream_portfolio_state"],
             "unexpected_divergence_count": divergence_counts["unexpected"],
+            "divergence_count_unit": "accepted candidate-fold rows",
         })
         rows.append(summary)
     return pd.DataFrame(rows)
@@ -760,12 +859,27 @@ def _validate_reconciliation(
         right_start = float(right_folds.loc[right_folds["fold"] == anchor[0], "test_initial_equity"].iloc[0])
         if not math.isclose(left_start, right_start, rel_tol=0, abs_tol=1e-6):
             raise ValueError("causal-anchor fold starts from unequal capital")
+    else:
+        fold_result_columns = (
+            "fold", "test_initial_equity", "test_final_equity", "test_return_pct",
+            "test_trades", "test_total_transaction_cost", "test_total_buy_commission",
+            "test_total_sell_commission", "test_total_sell_tax",
+        )
+        try:
+            pd.testing.assert_frame_equal(
+                baseline["folds"].loc[:, list(fold_result_columns)].sort_values("fold").reset_index(drop=True),
+                variant["folds"].loc[:, list(fold_result_columns)].sort_values("fold").reset_index(drop=True),
+                check_dtype=False,
+            )
+        except AssertionError as exc:
+            raise ValueError("portfolio results diverge without a direct priority causal anchor") from exc
 
-    # Every direct classification must point to a real, slot-validated change.
+    # Every direct classification must point to a slot-validated intervention
+    # that changes either top-cap membership or the sequential opening order.
     direct_events = {
         _event_key(row.fold, row.entry_date)
         for row in ranking.itertuples()
-        if int(row.changed_final_ordinal_count) > 0
+        if bool(row.top_cap_set_changed) or bool(row.top_cap_order_changed)
     }
     if any(_event_key(row.fold, row.entry_date) not in direct_events for row in direct.itertuples()):
         raise ValueError("direct divergence lacks a validated ranking-change event")
@@ -898,8 +1012,12 @@ def run_frozen_q70_volume_priority_wfo(
         "executed_comparison_row_count": len(executed),
         "ranking_change_row_count": len(ranking),
         "direct_priority_divergence_count": divergence_counts["direct_priority"],
+        "direct_executed_set_divergence_count": divergence_counts["direct_execution_membership"],
+        "direct_quantity_only_divergence_count": divergence_counts["direct_quantity_only"],
+        "direct_cost_only_divergence_count": divergence_counts["direct_cost_only"],
         "downstream_portfolio_state_divergence_count": divergence_counts["downstream_portfolio_state"],
         "unexpected_divergence_count": divergence_counts["unexpected"],
+        "divergence_count_unit": "accepted candidate-fold rows; one row may carry multiple divergence flags",
         "divergence_causality_scope": (
             "All arm divergence begins at a permitted direct priority change; "
             "later divergence is chronologically consistent with deterministic "
