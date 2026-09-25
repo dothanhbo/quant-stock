@@ -34,6 +34,13 @@ _EXPORT_MODULES = {
     "NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V1": ".panel_factor_temporal_stability",
     "NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V2": ".panel_factor_temporal_stability",
     "evaluate_panel_factor_temporal_stability": ".panel_factor_temporal_stability",
+    "PanelFactorRedundancySpec": ".panel_factor_redundancy",
+    "DailyFactorPairCorrelation": ".panel_factor_redundancy",
+    "FactorPairBlockCorrelation": ".panel_factor_redundancy",
+    "FactorPairRedundancySummary": ".panel_factor_redundancy",
+    "PanelFactorRedundancyResult": ".panel_factor_redundancy",
+    "NEUTRAL_PANEL_FACTOR_REDUNDANCY_V1": ".panel_factor_redundancy",
+    "evaluate_panel_factor_redundancy": ".panel_factor_redundancy",
 }
 
 __all__ = tuple(_EXPORT_MODULES)
