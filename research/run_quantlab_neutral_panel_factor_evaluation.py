@@ -24,7 +24,9 @@ from core.database_coverage import build_database_coverage_index
 from core.paths import PROJECT_ROOT, resolve_market_database_path
 from quantlab.catalog.market_data_snapshot import build_market_data_snapshot
 from quantlab.evaluation import (
+    NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V1,
     NEUTRAL_TECHNICAL_FACTOR_EVALUATION_5_10_20_V1,
+    evaluate_panel_factor_temporal_stability,
     evaluate_point_in_time_panel_factors,
 )
 from quantlab.features import PointInTimeUniverseContext, PreparedFeatureCache
@@ -88,6 +90,55 @@ _OBSERVATION_COLUMNS = (
     "complete_feature_row_count", "rows_with_any_available_outcome",
     "fully_labeled_outcome_row_count",
 )
+_TEMPORAL_SUMMARY_COLUMNS = (
+    "factor", "horizon_sessions", "outcome_field", "total_block_count",
+    "ic_review_eligible_block_count", "spread_review_eligible_block_count",
+    "positive_mean_ic_block_count", "zero_mean_ic_block_count",
+    "negative_mean_ic_block_count", "positive_mean_spread_block_count",
+    "zero_mean_spread_block_count", "negative_mean_spread_block_count",
+    "mean_ic_across_block_means", "median_ic_across_block_means",
+    "minimum_block_mean_ic", "maximum_block_mean_ic", "range_block_mean_ic",
+    "mean_spread_across_block_means", "median_spread_across_block_means",
+    "minimum_block_mean_spread", "maximum_block_mean_spread",
+    "range_block_mean_spread", "largest_absolute_mean_ic_block_concentration",
+    "largest_absolute_mean_spread_block_concentration", "all_blocks_positive_ic",
+    "all_blocks_positive_spread", "ic_sign_flip_count", "spread_sign_flip_count",
+    "coverage_sufficient_for_temporal_review", "directionally_consistent_ic",
+    "directionally_consistent_spread", "descriptive_temporal_support",
+    "block_identity_count", "block_identities_sha256",
+    "warnings", "identity",
+)
+_TEMPORAL_BLOCK_COLUMNS = (
+    "factor", "horizon_sessions", "outcome_field", "block_name",
+    "block_start_date", "block_end_date", "total_source_signal_dates",
+    "dates_with_any_eligible_observations", "ic_defined_date_count",
+    "ic_coverage_pct", "mean_daily_rank_ic", "median_daily_rank_ic",
+    "population_std_daily_ic", "minimum_daily_ic", "maximum_daily_ic",
+    "positive_ic_date_count", "zero_ic_date_count", "negative_ic_date_count",
+    "positive_ic_rate", "spread_defined_date_count", "spread_coverage_pct",
+    "mean_daily_mean_spread", "median_daily_mean_spread",
+    "population_std_daily_mean_spread", "minimum_daily_mean_spread",
+    "maximum_daily_mean_spread", "positive_spread_date_count",
+    "zero_spread_date_count", "negative_spread_date_count", "positive_spread_rate",
+    "mean_daily_median_spread", "median_daily_median_spread",
+    "average_low_bucket_size", "average_high_bucket_size",
+    "average_eligible_observation_count", "minimum_eligible_observation_count",
+    "maximum_eligible_observation_count", "average_factor_availability_coverage_pct",
+    "average_outcome_availability_coverage_pct", "ic_review_eligible",
+    "spread_review_eligible", "included_daily_identity_count",
+    "included_daily_identities_sha256", "warnings", "ic_undefined_reason",
+    "spread_undefined_reason", "identity",
+)
+_TEMPORAL_COVERAGE_COLUMNS = (
+    "factor", "horizon_sessions", "outcome_field",
+    "ic_review_eligible_block_count", "spread_review_eligible_block_count",
+    "coverage_sufficient_for_temporal_review", "directionally_consistent_ic",
+    "directionally_consistent_spread", "descriptive_temporal_support",
+    "all_blocks_positive_ic", "all_blocks_positive_spread", "ic_sign_flip_count",
+    "spread_sign_flip_count", "largest_absolute_mean_ic_block_concentration",
+    "largest_absolute_mean_spread_block_concentration", "review_status",
+    "summary_identity",
+)
 _REQUIRED_FILENAMES = (
     "experiment_manifest.json",
     "factor_summary.csv",
@@ -95,6 +146,9 @@ _REQUIRED_FILENAMES = (
     "factor_coverage.csv",
     "observation_counts_by_date.csv",
     "assumptions.md",
+    "temporal_stability_summary.csv",
+    "temporal_stability_by_block.csv",
+    "temporal_coverage.csv",
 )
 
 _LIMITATIONS = (
@@ -109,6 +163,14 @@ _LIMITATIONS = (
 _ASSUMPTIONS = "# Assumptions and limitations\n\n" + "\n".join(
     f"- {item}" for item in _LIMITATIONS
 ) + "\n"
+
+_TEMPORAL_LIMITATIONS = (
+    "Temporal review uses the same historical dataset as full-sample discovery and is not independent OOS confirmation.",
+    "Results remain descriptive and do not select factors or authorize production use.",
+    "Stock and excess outcomes are not independent evidence.",
+    "Database coverage is not necessarily historical VN100 membership.",
+    "No multiple-testing correction, costs, turnover, liquidity, portfolio utility, or tradability conclusion is included.",
+)
 
 
 def _date_text(value: str, *, name: str) -> str:
@@ -349,8 +411,181 @@ def _artifact_rows(
     }
 
 
+def _temporal_review_status(summary: Any) -> str:
+    if summary.descriptive_temporal_support:
+        return "TEMPORAL_SUPPORT"
+    if summary.coverage_sufficient_for_temporal_review:
+        return "COVERAGE_ONLY"
+    return "INSUFFICIENT_COVERAGE"
+
+
+def _temporal_artifact_rows(
+    temporal: Any,
+) -> dict[str, tuple[tuple[str, ...], list[dict[str, Any]]]]:
+    summary_rows = [
+        {
+            **{
+                column: (
+                    " | ".join(item.warnings)
+                    if column == "warnings"
+                    else getattr(item, column)
+                )
+                for column in _TEMPORAL_SUMMARY_COLUMNS
+                if column not in {
+                    "block_identity_count",
+                    "block_identities_sha256",
+                }
+            },
+            "block_identity_count": len(item.included_block_identities),
+            "block_identities_sha256": _identity_collection_sha256(
+                item.included_block_identities,
+            ),
+        }
+        for item in temporal.summaries
+    ]
+    block_rows = [
+        {
+            **{
+                column: (
+                    " | ".join(item.warnings)
+                    if column == "warnings"
+                    else getattr(item, column)
+                )
+                for column in _TEMPORAL_BLOCK_COLUMNS
+                if column not in {
+                    "included_daily_identity_count",
+                    "included_daily_identities_sha256",
+                }
+            },
+            "included_daily_identity_count": len(item.included_daily_identities),
+            "included_daily_identities_sha256": _identity_collection_sha256(
+                item.included_daily_identities,
+            ),
+        }
+        for item in temporal.block_results
+    ]
+    coverage_rows = [
+        {
+            **{
+                column: getattr(item, column)
+                for column in _TEMPORAL_COVERAGE_COLUMNS
+                if column not in {"review_status", "summary_identity"}
+            },
+            "review_status": _temporal_review_status(item),
+            "summary_identity": item.identity,
+        }
+        for item in temporal.summaries
+    ]
+    return {
+        "temporal_stability_summary.csv": (_TEMPORAL_SUMMARY_COLUMNS, summary_rows),
+        "temporal_stability_by_block.csv": (_TEMPORAL_BLOCK_COLUMNS, block_rows),
+        "temporal_coverage.csv": (_TEMPORAL_COVERAGE_COLUMNS, coverage_rows),
+    }
+
+
 def _keys(frame: Any) -> tuple[tuple[str, str], ...]:
     return tuple(zip(frame["session_date"].astype(str), frame["symbol"].astype(str)))
+
+
+def _validate_temporal_reconciliation(
+    evaluation: Any,
+    temporal: Any,
+    rows: Mapping[str, tuple[tuple[str, ...], list[dict[str, Any]]]],
+) -> None:
+    spec = NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V1
+    if temporal.source_result_identity != evaluation.identity:
+        raise ValueError("temporal source result identity does not match Phase 5.4A")
+    if temporal.source_specification_fingerprint != evaluation.specification_fingerprint:
+        raise ValueError("temporal source specification fingerprint does not reconcile")
+    if temporal.temporal_specification_fingerprint != spec.fingerprint:
+        raise ValueError("temporal specification fingerprint does not match the built-in spec")
+    blocks = tuple(temporal.block_results)
+    summaries = tuple(temporal.summaries)
+    if len(blocks) != 192 or len(summaries) != 48:
+        raise ValueError("temporal result dimensions must be 192 blocks and 48 summaries")
+    block_map = {
+        (item.factor, item.horizon_sessions, item.outcome_field, item.block_name): item
+        for item in blocks
+    }
+    summary_map = {
+        (item.factor, item.horizon_sessions, item.outcome_field): item
+        for item in summaries
+    }
+    if len(block_map) != 192 or len(summary_map) != 48:
+        raise ValueError("temporal result contains duplicate block or summary keys")
+    source_keys = {
+        (item.factor, item.horizon_sessions, item.outcome_field)
+        for item in evaluation.summaries
+    }
+    expected_ordered_keys = tuple(
+        (factor, horizon, outcome)
+        for factor in spec.factors
+        for horizon in spec.horizons
+        for outcome in spec.outcome_fields
+    )
+    expected_keys = set(expected_ordered_keys)
+    actual_summary_keys = tuple(
+        (item.factor, item.horizon_sessions, item.outcome_field) for item in summaries
+    )
+    expected_block_keys = tuple(
+        (*key, block.name) for key in expected_ordered_keys for block in spec.blocks
+    )
+    actual_block_keys = tuple(
+        (item.factor, item.horizon_sessions, item.outcome_field, item.block_name)
+        for item in blocks
+    )
+    if (
+        source_keys != expected_keys
+        or actual_summary_keys != expected_ordered_keys
+        or actual_block_keys != expected_block_keys
+    ):
+        raise ValueError("temporal factor, horizon, or outcome scope does not reconcile")
+    daily_by_identity = {item.identity: item for item in evaluation.daily_evaluations}
+    if len(daily_by_identity) != len(evaluation.daily_evaluations):
+        raise ValueError("Phase 5.4A daily identities are not unique")
+    for key in expected_ordered_keys:
+        ordered_blocks = tuple(
+            block_map[(*key, temporal_block.name)] for temporal_block in spec.blocks
+        )
+        if summary_map[key].included_block_identities != tuple(
+            item.identity for item in ordered_blocks
+        ):
+            raise ValueError("temporal summary block identities do not reconcile")
+        for temporal_block, block in zip(spec.blocks, ordered_blocks, strict=True):
+            expected_daily = tuple(
+                item.identity
+                for item in evaluation.daily_evaluations
+                if (item.factor, item.horizon_sessions, item.outcome_field) == key
+                and temporal_block.start_date <= item.signal_date <= temporal_block.end_date
+            )
+            if block.included_daily_identities != expected_daily:
+                raise ValueError("temporal block daily identities or boundaries do not reconcile")
+            if any(identity not in daily_by_identity for identity in block.included_daily_identities):
+                raise ValueError("temporal block references an unknown daily identity")
+    if (
+        len(rows["temporal_stability_by_block.csv"][1]) != 192
+        or len(rows["temporal_stability_summary.csv"][1]) != 48
+        or len(rows["temporal_coverage.csv"][1]) != 48
+    ):
+        raise ValueError("temporal artifact dimensions do not reconcile")
+    for row, block in zip(
+        rows["temporal_stability_by_block.csv"][1], blocks, strict=True,
+    ):
+        if row["included_daily_identity_count"] != len(block.included_daily_identities):
+            raise ValueError("temporal block daily identity count does not reconcile")
+        if row["included_daily_identities_sha256"] != _identity_collection_sha256(
+            block.included_daily_identities,
+        ):
+            raise ValueError("temporal block daily identity hash does not reconcile")
+    for row, summary in zip(
+        rows["temporal_stability_summary.csv"][1], summaries, strict=True,
+    ):
+        if row["block_identity_count"] != len(summary.included_block_identities):
+            raise ValueError("temporal summary block identity count does not reconcile")
+        if row["block_identities_sha256"] != _identity_collection_sha256(
+            summary.included_block_identities,
+        ):
+            raise ValueError("temporal summary block identity hash does not reconcile")
 
 
 def _validate_reconciliation(
@@ -359,6 +594,7 @@ def _validate_reconciliation(
     outcome_panel: Any,
     dataset: Any,
     evaluation: Any,
+    temporal: Any,
     rows: Mapping[str, tuple[tuple[str, ...], list[dict[str, Any]]]],
 ) -> None:
     observation_frame = observation_index.frame
@@ -440,12 +676,14 @@ def _validate_reconciliation(
         raise ValueError("coverage artifact dimensions do not reconcile")
     if len(rows["observation_counts_by_date.csv"][1]) != len(observation_index.session_audit):
         raise ValueError("observation-count artifact dimensions do not reconcile")
+    _validate_temporal_reconciliation(evaluation, temporal, rows)
 
 
 def _validate_emitted(
     directory: Path,
     rows: Mapping[str, tuple[tuple[str, ...], list[dict[str, Any]]]],
     evaluation: Any,
+    temporal: Any,
 ) -> None:
     if tuple(sorted(path.name for path in directory.iterdir())) != tuple(sorted(_REQUIRED_FILENAMES)):
         raise ValueError("experiment artifact set is incomplete")
@@ -489,6 +727,56 @@ def _validate_emitted(
     for row in emitted["observation_counts_by_date.csv"]:
         if date.fromisoformat(row["signal_date"]).isoformat() != row["signal_date"]:
             raise ValueError("observation artifact contains a non-canonical date")
+    for filename in (
+        "temporal_stability_summary.csv",
+        "temporal_stability_by_block.csv",
+        "temporal_coverage.csv",
+    ):
+        columns, expected_rows = rows[filename]
+        for actual, expected in zip(emitted[filename], expected_rows, strict=True):
+            serialized = {
+                column: str(_csv_value(expected.get(column))) for column in columns
+            }
+            if actual != serialized:
+                raise ValueError(f"temporal CSV projection mismatch: {filename}")
+    temporal_summaries = emitted["temporal_stability_summary.csv"]
+    temporal_blocks = emitted["temporal_stability_by_block.csv"]
+    if "included_block_identities" in _TEMPORAL_SUMMARY_COLUMNS:
+        raise ValueError("temporal summary must not contain full block identities")
+    if "included_daily_identities" in _TEMPORAL_BLOCK_COLUMNS:
+        raise ValueError("temporal block artifact must not contain full daily identities")
+    for row, summary in zip(temporal_summaries, temporal.summaries, strict=True):
+        if int(row["block_identity_count"]) != len(summary.included_block_identities):
+            raise ValueError("emitted temporal block identity count does not reconcile")
+        if row["block_identities_sha256"] != _identity_collection_sha256(
+            summary.included_block_identities,
+        ):
+            raise ValueError("emitted temporal block identity hash does not reconcile")
+        if row["identity"] != summary.identity:
+            raise ValueError("temporal summary identity changed during projection")
+    for row, block in zip(temporal_blocks, temporal.block_results, strict=True):
+        if int(row["included_daily_identity_count"]) != len(block.included_daily_identities):
+            raise ValueError("emitted temporal daily identity count does not reconcile")
+        if row["included_daily_identities_sha256"] != _identity_collection_sha256(
+            block.included_daily_identities,
+        ):
+            raise ValueError("emitted temporal daily identity hash does not reconcile")
+        if row["identity"] != block.identity:
+            raise ValueError("temporal block identity changed during projection")
+        for boundary in ("block_start_date", "block_end_date"):
+            if date.fromisoformat(row[boundary]).isoformat() != row[boundary]:
+                raise ValueError("temporal block artifact contains a non-canonical date")
+    temporal_manifest = manifest.get("temporal_stability", {})
+    review_counts = {
+        status: sum(
+            row["review_status"] == status for row in emitted["temporal_coverage.csv"]
+        )
+        for status in ("TEMPORAL_SUPPORT", "COVERAGE_ONLY", "INSUFFICIENT_COVERAGE")
+    }
+    if temporal_manifest.get("review_status_counts") != review_counts:
+        raise ValueError("temporal review-status counts do not reconcile")
+    if temporal_manifest.get("temporal_result_identity") != temporal.identity:
+        raise ValueError("temporal manifest result identity does not reconcile")
     (directory / "assumptions.md").read_text(encoding="utf-8")
 
 
@@ -591,9 +879,14 @@ def run_neutral_panel_factor_evaluation(
         dataset,
         NEUTRAL_TECHNICAL_FACTOR_EVALUATION_5_10_20_V1,
     )
+    temporal = evaluate_panel_factor_temporal_stability(
+        evaluation,
+        NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V1,
+    )
     rows = _artifact_rows(evaluation, observation_index, feature_panel, outcome_panel)
+    rows.update(_temporal_artifact_rows(temporal))
     _validate_reconciliation(
-        observation_index, feature_panel, outcome_panel, dataset, evaluation, rows,
+        observation_index, feature_panel, outcome_panel, dataset, evaluation, temporal, rows,
     )
     if _file_sha256(database) != database_digest:
         raise RuntimeError("market database changed during read-only evaluation")
@@ -608,6 +901,10 @@ def run_neutral_panel_factor_evaluation(
         for filename, (_columns, artifact_rows) in rows.items()
     }
     artifacts.update({"experiment_manifest.json": 1, "assumptions.md": 1})
+    review_status_counts = {
+        status: sum(_temporal_review_status(item) == status for item in temporal.summaries)
+        for status in ("TEMPORAL_SUPPORT", "COVERAGE_ONLY", "INSUFFICIENT_COVERAGE")
+    }
     manifest = {
         "runner_contract": RUNNER_CONTRACT,
         "runner_version": RUNNER_VERSION,
@@ -670,6 +967,49 @@ def run_neutral_panel_factor_evaluation(
             "horizons": list(NEUTRAL_TECHNICAL_FACTOR_EVALUATION_5_10_20_V1.horizons),
             "outcome_fields": list(NEUTRAL_TECHNICAL_FACTOR_EVALUATION_5_10_20_V1.outcome_fields),
         },
+        "temporal_stability": {
+            "contract_name": temporal.contract_name,
+            "contract_version": temporal.contract_version,
+            "temporal_specification_fingerprint": temporal.temporal_specification_fingerprint,
+            "temporal_result_identity": temporal.identity,
+            "source_evaluation_result_identity": temporal.source_result_identity,
+            "blocks": [
+                {
+                    "name": block.name,
+                    "start_date": block.start_date,
+                    "end_date": block.end_date,
+                }
+                for block in NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V1.blocks
+            ],
+            "minimum_defined_dates_per_block": (
+                NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V1.minimum_defined_dates_per_block
+            ),
+            "block_result_count": len(temporal.block_results),
+            "summary_count": len(temporal.summaries),
+            "review_status_counts": review_status_counts,
+            "descriptive_flag_counts": {
+                "coverage_sufficient_for_temporal_review": sum(
+                    item.coverage_sufficient_for_temporal_review
+                    for item in temporal.summaries
+                ),
+                "directionally_consistent_ic": sum(
+                    item.directionally_consistent_ic for item in temporal.summaries
+                ),
+                "directionally_consistent_spread": sum(
+                    item.directionally_consistent_spread for item in temporal.summaries
+                ),
+                "descriptive_temporal_support": sum(
+                    item.descriptive_temporal_support for item in temporal.summaries
+                ),
+                "all_blocks_positive_ic": sum(
+                    item.all_blocks_positive_ic for item in temporal.summaries
+                ),
+                "all_blocks_positive_spread": sum(
+                    item.all_blocks_positive_spread for item in temporal.summaries
+                ),
+            },
+            "limitations": list(_TEMPORAL_LIMITATIONS),
+        },
         "counts": {
             "observation_rows": observation_index.total_membership_row_count,
             "signal_dates": (
@@ -695,7 +1035,7 @@ def run_neutral_panel_factor_evaluation(
             _ASSUMPTIONS, encoding="utf-8", newline="\n",
         )
         _write_json(temporary / "experiment_manifest.json", manifest)
-        _validate_emitted(temporary, rows, evaluation)
+        _validate_emitted(temporary, rows, evaluation, temporal)
         if _file_sha256(database) != database_digest:
             raise RuntimeError("market database changed before publication")
         _publish_atomic(temporary, output)
@@ -715,6 +1055,7 @@ def run_neutral_panel_factor_evaluation(
         "outcome_panel": outcome_panel,
         "research_dataset": dataset,
         "evaluation": evaluation,
+        "temporal_stability": temporal,
     }
 
 
