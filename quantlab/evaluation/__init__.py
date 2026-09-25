@@ -49,6 +49,15 @@ _EXPORT_MODULES = {
     "PanelFactorIncrementalAnalysisResult": ".panel_factor_incremental_analysis",
     "NEUTRAL_PANEL_INCREMENTAL_FACTOR_ANALYSIS_V1": ".panel_factor_incremental_analysis",
     "evaluate_panel_factor_incremental_analysis": ".panel_factor_incremental_analysis",
+    "CompositeFactorWeight": ".panel_composite_analysis",
+    "NeutralCompositePolicy": ".panel_composite_analysis",
+    "PanelCompositeAnalysisSpec": ".panel_composite_analysis",
+    "DailyCompositeEvaluation": ".panel_composite_analysis",
+    "CompositeBlockEvaluation": ".panel_composite_analysis",
+    "CompositeEvaluationSummary": ".panel_composite_analysis",
+    "PanelCompositeAnalysisResult": ".panel_composite_analysis",
+    "NEUTRAL_ADX_RSI_COMPOSITE_COMPARISON_V1": ".panel_composite_analysis",
+    "evaluate_panel_composites": ".panel_composite_analysis",
 }
 
 __all__ = tuple(_EXPORT_MODULES)
