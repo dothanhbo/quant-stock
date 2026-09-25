@@ -24,10 +24,12 @@ from core.database_coverage import build_database_coverage_index
 from core.paths import PROJECT_ROOT, resolve_market_database_path
 from quantlab.catalog.market_data_snapshot import build_market_data_snapshot
 from quantlab.evaluation import (
+    NEUTRAL_PANEL_INCREMENTAL_FACTOR_ANALYSIS_V1,
     NEUTRAL_PANEL_FACTOR_REDUNDANCY_V1,
     NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V2,
     NEUTRAL_TECHNICAL_FACTOR_EVALUATION_5_10_20_V1,
     PanelTemporalDirection,
+    evaluate_panel_factor_incremental_analysis,
     evaluate_panel_factor_redundancy,
     evaluate_panel_factor_temporal_stability,
     evaluate_point_in_time_panel_factors,
@@ -45,7 +47,7 @@ from quantlab.panels import (
 
 
 RUNNER_CONTRACT = "quantlab.neutral_panel_factor_evaluation_runner"
-RUNNER_VERSION = "v3"
+RUNNER_VERSION = "v4"
 CACHE_DEFAULT_CODEC = "npz_numeric_v1"
 REVIEW_MINIMUM_DEFINED_DATES = 30
 REVIEW_MINIMUM_AVERAGE_CROSS_SECTION = 20.0
@@ -188,6 +190,65 @@ _REDUNDANCY_SUMMARY_COLUMNS = (
     "included_daily_identities_sha256", "block_identity_count",
     "block_identities_sha256", "warnings", "identity",
 )
+_INCREMENTAL_DAILY_COLUMNS = (
+    "signal_date", "hypothesis_name", "target_factor", "control_factors",
+    "horizon_sessions", "outcome_field", "total_observation_count",
+    "outcome_available_count", "listwise_finite_count", "listwise_coverage_pct",
+    "raw_rank_ic", "partial_rank_ic", "absolute_raw_rank_ic",
+    "absolute_partial_rank_ic", "target_residual_population_std",
+    "outcome_residual_population_std", "control_design_rank", "expected_design_rank",
+    "undefined_reason", "sample_evidence_sha256", "identity",
+)
+_INCREMENTAL_BLOCK_COLUMNS = (
+    "hypothesis_name", "target_factor", "control_factors", "horizon_sessions",
+    "outcome_field", "block_name", "block_start_date", "block_end_date",
+    "total_signal_date_count", "minimum_sample_date_count",
+    "raw_rank_ic_defined_date_count", "partial_rank_ic_defined_date_count",
+    "raw_rank_ic_coverage_pct", "partial_rank_ic_coverage_pct",
+    "mean_daily_raw_rank_ic", "median_daily_raw_rank_ic",
+    "population_std_daily_raw_rank_ic", "minimum_daily_raw_rank_ic",
+    "maximum_daily_raw_rank_ic", "mean_daily_partial_rank_ic",
+    "median_daily_partial_rank_ic", "population_std_daily_partial_rank_ic",
+    "minimum_daily_partial_rank_ic", "maximum_daily_partial_rank_ic",
+    "mean_absolute_daily_raw_rank_ic", "median_absolute_daily_raw_rank_ic",
+    "mean_absolute_daily_partial_rank_ic", "median_absolute_daily_partial_rank_ic",
+    "positive_partial_rank_ic_date_count", "zero_partial_rank_ic_date_count",
+    "negative_partial_rank_ic_date_count", "positive_partial_rank_ic_rate",
+    "zero_partial_rank_ic_rate", "negative_partial_rank_ic_rate",
+    "average_listwise_finite_count", "median_listwise_finite_count",
+    "mean_partial_minus_raw_rank_ic", "median_partial_minus_raw_rank_ic",
+    "included_daily_identity_count", "included_daily_identities_sha256",
+    "warnings", "identity",
+)
+_INCREMENTAL_SUMMARY_COLUMNS = (
+    "hypothesis_name", "target_factor", "control_factors", "horizon_sessions",
+    "outcome_field", "total_signal_date_count", "minimum_sample_date_count",
+    "raw_rank_ic_defined_date_count", "partial_rank_ic_defined_date_count",
+    "raw_rank_ic_coverage_pct", "partial_rank_ic_coverage_pct",
+    "mean_daily_raw_rank_ic", "median_daily_raw_rank_ic",
+    "population_std_daily_raw_rank_ic", "minimum_daily_raw_rank_ic",
+    "maximum_daily_raw_rank_ic", "mean_daily_partial_rank_ic",
+    "median_daily_partial_rank_ic", "population_std_daily_partial_rank_ic",
+    "minimum_daily_partial_rank_ic", "maximum_daily_partial_rank_ic",
+    "mean_absolute_daily_raw_rank_ic", "median_absolute_daily_raw_rank_ic",
+    "mean_absolute_daily_partial_rank_ic", "median_absolute_daily_partial_rank_ic",
+    "positive_raw_rank_ic_date_count", "zero_raw_rank_ic_date_count",
+    "negative_raw_rank_ic_date_count", "positive_raw_rank_ic_rate",
+    "zero_raw_rank_ic_rate", "negative_raw_rank_ic_rate",
+    "positive_partial_rank_ic_date_count", "zero_partial_rank_ic_date_count",
+    "negative_partial_rank_ic_date_count", "positive_partial_rank_ic_rate",
+    "zero_partial_rank_ic_rate", "negative_partial_rank_ic_rate",
+    "average_listwise_finite_count", "median_listwise_finite_count",
+    "mean_partial_minus_raw_rank_ic", "median_partial_minus_raw_rank_ic",
+    "mean_absolute_partial_minus_absolute_raw_rank_ic",
+    "blocks_meeting_temporal_review_count", "chronological_partial_sign_flip_count",
+    "all_blocks_positive_partial_rank_ic", "all_blocks_negative_partial_rank_ic",
+    "minimum_block_mean_partial_rank_ic", "maximum_block_mean_partial_rank_ic",
+    "range_block_mean_partial_rank_ic",
+    "largest_absolute_block_mean_partial_rank_ic_concentration",
+    "included_daily_identity_count", "included_daily_identities_sha256",
+    "block_identity_count", "block_identities_sha256", "warnings", "identity",
+)
 _REQUIRED_FILENAMES = (
     "experiment_manifest.json",
     "factor_summary.csv",
@@ -201,6 +262,9 @@ _REQUIRED_FILENAMES = (
     "factor_redundancy_summary.csv",
     "factor_redundancy_by_block.csv",
     "factor_redundancy_by_date.csv",
+    "factor_incremental_summary.csv",
+    "factor_incremental_by_block.csv",
+    "factor_incremental_by_date.csv",
 )
 
 _LIMITATIONS = (
@@ -245,8 +309,38 @@ _REDUNDANCY_ASSUMPTIONS = (
     "No redundancy threshold or factor-selection decision is defined.",
 )
 
+_INCREMENTAL_LIMITATIONS = (
+    "Partial rank IC is descriptive conditional association, not causation.",
+    "Residualization removes only linear relationships among same-date ranks.",
+    "Positive partial IC does not authorize factor inclusion.",
+    "Negative partial IC is not automatically a short signal.",
+    "Hypotheses were fixed using prior descriptive evidence on the same historical sample.",
+    "This is not independent out-of-sample confirmation.",
+    "Database coverage is not historical VN100 membership.",
+    "No significance testing or multiple-testing correction is included.",
+    "No costs, turnover, liquidity, capacity, or portfolio value is evaluated.",
+    "No weighting, composite, strategy, or production authority is granted.",
+)
+
+_INCREMENTAL_ASSUMPTIONS = (
+    "Eight fixed hypotheses: adx_given_rsi, rsi_given_adx, volume_given_adx_rsi, stock_return_20d_given_rsi, rsi_given_stock_return_20d, ema20_distance_given_rsi, rsi_given_ema20_distance, and atr_given_adx_rsi.",
+    "Samples are listwise finite and require at least 20 observations.",
+    "Target, controls, and outcomes use ascending average ranks for ties.",
+    "Raw rank IC is the Pearson correlation of target and outcome ranks on the same listwise sample.",
+    "Target and outcome ranks are separately residualized against an intercept plus declared control ranks.",
+    "OLS uses numpy.linalg.lstsq with rcond=1e-12 and declared control order.",
+    "Defined daily statistics receive equal signal-date weight.",
+    "Temporal evidence uses the four fixed inclusive Phase 5.5 calendar blocks.",
+    "No automatic factor-selection threshold is defined.",
+    "Future outcomes are used only for offline research evaluation.",
+)
+
 _ASSUMPTIONS += "\n## Factor-redundancy methodology\n\n" + "\n".join(
     f"- {item}" for item in _REDUNDANCY_ASSUMPTIONS
+) + "\n"
+
+_ASSUMPTIONS += "\n## Incremental factor-value methodology\n\n" + "\n".join(
+    f"- {item}" for item in _INCREMENTAL_ASSUMPTIONS
 ) + "\n"
 
 
@@ -267,6 +361,10 @@ def _file_sha256(path: Path) -> str:
 
 def _identity_collection_sha256(values: tuple[str, ...]) -> str:
     return sha256(canonical_json(list(values))).hexdigest()
+
+
+def _compact_json_array(values: tuple[str, ...]) -> str:
+    return canonical_json(list(values)).decode("utf-8")
 
 
 def _is_within(path: Path, parent: Path) -> bool:
@@ -642,6 +740,104 @@ def _redundancy_artifact_rows(
     }
 
 
+def _incremental_artifact_rows(
+    incremental: Any,
+) -> dict[str, tuple[tuple[str, ...], list[dict[str, Any]]]]:
+    spec = NEUTRAL_PANEL_INCREMENTAL_FACTOR_ANALYSIS_V1
+    hypothesis_order = {
+        hypothesis.name: index for index, hypothesis in enumerate(spec.hypotheses)
+    }
+    horizon_order = {horizon: index for index, horizon in enumerate(spec.horizons)}
+    outcome_order = {outcome: index for index, outcome in enumerate(spec.outcome_fields)}
+    block_order = {block.name: index for index, block in enumerate(spec.blocks)}
+
+    daily = sorted(
+        incremental.daily_evaluations,
+        key=lambda item: (
+            item.signal_date,
+            hypothesis_order[item.hypothesis_name],
+            horizon_order[item.horizon_sessions],
+            outcome_order[item.outcome_field],
+        ),
+    )
+    daily_rows = [
+        {
+            **{
+                column: getattr(item, column)
+                for column in _INCREMENTAL_DAILY_COLUMNS
+                if column != "control_factors"
+            },
+            "control_factors": _compact_json_array(item.control_factors),
+        }
+        for item in daily
+    ]
+    blocks = sorted(
+        incremental.block_evaluations,
+        key=lambda item: (
+            hypothesis_order[item.hypothesis_name],
+            horizon_order[item.horizon_sessions],
+            outcome_order[item.outcome_field],
+            block_order[item.block_name],
+        ),
+    )
+    block_rows = [
+        {
+            **{
+                column: (
+                    " | ".join(item.warnings)
+                    if column == "warnings"
+                    else getattr(item, column)
+                )
+                for column in _INCREMENTAL_BLOCK_COLUMNS
+                if column not in {
+                    "control_factors", "included_daily_identity_count",
+                    "included_daily_identities_sha256",
+                }
+            },
+            "control_factors": _compact_json_array(item.control_factors),
+            "included_daily_identity_count": item.included_daily_identity_count,
+            "included_daily_identities_sha256": item.included_daily_identities_sha256,
+        }
+        for item in blocks
+    ]
+    summaries = sorted(
+        incremental.summaries,
+        key=lambda item: (
+            hypothesis_order[item.hypothesis_name],
+            horizon_order[item.horizon_sessions],
+            outcome_order[item.outcome_field],
+        ),
+    )
+    summary_rows = [
+        {
+            **{
+                column: (
+                    " | ".join(item.warnings)
+                    if column == "warnings"
+                    else getattr(item, column)
+                )
+                for column in _INCREMENTAL_SUMMARY_COLUMNS
+                if column not in {
+                    "control_factors", "included_daily_identity_count",
+                    "included_daily_identities_sha256", "block_identity_count",
+                    "block_identities_sha256",
+                }
+            },
+            "control_factors": _compact_json_array(item.control_factors),
+            "included_daily_identity_count": item.included_daily_identity_count,
+            "included_daily_identities_sha256": item.included_daily_identities_sha256,
+            "block_identity_count": item.ordered_block_identity_count,
+            "block_identities_sha256": item.ordered_block_identities_sha256,
+        }
+        for item in summaries
+    ]
+    return {
+        "factor_incremental_summary.csv": (_INCREMENTAL_SUMMARY_COLUMNS, summary_rows),
+        "factor_incremental_by_block.csv": (_INCREMENTAL_BLOCK_COLUMNS, block_rows),
+        "factor_incremental_by_date.csv": (_INCREMENTAL_DAILY_COLUMNS, daily_rows),
+    }
+
+
 def _keys(frame: Any) -> tuple[tuple[str, str], ...]:
     return tuple(zip(frame["session_date"].astype(str), frame["symbol"].astype(str)))
 
@@ -986,6 +1182,223 @@ def _validate_redundancy_reconciliation(
         raise ValueError("selection, outcome, or strategy field entered redundancy artifacts")
 
 
+def _validate_incremental_reconciliation(
+    dataset: Any,
+    incremental: Any,
+    rows: Mapping[str, tuple[tuple[str, ...], list[dict[str, Any]]]],
+    *,
+    start_date: str,
+    end_date: str,
+) -> None:
+    spec = NEUTRAL_PANEL_INCREMENTAL_FACTOR_ANALYSIS_V1
+    hypotheses = tuple(
+        (item.name, item.target_factor, item.control_factors) for item in spec.hypotheses
+    )
+    expected_hypotheses = (
+        ("adx_given_rsi", "adx_14", ("rsi_14",)),
+        ("rsi_given_adx", "rsi_14", ("adx_14",)),
+        ("volume_given_adx_rsi", "volume_ratio_20", ("adx_14", "rsi_14")),
+        ("stock_return_20d_given_rsi", "stock_return_20d_pct", ("rsi_14",)),
+        ("rsi_given_stock_return_20d", "rsi_14", ("stock_return_20d_pct",)),
+        ("ema20_distance_given_rsi", "ema20_distance_pct", ("rsi_14",)),
+        ("rsi_given_ema20_distance", "rsi_14", ("ema20_distance_pct",)),
+        ("atr_given_adx_rsi", "atr_percent_14", ("adx_14", "rsi_14")),
+    )
+    if (
+        hypotheses != expected_hypotheses
+        or spec.horizons != (5, 10, 20)
+        or spec.outcome_fields
+        != ("stock_forward_return_pct", "excess_forward_return_pct_points")
+        or len(spec.blocks) != 4
+    ):
+        raise ValueError("built-in incremental hypothesis or temporal scope changed")
+    dataset_provenance = (
+        ("source_dataset_identity", "identity"),
+        ("source_dataset_content_identity", "content_identity"),
+        ("source_observation_index_identity", "observation_index_identity"),
+        ("source_observation_content_identity", "observation_content_identity"),
+        ("source_feature_panel_identity", "feature_panel_identity"),
+        ("source_feature_content_identity", "feature_content_identity"),
+        ("source_outcome_panel_identity", "outcome_panel_identity"),
+        ("source_outcome_content_identity", "outcome_content_identity"),
+    )
+    if (
+        incremental.specification_fingerprint != spec.fingerprint
+        or not str(incremental.source_bounded_content_identity).strip()
+        or any(
+            getattr(incremental, result_name) != getattr(dataset, dataset_name)
+            for result_name, dataset_name in dataset_provenance
+        )
+    ):
+        raise ValueError("incremental source identity or specification does not reconcile")
+
+    signal_dates = tuple(audit.session_date for audit in dataset.session_audit)
+    if (
+        not signal_dates
+        or signal_dates != tuple(sorted(signal_dates))
+        or len(set(signal_dates)) != len(signal_dates)
+        or signal_dates[0] < start_date
+        or signal_dates[-1] > end_date
+    ):
+        raise ValueError("incremental signal dates do not match the experiment boundary")
+    hypothesis_by_name = {item.name: item for item in spec.hypotheses}
+    expected_combinations = tuple(
+        (hypothesis.name, horizon, outcome)
+        for hypothesis in spec.hypotheses
+        for horizon in spec.horizons
+        for outcome in spec.outcome_fields
+    )
+    expected_daily_keys = tuple(
+        (signal_date, *combination)
+        for signal_date in signal_dates
+        for combination in expected_combinations
+    )
+    daily = tuple(incremental.daily_evaluations)
+    daily_keys = tuple(
+        (item.signal_date, item.hypothesis_name, item.horizon_sessions, item.outcome_field)
+        for item in daily
+    )
+    if (
+        len(daily) != len(signal_dates) * 48
+        or len(set(daily_keys)) != len(daily_keys)
+        or set(daily_keys) != set(expected_daily_keys)
+    ):
+        raise ValueError("incremental daily dimensions or keys do not reconcile")
+    for item in daily:
+        hypothesis = hypothesis_by_name[item.hypothesis_name]
+        if (
+            item.source_dataset_identity != dataset.identity
+            or item.source_dataset_content_identity != dataset.content_identity
+            or item.source_bounded_content_identity
+            != incremental.source_bounded_content_identity
+            or item.specification_fingerprint != spec.fingerprint
+            or item.target_factor != hypothesis.target_factor
+            or item.control_factors != hypothesis.control_factors
+        ):
+            raise ValueError("incremental daily provenance or control order does not reconcile")
+    emitted_daily_keys = tuple(
+        (row["signal_date"], row["hypothesis_name"], row["horizon_sessions"], row["outcome_field"])
+        for row in rows["factor_incremental_by_date.csv"][1]
+    )
+    if emitted_daily_keys != expected_daily_keys:
+        raise ValueError("incremental daily artifact ordering or coverage does not reconcile")
+
+    expected_summary_keys = expected_combinations
+    summaries = tuple(incremental.summaries)
+    summary_keys = tuple(
+        (item.hypothesis_name, item.horizon_sessions, item.outcome_field)
+        for item in summaries
+    )
+    if summary_keys != expected_summary_keys or len(set(summary_keys)) != 48:
+        raise ValueError("incremental summary dimensions or ordering do not reconcile")
+    expected_block_keys = tuple(
+        (*combination, block.name)
+        for combination in expected_combinations
+        for block in spec.blocks
+    )
+    blocks = tuple(incremental.block_evaluations)
+    block_keys = tuple(
+        (item.hypothesis_name, item.horizon_sessions, item.outcome_field, item.block_name)
+        for item in blocks
+    )
+    if block_keys != expected_block_keys or len(set(block_keys)) != 192:
+        raise ValueError("incremental block dimensions or ordering do not reconcile")
+
+    daily_map = {key: item for key, item in zip(daily_keys, daily, strict=True)}
+    block_map = {key: item for key, item in zip(block_keys, blocks, strict=True)}
+    for combination, summary in zip(expected_combinations, summaries, strict=True):
+        hypothesis = hypothesis_by_name[summary.hypothesis_name]
+        ordered_blocks = tuple(
+            block_map[(*combination, block.name)] for block in spec.blocks
+        )
+        expected_summary_daily = tuple(
+            daily_map[(signal_date, *combination)].identity for signal_date in signal_dates
+        )
+        if (
+            summary.target_factor != hypothesis.target_factor
+            or summary.control_factors != hypothesis.control_factors
+            or summary.source_dataset_identity != dataset.identity
+            or summary.source_bounded_content_identity
+            != incremental.source_bounded_content_identity
+            or summary.specification_fingerprint != spec.fingerprint
+            or summary.ordered_block_identities
+            != tuple(item.identity for item in ordered_blocks)
+            or summary.included_daily_identities != expected_summary_daily
+        ):
+            raise ValueError("incremental summary provenance, membership, or controls do not reconcile")
+        for definition, block in zip(spec.blocks, ordered_blocks, strict=True):
+            expected_block_daily = tuple(
+                daily_map[(signal_date, *combination)].identity
+                for signal_date in signal_dates
+                if definition.start_date <= signal_date <= definition.end_date
+            )
+            if (
+                block.target_factor != hypothesis.target_factor
+                or block.control_factors != hypothesis.control_factors
+                or block.source_dataset_identity != dataset.identity
+                or block.source_bounded_content_identity
+                != incremental.source_bounded_content_identity
+                or block.source_daily_result_identity
+                != incremental.source_daily_result_identity
+                or block.specification_fingerprint != spec.fingerprint
+                or block.block_start_date != definition.start_date
+                or block.block_end_date != definition.end_date
+                or block.included_daily_identities != expected_block_daily
+            ):
+                raise ValueError("incremental block provenance or daily membership does not reconcile")
+
+    for filename, expected_count in (
+        ("factor_incremental_summary.csv", 48),
+        ("factor_incremental_by_block.csv", 192),
+        ("factor_incremental_by_date.csv", len(signal_dates) * 48),
+    ):
+        if len(rows[filename][1]) != expected_count:
+            raise ValueError(f"incremental artifact dimensions do not reconcile: {filename}")
+    if tuple(
+        (row["hypothesis_name"], row["horizon_sessions"], row["outcome_field"])
+        for row in rows["factor_incremental_summary.csv"][1]
+    ) != expected_summary_keys:
+        raise ValueError("incremental summary artifact ordering does not reconcile")
+    if tuple(
+        (row["hypothesis_name"], row["horizon_sessions"], row["outcome_field"], row["block_name"])
+        for row in rows["factor_incremental_by_block.csv"][1]
+    ) != expected_block_keys:
+        raise ValueError("incremental block artifact ordering does not reconcile")
+
+    for row, item in zip(rows["factor_incremental_by_block.csv"][1], blocks, strict=True):
+        if (
+            row["control_factors"] != _compact_json_array(item.control_factors)
+            or row["included_daily_identity_count"] != len(item.included_daily_identities)
+            or row["included_daily_identities_sha256"]
+            != _identity_collection_sha256(item.included_daily_identities)
+            or item.included_daily_identity_count != len(item.included_daily_identities)
+            or item.included_daily_identities_sha256
+            != _identity_collection_sha256(item.included_daily_identities)
+        ):
+            raise ValueError("incremental block compact identity projection does not reconcile")
+    for row, item in zip(rows["factor_incremental_summary.csv"][1], summaries, strict=True):
+        if (
+            row["control_factors"] != _compact_json_array(item.control_factors)
+            or row["included_daily_identity_count"] != len(item.included_daily_identities)
+            or row["included_daily_identities_sha256"]
+            != _identity_collection_sha256(item.included_daily_identities)
+            or row["block_identity_count"] != len(item.ordered_block_identities)
+            or row["block_identities_sha256"]
+            != _identity_collection_sha256(item.ordered_block_identities)
+        ):
+            raise ValueError("incremental summary compact identity projection does not reconcile")
+    forbidden_columns = {
+        "keep", "drop", "selected", "rejected", "improved", "degraded",
+        "incremental_pass", "recommended_weight", "composite_role",
+    }
+    if forbidden_columns.intersection(
+        set(_INCREMENTAL_DAILY_COLUMNS)
+        | set(_INCREMENTAL_BLOCK_COLUMNS)
+        | set(_INCREMENTAL_SUMMARY_COLUMNS)
+    ):
+        raise ValueError("selection or production-policy field entered incremental artifacts")
+
+
 def _validate_reconciliation(
     observation_index: Any,
     feature_panel: Any,
@@ -994,6 +1407,7 @@ def _validate_reconciliation(
     evaluation: Any,
     temporal: Any,
     redundancy: Any,
+    incremental: Any,
     rows: Mapping[str, tuple[tuple[str, ...], list[dict[str, Any]]]],
     *,
     start_date: str,
@@ -1086,6 +1500,13 @@ def _validate_reconciliation(
         start_date=start_date,
         end_date=end_date,
     )
+    _validate_incremental_reconciliation(
+        dataset,
+        incremental,
+        rows,
+        start_date=start_date,
+        end_date=end_date,
+    )
 
 
 def _validate_emitted(
@@ -1094,6 +1515,7 @@ def _validate_emitted(
     evaluation: Any,
     temporal: Any,
     redundancy: Any,
+    incremental: Any,
 ) -> None:
     if tuple(sorted(path.name for path in directory.iterdir())) != tuple(sorted(_REQUIRED_FILENAMES)):
         raise ValueError("experiment artifact set is incomplete")
@@ -1265,6 +1687,100 @@ def _validate_emitted(
     assumptions = (directory / "assumptions.md").read_text(encoding="utf-8")
     if any(item not in assumptions for item in _REDUNDANCY_ASSUMPTIONS):
         raise ValueError("redundancy assumptions documentation is incomplete")
+    for filename in (
+        "factor_incremental_summary.csv",
+        "factor_incremental_by_block.csv",
+        "factor_incremental_by_date.csv",
+    ):
+        columns, expected_rows = rows[filename]
+        for actual, expected in zip(emitted[filename], expected_rows, strict=True):
+            serialized = {
+                column: str(_csv_value(expected.get(column))) for column in columns
+            }
+            if actual != serialized:
+                raise ValueError(f"incremental CSV projection mismatch: {filename}")
+    if (
+        "included_daily_identities" in _INCREMENTAL_BLOCK_COLUMNS
+        or "included_daily_identities" in _INCREMENTAL_SUMMARY_COLUMNS
+        or "ordered_block_identities" in _INCREMENTAL_SUMMARY_COLUMNS
+    ):
+        raise ValueError("incremental artifacts contain complete child identity tuples")
+    incremental_daily = emitted["factor_incremental_by_date.csv"]
+    incremental_blocks = emitted["factor_incremental_by_block.csv"]
+    incremental_summaries = emitted["factor_incremental_summary.csv"]
+    for row in incremental_daily:
+        if date.fromisoformat(row["signal_date"]).isoformat() != row["signal_date"]:
+            raise ValueError("incremental daily artifact contains a non-canonical date")
+        controls = json.loads(row["control_factors"])
+        if not isinstance(controls, list) or canonical_json(controls).decode("utf-8") != row["control_factors"]:
+            raise ValueError("incremental daily controls are not canonical compact JSON")
+    for row, item in zip(incremental_blocks, incremental.block_evaluations, strict=True):
+        for boundary in ("block_start_date", "block_end_date"):
+            if date.fromisoformat(row[boundary]).isoformat() != row[boundary]:
+                raise ValueError("incremental block artifact contains a non-canonical date")
+        if (
+            int(row["included_daily_identity_count"])
+            != len(item.included_daily_identities)
+            or row["included_daily_identities_sha256"]
+            != _identity_collection_sha256(item.included_daily_identities)
+            or row["identity"] != item.identity
+        ):
+            raise ValueError("emitted incremental block identity projection does not reconcile")
+    for row, item in zip(incremental_summaries, incremental.summaries, strict=True):
+        if (
+            int(row["included_daily_identity_count"])
+            != len(item.included_daily_identities)
+            or row["included_daily_identities_sha256"]
+            != _identity_collection_sha256(item.included_daily_identities)
+            or int(row["block_identity_count"])
+            != len(item.ordered_block_identities)
+            or row["block_identities_sha256"]
+            != _identity_collection_sha256(item.ordered_block_identities)
+            or row["identity"] != item.identity
+        ):
+            raise ValueError("emitted incremental summary identity projection does not reconcile")
+    incremental_manifest = manifest.get("factor_incremental_analysis", {})
+    signal_dates = sorted({item.signal_date for item in incremental.daily_evaluations})
+    raw_defined = sum(item.raw_rank_ic is not None for item in incremental.daily_evaluations)
+    partial_defined = sum(
+        item.partial_rank_ic is not None for item in incremental.daily_evaluations
+    )
+    if (
+        incremental_manifest.get("contract_name") != incremental.contract_name
+        or incremental_manifest.get("contract_version") != incremental.contract_version
+        or incremental_manifest.get("specification_fingerprint")
+        != incremental.specification_fingerprint
+        or incremental_manifest.get("result_identity") != incremental.identity
+        or incremental_manifest.get("source_dataset_identity")
+        != incremental.source_dataset_identity
+        or incremental_manifest.get("source_bounded_content_identity")
+        != incremental.source_bounded_content_identity
+        or incremental_manifest.get("hypothesis_count") != 8
+        or incremental_manifest.get("horizon_count") != 3
+        or incremental_manifest.get("outcome_count") != 2
+        or incremental_manifest.get("summary_count") != 48
+        or incremental_manifest.get("temporal_block_count") != 4
+        or incremental_manifest.get("block_result_count") != 192
+        or incremental_manifest.get("daily_record_count")
+        != len(incremental.daily_evaluations)
+        or incremental_manifest.get("signal_date_count") != len(signal_dates)
+        or incremental_manifest.get("raw_defined_record_count") != raw_defined
+        or incremental_manifest.get("raw_undefined_record_count")
+        != len(incremental.daily_evaluations) - raw_defined
+        or incremental_manifest.get("partial_defined_record_count") != partial_defined
+        or incremental_manifest.get("partial_undefined_record_count")
+        != len(incremental.daily_evaluations) - partial_defined
+        or incremental_manifest.get("artifacts") != [
+            "factor_incremental_summary.csv",
+            "factor_incremental_by_block.csv",
+            "factor_incremental_by_date.csv",
+        ]
+        or incremental_manifest.get("limitations") != list(_INCREMENTAL_LIMITATIONS)
+        or incremental_manifest.get("completed") is not True
+    ):
+        raise ValueError("incremental-analysis manifest does not reconcile")
+    if any(item not in assumptions for item in _INCREMENTAL_ASSUMPTIONS):
+        raise ValueError("incremental-analysis assumptions documentation is incomplete")
 
 
 def _publish_atomic(temporary: Path, output: Path) -> None:
@@ -1374,9 +1890,14 @@ def run_neutral_panel_factor_evaluation(
         evaluation,
         NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V2,
     )
+    incremental = evaluate_panel_factor_incremental_analysis(
+        dataset,
+        NEUTRAL_PANEL_INCREMENTAL_FACTOR_ANALYSIS_V1,
+    )
     rows = _artifact_rows(evaluation, observation_index, feature_panel, outcome_panel)
     rows.update(_temporal_artifact_rows(temporal))
     rows.update(_redundancy_artifact_rows(redundancy))
+    rows.update(_incremental_artifact_rows(incremental))
     _validate_reconciliation(
         observation_index,
         feature_panel,
@@ -1385,6 +1906,7 @@ def run_neutral_panel_factor_evaluation(
         evaluation,
         temporal,
         redundancy,
+        incremental,
         rows,
         start_date=start,
         end_date=end,
@@ -1558,6 +2080,51 @@ def run_neutral_panel_factor_evaluation(
             "completed": True,
             "limitations": list(_REDUNDANCY_LIMITATIONS),
         },
+        "factor_incremental_analysis": {
+            "contract_name": incremental.contract_name,
+            "contract_version": incremental.contract_version,
+            "specification_fingerprint": incremental.specification_fingerprint,
+            "result_identity": incremental.identity,
+            "source_dataset_identity": incremental.source_dataset_identity,
+            "source_bounded_content_identity": incremental.source_bounded_content_identity,
+            "hypothesis_count": len({
+                item.hypothesis_name for item in incremental.summaries
+            }),
+            "horizon_count": len({
+                item.horizon_sessions for item in incremental.summaries
+            }),
+            "outcome_count": len({
+                item.outcome_field for item in incremental.summaries
+            }),
+            "summary_count": len(incremental.summaries),
+            "temporal_block_count": len({
+                item.block_name for item in incremental.block_evaluations
+            }),
+            "block_result_count": len(incremental.block_evaluations),
+            "daily_record_count": len(incremental.daily_evaluations),
+            "signal_date_count": len({
+                item.signal_date for item in incremental.daily_evaluations
+            }),
+            "raw_defined_record_count": sum(
+                item.raw_rank_ic is not None for item in incremental.daily_evaluations
+            ),
+            "raw_undefined_record_count": sum(
+                item.raw_rank_ic is None for item in incremental.daily_evaluations
+            ),
+            "partial_defined_record_count": sum(
+                item.partial_rank_ic is not None for item in incremental.daily_evaluations
+            ),
+            "partial_undefined_record_count": sum(
+                item.partial_rank_ic is None for item in incremental.daily_evaluations
+            ),
+            "artifacts": [
+                "factor_incremental_summary.csv",
+                "factor_incremental_by_block.csv",
+                "factor_incremental_by_date.csv",
+            ],
+            "completed": True,
+            "limitations": list(_INCREMENTAL_LIMITATIONS),
+        },
         "counts": {
             "observation_rows": observation_index.total_membership_row_count,
             "signal_dates": (
@@ -1583,7 +2150,9 @@ def run_neutral_panel_factor_evaluation(
             _ASSUMPTIONS, encoding="utf-8", newline="\n",
         )
         _write_json(temporary / "experiment_manifest.json", manifest)
-        _validate_emitted(temporary, rows, evaluation, temporal, redundancy)
+        _validate_emitted(
+            temporary, rows, evaluation, temporal, redundancy, incremental,
+        )
         if _file_sha256(database) != database_digest:
             raise RuntimeError("market database changed before publication")
         _publish_atomic(temporary, output)
@@ -1605,6 +2174,7 @@ def run_neutral_panel_factor_evaluation(
         "evaluation": evaluation,
         "temporal_stability": temporal,
         "factor_redundancy": redundancy,
+        "factor_incremental_analysis": incremental,
     }
 
 

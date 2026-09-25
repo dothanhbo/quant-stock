@@ -13,6 +13,7 @@ import pandas as pd
 import pytest
 
 from quantlab.evaluation import (
+    NEUTRAL_PANEL_INCREMENTAL_FACTOR_ANALYSIS_V1,
     NEUTRAL_PANEL_FACTOR_REDUNDANCY_V1,
     NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V2,
     NEUTRAL_TECHNICAL_FACTOR_EVALUATION_5_10_20_V1,
@@ -493,6 +494,267 @@ def _redundancy(dataset: Any, dates: tuple[str, ...]):
     )
 
 
+def _incremental(dataset: Any, dates: tuple[str, ...]):
+    spec = NEUTRAL_PANEL_INCREMENTAL_FACTOR_ANALYSIS_V1
+    daily = []
+    blocks = []
+    summaries = []
+    for combination_index, hypothesis in enumerate(spec.hypotheses):
+        for horizon in spec.horizons:
+            for outcome in spec.outcome_fields:
+                combination_daily = []
+                for date_index, signal_date in enumerate(dates):
+                    raw = -0.5 if combination_index == 0 and date_index == 1 else 0.6
+                    partial = -0.25 if combination_index == 0 and date_index == 1 else 0.4
+                    reason = None
+                    if combination_index == 1 and date_index == 0:
+                        partial = None
+                        reason = "rank_deficient_control_design"
+                    identity = (
+                        f"incremental-daily-{hypothesis.name}-{horizon}-{outcome}-{signal_date}"
+                    )
+                    item = SimpleNamespace(
+                        source_dataset_identity=dataset.identity,
+                        source_dataset_content_identity=dataset.content_identity,
+                        source_bounded_content_identity="incremental-bounded-content-id",
+                        specification_fingerprint=spec.fingerprint,
+                        signal_date=signal_date,
+                        hypothesis_name=hypothesis.name,
+                        target_factor=hypothesis.target_factor,
+                        control_factors=hypothesis.control_factors,
+                        horizon_sessions=horizon,
+                        outcome_field=outcome,
+                        total_observation_count=20,
+                        outcome_available_count=20,
+                        listwise_finite_count=20,
+                        listwise_coverage_pct=100.0,
+                        raw_rank_ic=raw,
+                        partial_rank_ic=partial,
+                        absolute_raw_rank_ic=abs(raw),
+                        absolute_partial_rank_ic=(None if partial is None else abs(partial)),
+                        target_residual_population_std=2.5,
+                        outcome_residual_population_std=(None if partial is None else 3.5),
+                        control_design_rank=(1 + len(hypothesis.control_factors)),
+                        expected_design_rank=(1 + len(hypothesis.control_factors)),
+                        undefined_reason=reason,
+                        sample_evidence_sha256=("a" if partial is not None else "b") * 64,
+                        identity=identity,
+                    )
+                    daily.append(item)
+                    combination_daily.append(item)
+                block_ids = []
+                for block in spec.blocks:
+                    included = tuple(
+                        item.identity
+                        for item in combination_daily
+                        if block.start_date <= item.signal_date <= block.end_date
+                    )
+                    included_items = tuple(
+                        item for item in combination_daily if item.identity in included
+                    )
+                    raw_values = tuple(
+                        item.raw_rank_ic for item in included_items
+                        if item.raw_rank_ic is not None
+                    )
+                    partial_values = tuple(
+                        item.partial_rank_ic for item in included_items
+                        if item.partial_rank_ic is not None
+                    )
+                    block_identity = (
+                        f"incremental-block-{hypothesis.name}-{horizon}-{outcome}-{block.name}"
+                    )
+                    block_ids.append(block_identity)
+                    blocks.append(SimpleNamespace(
+                        source_dataset_identity=dataset.identity,
+                        source_bounded_content_identity="incremental-bounded-content-id",
+                        source_daily_result_identity="incremental-daily-result-id",
+                        specification_fingerprint=spec.fingerprint,
+                        hypothesis_name=hypothesis.name,
+                        target_factor=hypothesis.target_factor,
+                        control_factors=hypothesis.control_factors,
+                        horizon_sessions=horizon,
+                        outcome_field=outcome,
+                        block_name=block.name,
+                        block_start_date=block.start_date,
+                        block_end_date=block.end_date,
+                        total_signal_date_count=len(included_items),
+                        minimum_sample_date_count=len(included_items),
+                        raw_rank_ic_defined_date_count=len(raw_values),
+                        partial_rank_ic_defined_date_count=len(partial_values),
+                        raw_rank_ic_coverage_pct=(100.0 if included_items else 0.0),
+                        partial_rank_ic_coverage_pct=(
+                            0.0 if not included_items
+                            else len(partial_values) / len(included_items) * 100.0
+                        ),
+                        mean_daily_raw_rank_ic=(
+                            None if not raw_values else sum(raw_values) / len(raw_values)
+                        ),
+                        median_daily_raw_rank_ic=(None if not raw_values else raw_values[0]),
+                        population_std_daily_raw_rank_ic=(0.0 if raw_values else None),
+                        minimum_daily_raw_rank_ic=(None if not raw_values else min(raw_values)),
+                        maximum_daily_raw_rank_ic=(None if not raw_values else max(raw_values)),
+                        mean_daily_partial_rank_ic=(
+                            None if not partial_values else sum(partial_values) / len(partial_values)
+                        ),
+                        median_daily_partial_rank_ic=(
+                            None if not partial_values else partial_values[0]
+                        ),
+                        population_std_daily_partial_rank_ic=(
+                            0.0 if partial_values else None
+                        ),
+                        minimum_daily_partial_rank_ic=(
+                            None if not partial_values else min(partial_values)
+                        ),
+                        maximum_daily_partial_rank_ic=(
+                            None if not partial_values else max(partial_values)
+                        ),
+                        mean_absolute_daily_raw_rank_ic=(
+                            None if not raw_values
+                            else sum(abs(value) for value in raw_values) / len(raw_values)
+                        ),
+                        median_absolute_daily_raw_rank_ic=(
+                            None if not raw_values else abs(raw_values[0])
+                        ),
+                        mean_absolute_daily_partial_rank_ic=(
+                            None if not partial_values
+                            else sum(abs(value) for value in partial_values) / len(partial_values)
+                        ),
+                        median_absolute_daily_partial_rank_ic=(
+                            None if not partial_values else abs(partial_values[0])
+                        ),
+                        positive_partial_rank_ic_date_count=sum(
+                            value > 0 for value in partial_values
+                        ),
+                        zero_partial_rank_ic_date_count=sum(value == 0 for value in partial_values),
+                        negative_partial_rank_ic_date_count=sum(
+                            value < 0 for value in partial_values
+                        ),
+                        positive_partial_rank_ic_rate=(
+                            None if not partial_values
+                            else sum(value > 0 for value in partial_values) / len(partial_values)
+                        ),
+                        zero_partial_rank_ic_rate=(
+                            None if not partial_values
+                            else sum(value == 0 for value in partial_values) / len(partial_values)
+                        ),
+                        negative_partial_rank_ic_rate=(
+                            None if not partial_values
+                            else sum(value < 0 for value in partial_values) / len(partial_values)
+                        ),
+                        average_listwise_finite_count=(20.0 if included_items else None),
+                        median_listwise_finite_count=(20.0 if included_items else None),
+                        mean_partial_minus_raw_rank_ic=(
+                            None if not partial_values else -0.2
+                        ),
+                        median_partial_minus_raw_rank_ic=(
+                            None if not partial_values else -0.2
+                        ),
+                        included_daily_identities=included,
+                        included_daily_identity_count=len(included),
+                        included_daily_identities_sha256=runner._identity_collection_sha256(included),
+                        warnings=("descriptive_conditional_association_only",),
+                        identity=block_identity,
+                    ))
+                daily_ids = tuple(item.identity for item in combination_daily)
+                partial_values = tuple(
+                    item.partial_rank_ic for item in combination_daily
+                    if item.partial_rank_ic is not None
+                )
+                raw_values = tuple(item.raw_rank_ic for item in combination_daily)
+                block_tuple = tuple(block_ids)
+                summaries.append(SimpleNamespace(
+                    source_dataset_identity=dataset.identity,
+                    source_bounded_content_identity="incremental-bounded-content-id",
+                    source_daily_result_identity="incremental-daily-result-id",
+                    specification_fingerprint=spec.fingerprint,
+                    hypothesis_name=hypothesis.name,
+                    target_factor=hypothesis.target_factor,
+                    control_factors=hypothesis.control_factors,
+                    horizon_sessions=horizon,
+                    outcome_field=outcome,
+                    total_signal_date_count=len(dates),
+                    minimum_sample_date_count=len(dates),
+                    raw_rank_ic_defined_date_count=len(raw_values),
+                    partial_rank_ic_defined_date_count=len(partial_values),
+                    raw_rank_ic_coverage_pct=100.0,
+                    partial_rank_ic_coverage_pct=len(partial_values) / len(dates) * 100.0,
+                    mean_daily_raw_rank_ic=sum(raw_values) / len(raw_values),
+                    median_daily_raw_rank_ic=raw_values[0],
+                    population_std_daily_raw_rank_ic=0.0,
+                    minimum_daily_raw_rank_ic=min(raw_values),
+                    maximum_daily_raw_rank_ic=max(raw_values),
+                    mean_daily_partial_rank_ic=sum(partial_values) / len(partial_values),
+                    median_daily_partial_rank_ic=partial_values[0],
+                    population_std_daily_partial_rank_ic=0.0,
+                    minimum_daily_partial_rank_ic=min(partial_values),
+                    maximum_daily_partial_rank_ic=max(partial_values),
+                    mean_absolute_daily_raw_rank_ic=sum(abs(v) for v in raw_values) / len(raw_values),
+                    median_absolute_daily_raw_rank_ic=abs(raw_values[0]),
+                    mean_absolute_daily_partial_rank_ic=(
+                        sum(abs(v) for v in partial_values) / len(partial_values)
+                    ),
+                    median_absolute_daily_partial_rank_ic=abs(partial_values[0]),
+                    positive_raw_rank_ic_date_count=sum(value > 0 for value in raw_values),
+                    zero_raw_rank_ic_date_count=sum(value == 0 for value in raw_values),
+                    negative_raw_rank_ic_date_count=sum(value < 0 for value in raw_values),
+                    positive_raw_rank_ic_rate=sum(value > 0 for value in raw_values) / len(raw_values),
+                    zero_raw_rank_ic_rate=sum(value == 0 for value in raw_values) / len(raw_values),
+                    negative_raw_rank_ic_rate=sum(value < 0 for value in raw_values) / len(raw_values),
+                    positive_partial_rank_ic_date_count=sum(value > 0 for value in partial_values),
+                    zero_partial_rank_ic_date_count=sum(value == 0 for value in partial_values),
+                    negative_partial_rank_ic_date_count=sum(value < 0 for value in partial_values),
+                    positive_partial_rank_ic_rate=sum(value > 0 for value in partial_values) / len(partial_values),
+                    zero_partial_rank_ic_rate=sum(value == 0 for value in partial_values) / len(partial_values),
+                    negative_partial_rank_ic_rate=sum(value < 0 for value in partial_values) / len(partial_values),
+                    average_listwise_finite_count=20.0,
+                    median_listwise_finite_count=20.0,
+                    mean_partial_minus_raw_rank_ic=-0.2,
+                    median_partial_minus_raw_rank_ic=-0.2,
+                    mean_absolute_partial_minus_absolute_raw_rank_ic=-0.2,
+                    ordered_block_identities=block_tuple,
+                    ordered_block_identity_count=len(block_tuple),
+                    ordered_block_identities_sha256=runner._identity_collection_sha256(block_tuple),
+                    blocks_meeting_temporal_review_count=0,
+                    chronological_partial_sign_flip_count=0,
+                    all_blocks_positive_partial_rank_ic=False,
+                    all_blocks_negative_partial_rank_ic=False,
+                    minimum_block_mean_partial_rank_ic=(
+                        None if not partial_values else min(partial_values)
+                    ),
+                    maximum_block_mean_partial_rank_ic=(
+                        None if not partial_values else max(partial_values)
+                    ),
+                    range_block_mean_partial_rank_ic=(
+                        None if not partial_values else max(partial_values) - min(partial_values)
+                    ),
+                    largest_absolute_block_mean_partial_rank_ic_concentration=1.0,
+                    included_daily_identities=daily_ids,
+                    included_daily_identity_count=len(daily_ids),
+                    included_daily_identities_sha256=runner._identity_collection_sha256(daily_ids),
+                    warnings=("descriptive_conditional_association_only",),
+                    identity=f"incremental-summary-{hypothesis.name}-{horizon}-{outcome}",
+                ))
+    return SimpleNamespace(
+        contract_name="quantlab.panel_factor_incremental_analysis",
+        contract_version="v1",
+        source_dataset_identity=dataset.identity,
+        source_dataset_content_identity=dataset.content_identity,
+        source_bounded_content_identity="incremental-bounded-content-id",
+        source_observation_index_identity=dataset.observation_index_identity,
+        source_observation_content_identity=dataset.observation_content_identity,
+        source_feature_panel_identity=dataset.feature_panel_identity,
+        source_feature_content_identity=dataset.feature_content_identity,
+        source_outcome_panel_identity=dataset.outcome_panel_identity,
+        source_outcome_content_identity=dataset.outcome_content_identity,
+        specification_fingerprint=spec.fingerprint,
+        source_daily_result_identity="incremental-daily-result-id",
+        daily_evaluations=tuple(daily),
+        block_evaluations=tuple(blocks),
+        summaries=tuple(summaries),
+        identity="incremental-result-id",
+    )
+
+
 def _install_pipeline(monkeypatch: pytest.MonkeyPatch, database: Path):
     dates = ("2021-01-04", "2021-01-05")
     keys = tuple((signal_date, symbol) for signal_date in dates for symbol in ("AAA", "BBB"))
@@ -566,8 +828,11 @@ def _install_pipeline(monkeypatch: pytest.MonkeyPatch, database: Path):
         session_audit=audits,
         observation_row_count=4,
         observation_index_identity="observation-id",
+        observation_content_identity="observation-content",
         feature_panel_identity="feature-panel-id",
+        feature_content_identity="feature-content",
         outcome_panel_identity="outcome-panel-id",
+        outcome_content_identity="outcome-content",
         identity="dataset-id",
         content_identity="dataset-content",
         forbidden_predictor_columns=(),
@@ -575,10 +840,12 @@ def _install_pipeline(monkeypatch: pytest.MonkeyPatch, database: Path):
     evaluation = _evaluation(dates)
     temporal = _temporal(evaluation)
     redundancy = _redundancy(dataset, dates)
+    incremental = _incremental(dataset, dates)
     calls: dict[str, list[tuple[tuple[Any, ...], dict[str, Any]]]] = {
         name: [] for name in (
             "snapshot", "coverage", "universe", "observation", "source",
             "features", "outcomes", "dataset", "redundancy", "evaluation", "temporal",
+            "incremental",
         )
     }
     calls["dataset_frame"] = dataset_frame_calls
@@ -624,6 +891,11 @@ def _install_pipeline(monkeypatch: pytest.MonkeyPatch, database: Path):
         "evaluate_panel_factor_temporal_stability",
         install("temporal", temporal),
     )
+    monkeypatch.setattr(
+        runner,
+        "evaluate_panel_factor_incremental_analysis",
+        install("incremental", incremental),
+    )
     return calls, SimpleNamespace(
         snapshot=snapshot,
         coverage=coverage,
@@ -636,6 +908,7 @@ def _install_pipeline(monkeypatch: pytest.MonkeyPatch, database: Path):
         evaluation=evaluation,
         temporal=temporal,
         redundancy=redundancy,
+        incremental=incremental,
         dates=dates,
     )
 
@@ -681,6 +954,10 @@ def test_exact_one_time_orchestration_and_identity_propagation(
         objects.evaluation,
         NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V2,
     ), {})]
+    assert calls["incremental"] == [((
+        objects.dataset,
+        NEUTRAL_PANEL_INCREMENTAL_FACTOR_ANALYSIS_V1,
+    ), {})]
     manifest = result["manifest"]
     assert manifest["observation_index"]["identity"] == "observation-id"
     assert manifest["features"]["computation_identity"] == "feature-computation-id"
@@ -690,6 +967,8 @@ def test_exact_one_time_orchestration_and_identity_propagation(
     assert result["temporal_stability"] is objects.temporal
     assert manifest["factor_redundancy"]["source_dataset_identity"] == "dataset-id"
     assert result["factor_redundancy"] is objects.redundancy
+    assert manifest["factor_incremental_analysis"]["source_dataset_identity"] == "dataset-id"
+    assert result["factor_incremental_analysis"] is objects.incremental
 
 
 def test_exact_artifacts_schemas_dimensions_order_and_complete_population(
@@ -698,6 +977,7 @@ def test_exact_artifacts_schemas_dimensions_order_and_complete_population(
 ) -> None:
     _, _, objects, result = _run(monkeypatch, tmp_path)
     output = result["output_root"]
+    assert len(runner._REQUIRED_FILENAMES) == 15
     assert tuple(sorted(path.name for path in output.iterdir())) == tuple(
         sorted(runner._REQUIRED_FILENAMES)
     )
@@ -711,6 +991,15 @@ def test_exact_artifacts_schemas_dimensions_order_and_complete_population(
     )
     redundancy_daily_columns, redundancy_daily = _read_csv(
         output / "factor_redundancy_by_date.csv",
+    )
+    incremental_summary_columns, incremental_summaries = _read_csv(
+        output / "factor_incremental_summary.csv",
+    )
+    incremental_block_columns, incremental_blocks = _read_csv(
+        output / "factor_incremental_by_block.csv",
+    )
+    incremental_daily_columns, incremental_daily = _read_csv(
+        output / "factor_incremental_by_date.csv",
     )
     coverage_columns, coverage = _read_csv(output / "factor_coverage.csv")
     observation_columns, observations = _read_csv(output / "observation_counts_by_date.csv")
@@ -733,6 +1022,9 @@ def test_exact_artifacts_schemas_dimensions_order_and_complete_population(
     assert redundancy_summary_columns == runner._REDUNDANCY_SUMMARY_COLUMNS
     assert redundancy_block_columns == runner._REDUNDANCY_BLOCK_COLUMNS
     assert redundancy_daily_columns == runner._REDUNDANCY_DAILY_COLUMNS
+    assert incremental_summary_columns == runner._INCREMENTAL_SUMMARY_COLUMNS
+    assert incremental_block_columns == runner._INCREMENTAL_BLOCK_COLUMNS
+    assert incremental_daily_columns == runner._INCREMENTAL_DAILY_COLUMNS
     assert (len(summaries), len(daily), len(coverage), len(observations)) == (48, 96, 48, 2)
     assert (len(temporal_summaries), len(temporal_blocks), len(temporal_coverage)) == (
         48, 192, 48,
@@ -740,6 +1032,24 @@ def test_exact_artifacts_schemas_dimensions_order_and_complete_population(
     assert (len(redundancy_summaries), len(redundancy_blocks), len(redundancy_daily)) == (
         28, 112, len(objects.dates) * 28,
     )
+    assert (
+        len(incremental_summaries), len(incremental_blocks), len(incremental_daily),
+    ) == (48, 192, len(objects.dates) * 48)
+    expected_incremental_daily_keys = [
+        (signal_date, hypothesis.name, str(horizon), outcome)
+        for signal_date in objects.dates
+        for hypothesis in NEUTRAL_PANEL_INCREMENTAL_FACTOR_ANALYSIS_V1.hypotheses
+        for horizon in NEUTRAL_PANEL_INCREMENTAL_FACTOR_ANALYSIS_V1.horizons
+        for outcome in NEUTRAL_PANEL_INCREMENTAL_FACTOR_ANALYSIS_V1.outcome_fields
+    ]
+    assert [
+        (
+            row["signal_date"], row["hypothesis_name"], row["horizon_sessions"],
+            row["outcome_field"],
+        )
+        for row in incremental_daily
+    ] == expected_incremental_daily_keys
+    assert len({tuple(row.values()) for row in incremental_daily}) == len(incremental_daily)
     assert [row["signal_date"] for row in observations] == list(objects.dates)
     assert all(row["observation_row_count"] == "2" for row in observations)
     assert [
@@ -782,6 +1092,15 @@ def test_compact_identity_projection_nulls_json_and_no_evidence_payloads(
         output / "factor_redundancy_by_block.csv",
     )
     _, redundancy_daily = _read_csv(output / "factor_redundancy_by_date.csv")
+    incremental_summary_columns, incremental_summaries = _read_csv(
+        output / "factor_incremental_summary.csv",
+    )
+    incremental_block_columns, incremental_blocks = _read_csv(
+        output / "factor_incremental_by_block.csv",
+    )
+    incremental_daily_columns, incremental_daily = _read_csv(
+        output / "factor_incremental_by_date.csv",
+    )
     assert "included_daily_identities" not in summary_columns
     assert "eligible_evidence" not in daily_columns
     assert "observation_status_evidence" not in daily_columns
@@ -825,6 +1144,39 @@ def test_compact_identity_projection_nulls_json_and_no_evidence_payloads(
     assert redundancy_summaries[0]["block_identities_sha256"] == (
         objects.redundancy.summaries[0].ordered_block_identities_sha256
     )
+    assert "included_daily_identities" not in incremental_summary_columns
+    assert "ordered_block_identities" not in incremental_summary_columns
+    assert "included_daily_identities" not in incremental_block_columns
+    assert "listwise_sample_evidence" not in incremental_daily_columns
+    assert incremental_daily[0]["raw_rank_ic"] == "0.6"
+    assert incremental_daily[0]["partial_rank_ic"] == "0.4"
+    assert incremental_daily[48]["raw_rank_ic"] == "-0.5"
+    assert incremental_daily[48]["partial_rank_ic"] == "-0.25"
+    undefined = next(row for row in incremental_daily if row["partial_rank_ic"] == "")
+    assert undefined["undefined_reason"] == "rank_deficient_control_design"
+    assert undefined["absolute_partial_rank_ic"] == ""
+    assert undefined["control_factors"] == '["adx_14"]'
+    assert incremental_blocks[0]["included_daily_identity_count"] == "0"
+    assert incremental_blocks[0]["included_daily_identities_sha256"] == (
+        runner._identity_collection_sha256(())
+    )
+    assert incremental_summaries[0]["included_daily_identity_count"] == "2"
+    assert incremental_summaries[0]["block_identity_count"] == "4"
+    assert incremental_summaries[0]["included_daily_identities_sha256"] == (
+        objects.incremental.summaries[0].included_daily_identities_sha256
+    )
+    assert incremental_summaries[0]["block_identities_sha256"] == (
+        objects.incremental.summaries[0].ordered_block_identities_sha256
+    )
+    forbidden_incremental = {
+        "keep", "drop", "selected", "rejected", "improved", "degraded",
+        "incremental_pass", "recommended_weight", "composite_role",
+    }
+    assert not forbidden_incremental.intersection(
+        set(incremental_summary_columns)
+        | set(incremental_block_columns)
+        | set(incremental_daily_columns)
+    )
     manifest_text = (output / "experiment_manifest.json").read_text(encoding="utf-8")
     assert all(token not in manifest_text for token in ("NaN", "Infinity", "<NA>"))
     assert json.loads(manifest_text)["completed"] is True
@@ -845,9 +1197,24 @@ def test_compact_identity_projection_nulls_json_and_no_evidence_payloads(
     )
     assert set(result["manifest"]["artifacts"]) == set(runner._REQUIRED_FILENAMES)
     assert redundancy_manifest["limitations"] == list(runner._REDUNDANCY_LIMITATIONS)
+    incremental_manifest = result["manifest"]["factor_incremental_analysis"]
+    assert incremental_manifest["result_identity"] == "incremental-result-id"
+    assert incremental_manifest["specification_fingerprint"] == (
+        NEUTRAL_PANEL_INCREMENTAL_FACTOR_ANALYSIS_V1.fingerprint
+    )
+    assert incremental_manifest["hypothesis_count"] == 8
+    assert incremental_manifest["horizon_count"] == 3
+    assert incremental_manifest["outcome_count"] == 2
+    assert incremental_manifest["summary_count"] == 48
+    assert incremental_manifest["temporal_block_count"] == 4
+    assert incremental_manifest["block_result_count"] == 192
+    assert incremental_manifest["daily_record_count"] == len(objects.dates) * 48
+    assert incremental_manifest["limitations"] == list(runner._INCREMENTAL_LIMITATIONS)
     assumptions = (output / "assumptions.md").read_text(encoding="utf-8")
     assert "predictor projection" in assumptions
     assert "No redundancy threshold or factor-selection decision" in assumptions
+    assert "Eight fixed hypotheses" in assumptions
+    assert "No automatic factor-selection threshold" in assumptions
 
 
 def test_temporal_projection_hashes_review_statuses_and_manifest_reconcile(
@@ -998,6 +1365,61 @@ def test_redundancy_corruption_aborts_overwrite_and_preserves_previous_target(
     assert not tuple(output.parent.glob(f".{output.name}.tmp-*"))
 
 
+@pytest.mark.parametrize(
+    ("corruption", "message"),
+    (
+        ("source_identity", "source identity"),
+        ("hypothesis_order", "summary dimensions"),
+        ("dimensions", "daily dimensions"),
+        ("duplicate_daily", "daily dimensions"),
+        ("block_membership", "block provenance or daily membership"),
+        ("control_order", "daily provenance or control order"),
+    ),
+)
+def test_incremental_corruption_aborts_overwrite_and_preserves_previous_target(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    corruption: str,
+    message: str,
+) -> None:
+    database, _, _, first = _run(monkeypatch, tmp_path)
+    output = first["output_root"]
+    previous_manifest = (output / "experiment_manifest.json").read_bytes()
+    _, objects = _install_pipeline(monkeypatch, database)
+    if corruption == "source_identity":
+        objects.incremental.source_dataset_identity = "wrong-source"
+    elif corruption == "hypothesis_order":
+        values = list(objects.incremental.summaries)
+        values[0], values[1] = values[1], values[0]
+        objects.incremental.summaries = tuple(values)
+    elif corruption == "dimensions":
+        objects.incremental.daily_evaluations = objects.incremental.daily_evaluations[:-1]
+    elif corruption == "duplicate_daily":
+        values = list(objects.incremental.daily_evaluations)
+        values[1] = values[0]
+        objects.incremental.daily_evaluations = tuple(values)
+    elif corruption == "block_membership":
+        objects.incremental.block_evaluations[0].included_daily_identities = (
+            "unknown-daily-identity",
+        )
+    else:
+        target = next(
+            item for item in objects.incremental.daily_evaluations
+            if item.hypothesis_name == "volume_given_adx_rsi"
+        )
+        target.control_factors = tuple(reversed(target.control_factors))
+    with pytest.raises(ValueError, match=message):
+        runner.run_neutral_panel_factor_evaluation(
+            database_path=database,
+            start_date="2021-01-04",
+            end_date="2021-01-05",
+            output_root=output,
+            overwrite=True,
+        )
+    assert (output / "experiment_manifest.json").read_bytes() == previous_manifest
+    assert not tuple(output.parent.glob(f".{output.name}.tmp-*"))
+
+
 def test_database_is_unchanged_and_no_network_or_current_vn100_path(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1049,11 +1471,11 @@ def test_overwrite_is_exact_and_failed_validation_preserves_previous_target(
     legacy_output.mkdir()
     legacy_files = tuple(
         name for name in runner._REQUIRED_FILENAMES
-        if not name.startswith("factor_redundancy_")
+        if not name.startswith("factor_incremental_")
     )
-    assert len(legacy_files) == 9
+    assert len(legacy_files) == 12
     for filename in legacy_files:
-        (legacy_output / filename).write_text("legacy-nine-file-target", encoding="utf-8")
+        (legacy_output / filename).write_text("legacy-twelve-file-target", encoding="utf-8")
     original_validate_emitted = runner._validate_emitted
     monkeypatch.setattr(
         runner,
@@ -1068,7 +1490,7 @@ def test_overwrite_is_exact_and_failed_validation_preserves_previous_target(
         sorted(legacy_files)
     )
     assert all(
-        path.read_text(encoding="utf-8") == "legacy-nine-file-target"
+        path.read_text(encoding="utf-8") == "legacy-twelve-file-target"
         for path in legacy_output.iterdir()
     )
     monkeypatch.setattr(runner, "_validate_emitted", original_validate_emitted)
@@ -1078,7 +1500,7 @@ def test_overwrite_is_exact_and_failed_validation_preserves_previous_target(
         sorted(runner._REQUIRED_FILENAMES)
     )
     assert all(
-        path.read_text(encoding="utf-8") != "legacy-nine-file-target"
+        path.read_text(encoding="utf-8") != "legacy-twelve-file-target"
         for path in output.iterdir()
     )
     previous_manifest = (output / "experiment_manifest.json").read_bytes()
@@ -1107,7 +1529,7 @@ def test_cli_defaults_default_output_and_fresh_import_isolation(tmp_path: Path) 
     assert arguments.maximum_staleness_sessions == 5
     assert arguments.cache_root is None
     assert arguments.cache_codec == "npz_numeric_v1"
-    assert runner.RUNNER_VERSION == "v3"
+    assert runner.RUNNER_VERSION == "v4"
     expected = runner.PROJECT_ROOT / "research_results" / (
         "quantlab_neutral_panel_factor_evaluation_2021-01-04_2021-01-05"
     )
