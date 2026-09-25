@@ -24,9 +24,11 @@ from core.database_coverage import build_database_coverage_index
 from core.paths import PROJECT_ROOT, resolve_market_database_path
 from quantlab.catalog.market_data_snapshot import build_market_data_snapshot
 from quantlab.evaluation import (
+    NEUTRAL_PANEL_FACTOR_REDUNDANCY_V1,
     NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V2,
     NEUTRAL_TECHNICAL_FACTOR_EVALUATION_5_10_20_V1,
     PanelTemporalDirection,
+    evaluate_panel_factor_redundancy,
     evaluate_panel_factor_temporal_stability,
     evaluate_point_in_time_panel_factors,
 )
@@ -43,7 +45,7 @@ from quantlab.panels import (
 
 
 RUNNER_CONTRACT = "quantlab.neutral_panel_factor_evaluation_runner"
-RUNNER_VERSION = "v2"
+RUNNER_VERSION = "v3"
 CACHE_DEFAULT_CODEC = "npz_numeric_v1"
 REVIEW_MINIMUM_DEFINED_DATES = 30
 REVIEW_MINIMUM_AVERAGE_CROSS_SECTION = 20.0
@@ -144,6 +146,48 @@ _TEMPORAL_COVERAGE_COLUMNS = (
     "largest_absolute_mean_spread_block_concentration", "review_status",
     "summary_identity",
 )
+_REDUNDANCY_DAILY_COLUMNS = (
+    "signal_date", "first_factor", "second_factor", "observation_count",
+    "pairwise_finite_count", "pairwise_coverage_pct", "spearman_correlation",
+    "absolute_spearman_correlation", "undefined_reason",
+    "pairwise_sample_evidence_sha256", "identity",
+)
+_REDUNDANCY_BLOCK_COLUMNS = (
+    "first_factor", "second_factor", "block_name", "block_start_date",
+    "block_end_date", "total_signal_date_count", "minimum_sample_date_count",
+    "defined_correlation_date_count", "correlation_coverage_pct",
+    "mean_daily_correlation", "median_daily_correlation",
+    "population_std_daily_correlation", "minimum_daily_correlation",
+    "maximum_daily_correlation", "mean_daily_absolute_correlation",
+    "median_daily_absolute_correlation", "positive_correlation_date_count",
+    "zero_correlation_date_count", "negative_correlation_date_count",
+    "positive_correlation_rate", "zero_correlation_rate",
+    "negative_correlation_rate", "average_pairwise_finite_count",
+    "median_pairwise_finite_count", "included_daily_identity_count",
+    "included_daily_identities_sha256", "warnings", "identity",
+)
+_REDUNDANCY_SUMMARY_COLUMNS = (
+    "first_factor", "second_factor", "total_signal_date_count",
+    "minimum_sample_date_count", "defined_correlation_date_count",
+    "correlation_coverage_pct", "mean_daily_correlation",
+    "median_daily_correlation", "population_std_daily_correlation",
+    "minimum_daily_correlation", "maximum_daily_correlation",
+    "mean_daily_absolute_correlation", "median_daily_absolute_correlation",
+    "positive_correlation_date_count", "zero_correlation_date_count",
+    "negative_correlation_date_count", "positive_correlation_rate",
+    "zero_correlation_rate", "negative_correlation_rate",
+    "average_pairwise_finite_count", "median_pairwise_finite_count",
+    "blocks_meeting_temporal_review_count", "chronological_sign_flip_count",
+    "largest_absolute_block_mean_concentration",
+    "minimum_block_mean_correlation", "maximum_block_mean_correlation",
+    "range_block_mean_correlation",
+    "minimum_block_mean_absolute_daily_correlation",
+    "maximum_block_mean_absolute_daily_correlation",
+    "range_block_mean_absolute_daily_correlation", "all_blocks_positive",
+    "all_blocks_negative", "included_daily_identity_count",
+    "included_daily_identities_sha256", "block_identity_count",
+    "block_identities_sha256", "warnings", "identity",
+)
 _REQUIRED_FILENAMES = (
     "experiment_manifest.json",
     "factor_summary.csv",
@@ -154,6 +198,9 @@ _REQUIRED_FILENAMES = (
     "temporal_stability_summary.csv",
     "temporal_stability_by_block.csv",
     "temporal_coverage.csv",
+    "factor_redundancy_summary.csv",
+    "factor_redundancy_by_block.csv",
+    "factor_redundancy_by_date.csv",
 )
 
 _LIMITATIONS = (
@@ -177,6 +224,30 @@ _TEMPORAL_LIMITATIONS = (
     "No multiple-testing correction, costs, turnover, liquidity, portfolio utility, or tradability conclusion is included.",
     "A negative direction means higher factor values are empirically associated with lower future outcomes; it is not a short signal or authorization to invert the factor.",
 )
+
+_REDUNDANCY_LIMITATIONS = (
+    "Factor correlation is descriptive, not causal.",
+    "High correlation does not authorize dropping a factor.",
+    "Low correlation does not prove incremental alpha.",
+    "The redundancy evaluator uses no future outcomes.",
+    "Database-coverage membership is not historical VN100 membership.",
+    "This is the same historical dataset and not independent OOS confirmation.",
+    "No factor selection, weighting, composite, strategy, or portfolio authority is granted.",
+)
+
+_REDUNDANCY_ASSUMPTIONS = (
+    "Redundancy uses same-date pairwise-finite Spearman correlation.",
+    "Factor values use ascending average ranks for ties.",
+    "Each daily pair requires at least 20 pairwise-finite observations.",
+    "Defined daily correlations receive equal signal-date weight; symbols are never pooled across dates.",
+    "Temporal evidence uses the four fixed inclusive Phase 5.5 calendar blocks.",
+    "Redundancy reads only the point-in-time predictor projection and no future outcomes.",
+    "No redundancy threshold or factor-selection decision is defined.",
+)
+
+_ASSUMPTIONS += "\n## Factor-redundancy methodology\n\n" + "\n".join(
+    f"- {item}" for item in _REDUNDANCY_ASSUMPTIONS
+) + "\n"
 
 
 def _date_text(value: str, *, name: str) -> str:
@@ -505,6 +576,72 @@ def _temporal_artifact_rows(
     }
 
 
+def _redundancy_artifact_rows(
+    redundancy: Any,
+) -> dict[str, tuple[tuple[str, ...], list[dict[str, Any]]]]:
+    spec = NEUTRAL_PANEL_FACTOR_REDUNDANCY_V1
+    factor_order = {factor: index for index, factor in enumerate(spec.factors)}
+    daily = sorted(
+        redundancy.daily_correlations,
+        key=lambda item: (
+            item.signal_date,
+            factor_order[item.first_factor],
+            factor_order[item.second_factor],
+        ),
+    )
+    daily_rows = [
+        {column: getattr(item, column) for column in _REDUNDANCY_DAILY_COLUMNS}
+        for item in daily
+    ]
+    block_rows = [
+        {
+            **{
+                column: (
+                    " | ".join(item.warnings)
+                    if column == "warnings"
+                    else getattr(item, column)
+                )
+                for column in _REDUNDANCY_BLOCK_COLUMNS
+                if column not in {
+                    "included_daily_identity_count",
+                    "included_daily_identities_sha256",
+                }
+            },
+            "included_daily_identity_count": item.included_daily_identity_count,
+            "included_daily_identities_sha256": item.included_daily_identities_sha256,
+        }
+        for item in redundancy.block_correlations
+    ]
+    summary_rows = [
+        {
+            **{
+                column: (
+                    " | ".join(item.warnings)
+                    if column == "warnings"
+                    else getattr(item, column)
+                )
+                for column in _REDUNDANCY_SUMMARY_COLUMNS
+                if column not in {
+                    "included_daily_identity_count",
+                    "included_daily_identities_sha256",
+                    "block_identity_count",
+                    "block_identities_sha256",
+                }
+            },
+            "included_daily_identity_count": item.included_daily_identity_count,
+            "included_daily_identities_sha256": item.included_daily_identities_sha256,
+            "block_identity_count": item.ordered_block_identity_count,
+            "block_identities_sha256": item.ordered_block_identities_sha256,
+        }
+        for item in redundancy.summaries
+    ]
+    return {
+        "factor_redundancy_summary.csv": (_REDUNDANCY_SUMMARY_COLUMNS, summary_rows),
+        "factor_redundancy_by_block.csv": (_REDUNDANCY_BLOCK_COLUMNS, block_rows),
+        "factor_redundancy_by_date.csv": (_REDUNDANCY_DAILY_COLUMNS, daily_rows),
+    }
+
+
 def _keys(frame: Any) -> tuple[tuple[str, str], ...]:
     return tuple(zip(frame["session_date"].astype(str), frame["symbol"].astype(str)))
 
@@ -610,6 +747,245 @@ def _validate_temporal_reconciliation(
             raise ValueError("temporal summary block identity hash does not reconcile")
 
 
+def _validate_redundancy_reconciliation(
+    dataset: Any,
+    redundancy: Any,
+    rows: Mapping[str, tuple[tuple[str, ...], list[dict[str, Any]]]],
+    *,
+    start_date: str,
+    end_date: str,
+) -> None:
+    spec = NEUTRAL_PANEL_FACTOR_REDUNDANCY_V1
+    pairs = spec.pairs
+    blocks = spec.blocks
+    if (
+        redundancy.source_dataset_identity != dataset.identity
+        or redundancy.specification_fingerprint != spec.fingerprint
+        or not str(redundancy.source_bounded_content_identity).strip()
+    ):
+        raise ValueError("redundancy source identity or specification does not reconcile")
+    if len(spec.factors) != 8 or len(pairs) != 28 or len(blocks) != 4:
+        raise ValueError("built-in redundancy factor, pair, or block scope changed")
+    if len(set(pairs)) != 28 or any(
+        spec.factors.index(first) >= spec.factors.index(second)
+        for first, second in pairs
+    ):
+        raise ValueError("redundancy pairs are not canonical unordered pairs")
+
+    signal_dates = tuple(audit.session_date for audit in dataset.session_audit)
+    if (
+        not signal_dates
+        or signal_dates != tuple(sorted(signal_dates))
+        or len(set(signal_dates)) != len(signal_dates)
+        or signal_dates[0] < start_date
+        or signal_dates[-1] > end_date
+    ):
+        raise ValueError("redundancy signal dates do not match the experiment boundary")
+    expected_daily_keys = tuple(
+        (signal_date, first, second)
+        for signal_date in signal_dates
+        for first, second in pairs
+    )
+    result_daily_keys = tuple(
+        (item.signal_date, item.first_factor, item.second_factor)
+        for item in redundancy.daily_correlations
+    )
+    if any(
+        item.source_dataset_identity != dataset.identity
+        or item.source_bounded_content_identity
+        != redundancy.source_bounded_content_identity
+        or item.specification_fingerprint != spec.fingerprint
+        for item in redundancy.daily_correlations
+    ):
+        raise ValueError("redundancy daily provenance does not reconcile")
+    if (
+        len(result_daily_keys) != len(signal_dates) * 28
+        or len(set(result_daily_keys)) != len(result_daily_keys)
+        or set(result_daily_keys) != set(expected_daily_keys)
+    ):
+        raise ValueError("redundancy daily pair/date dimensions do not reconcile")
+    emitted_daily_keys = tuple(
+        (row["signal_date"], row["first_factor"], row["second_factor"])
+        for row in rows["factor_redundancy_by_date.csv"][1]
+    )
+    if emitted_daily_keys != expected_daily_keys:
+        raise ValueError("redundancy daily artifact ordering or coverage does not reconcile")
+    daily_map = {
+        (item.signal_date, item.first_factor, item.second_factor): item
+        for item in redundancy.daily_correlations
+    }
+    for row in rows["factor_redundancy_by_date.csv"][1]:
+        item = daily_map[(row["signal_date"], row["first_factor"], row["second_factor"])]
+        if any(row[column] != getattr(item, column) for column in _REDUNDANCY_DAILY_COLUMNS):
+            raise ValueError("redundancy daily artifact is not a direct public-field projection")
+
+    expected_block_keys = tuple(
+        (first, second, block.name)
+        for first, second in pairs
+        for block in blocks
+    )
+    result_block_keys = tuple(
+        (item.first_factor, item.second_factor, item.block_name)
+        for item in redundancy.block_correlations
+    )
+    if any(
+        item.source_dataset_identity != dataset.identity
+        or item.source_bounded_content_identity
+        != redundancy.source_bounded_content_identity
+        or item.source_daily_result_identity != redundancy.source_daily_result_identity
+        or item.specification_fingerprint != spec.fingerprint
+        for item in redundancy.block_correlations
+    ):
+        raise ValueError("redundancy block provenance does not reconcile")
+    if result_block_keys != expected_block_keys or len(set(result_block_keys)) != 112:
+        raise ValueError("redundancy block dimensions or ordering do not reconcile")
+    emitted_block_keys = tuple(
+        (row["first_factor"], row["second_factor"], row["block_name"])
+        for row in rows["factor_redundancy_by_block.csv"][1]
+    )
+    if emitted_block_keys != expected_block_keys:
+        raise ValueError("redundancy block artifact ordering does not reconcile")
+
+    result_summary_keys = tuple(
+        (item.first_factor, item.second_factor) for item in redundancy.summaries
+    )
+    if any(
+        item.source_dataset_identity != dataset.identity
+        or item.source_bounded_content_identity
+        != redundancy.source_bounded_content_identity
+        or item.source_daily_result_identity != redundancy.source_daily_result_identity
+        or item.specification_fingerprint != spec.fingerprint
+        for item in redundancy.summaries
+    ):
+        raise ValueError("redundancy summary provenance does not reconcile")
+    emitted_summary_keys = tuple(
+        (row["first_factor"], row["second_factor"])
+        for row in rows["factor_redundancy_summary.csv"][1]
+    )
+    if (
+        result_summary_keys != pairs
+        or emitted_summary_keys != pairs
+        or len(set(result_summary_keys)) != 28
+    ):
+        raise ValueError("redundancy summary dimensions or ordering do not reconcile")
+
+    block_map = {
+        (item.first_factor, item.second_factor, item.block_name): item
+        for item in redundancy.block_correlations
+    }
+    summary_map = {
+        (item.first_factor, item.second_factor): item for item in redundancy.summaries
+    }
+    for first, second in pairs:
+        summary = summary_map[(first, second)]
+        ordered_blocks = tuple(block_map[(first, second, block.name)] for block in blocks)
+        if summary.ordered_block_identities != tuple(item.identity for item in ordered_blocks):
+            raise ValueError("redundancy summary block identities do not reconcile")
+        expected_summary_daily = tuple(
+            daily_map[(signal_date, first, second)].identity
+            for signal_date in signal_dates
+        )
+        if summary.included_daily_identities != expected_summary_daily:
+            raise ValueError("redundancy summary daily membership does not reconcile")
+        for definition, item in zip(blocks, ordered_blocks, strict=True):
+            if (
+                item.block_start_date != definition.start_date
+                or item.block_end_date != definition.end_date
+            ):
+                raise ValueError("redundancy block boundaries do not reconcile")
+            expected_block_daily = tuple(
+                daily_map[(signal_date, first, second)].identity
+                for signal_date in signal_dates
+                if definition.start_date <= signal_date <= definition.end_date
+            )
+            if item.included_daily_identities != expected_block_daily:
+                raise ValueError("redundancy block daily membership does not reconcile")
+
+    for row, item in zip(
+        rows["factor_redundancy_by_block.csv"][1],
+        redundancy.block_correlations,
+        strict=True,
+    ):
+        expected_count = len(item.included_daily_identities)
+        expected_hash = _identity_collection_sha256(item.included_daily_identities)
+        projected = {
+            column: (
+                " | ".join(item.warnings)
+                if column == "warnings"
+                else getattr(item, column)
+            )
+            for column in _REDUNDANCY_BLOCK_COLUMNS
+            if column not in {
+                "included_daily_identity_count", "included_daily_identities_sha256",
+            }
+        }
+        projected.update({
+            "included_daily_identity_count": expected_count,
+            "included_daily_identities_sha256": expected_hash,
+        })
+        if (
+            row != projected
+            or item.included_daily_identity_count != expected_count
+            or row["included_daily_identity_count"] != expected_count
+            or item.included_daily_identities_sha256 != expected_hash
+            or row["included_daily_identities_sha256"] != expected_hash
+        ):
+            raise ValueError("redundancy block daily identity projection does not reconcile")
+    for row, item in zip(
+        rows["factor_redundancy_summary.csv"][1],
+        redundancy.summaries,
+        strict=True,
+    ):
+        daily_count = len(item.included_daily_identities)
+        daily_hash = _identity_collection_sha256(item.included_daily_identities)
+        block_count = len(item.ordered_block_identities)
+        block_hash = _identity_collection_sha256(item.ordered_block_identities)
+        projected = {
+            column: (
+                " | ".join(item.warnings)
+                if column == "warnings"
+                else getattr(item, column)
+            )
+            for column in _REDUNDANCY_SUMMARY_COLUMNS
+            if column not in {
+                "included_daily_identity_count", "included_daily_identities_sha256",
+                "block_identity_count", "block_identities_sha256",
+            }
+        }
+        projected.update({
+            "included_daily_identity_count": daily_count,
+            "included_daily_identities_sha256": daily_hash,
+            "block_identity_count": block_count,
+            "block_identities_sha256": block_hash,
+        })
+        if (
+            row != projected
+            or item.included_daily_identity_count != daily_count
+            or row["included_daily_identity_count"] != daily_count
+            or item.included_daily_identities_sha256 != daily_hash
+            or row["included_daily_identities_sha256"] != daily_hash
+            or item.ordered_block_identity_count != block_count
+            or row["block_identity_count"] != block_count
+            or item.ordered_block_identities_sha256 != block_hash
+            or row["block_identities_sha256"] != block_hash
+        ):
+            raise ValueError("redundancy summary identity projection does not reconcile")
+
+    forbidden = set(dataset.forbidden_predictor_columns)
+    redundancy_columns = set().union(
+        _REDUNDANCY_DAILY_COLUMNS,
+        _REDUNDANCY_BLOCK_COLUMNS,
+        _REDUNDANCY_SUMMARY_COLUMNS,
+    )
+    if forbidden.intersection(redundancy_columns):
+        raise ValueError("future-looking outcome field entered redundancy artifacts")
+    if {
+        "rank_ic", "high_minus_low_mean_spread", "redundant", "independent",
+        "selected", "rejected", "drop", "keep", "composite_score",
+    }.intersection(redundancy_columns):
+        raise ValueError("selection, outcome, or strategy field entered redundancy artifacts")
+
+
 def _validate_reconciliation(
     observation_index: Any,
     feature_panel: Any,
@@ -617,7 +993,11 @@ def _validate_reconciliation(
     dataset: Any,
     evaluation: Any,
     temporal: Any,
+    redundancy: Any,
     rows: Mapping[str, tuple[tuple[str, ...], list[dict[str, Any]]]],
+    *,
+    start_date: str,
+    end_date: str,
 ) -> None:
     observation_frame = observation_index.frame
     feature_frame = feature_panel.frame
@@ -699,6 +1079,13 @@ def _validate_reconciliation(
     if len(rows["observation_counts_by_date.csv"][1]) != len(observation_index.session_audit):
         raise ValueError("observation-count artifact dimensions do not reconcile")
     _validate_temporal_reconciliation(evaluation, temporal, rows)
+    _validate_redundancy_reconciliation(
+        dataset,
+        redundancy,
+        rows,
+        start_date=start_date,
+        end_date=end_date,
+    )
 
 
 def _validate_emitted(
@@ -706,6 +1093,7 @@ def _validate_emitted(
     rows: Mapping[str, tuple[tuple[str, ...], list[dict[str, Any]]]],
     evaluation: Any,
     temporal: Any,
+    redundancy: Any,
 ) -> None:
     if tuple(sorted(path.name for path in directory.iterdir())) != tuple(sorted(_REQUIRED_FILENAMES)):
         raise ValueError("experiment artifact set is incomplete")
@@ -729,7 +1117,11 @@ def _validate_emitted(
                 raise ValueError(f"emitted CSV row count mismatch: {filename}")
             emitted[filename] = actual
         for row in emitted[filename]:
-            if any(value.strip().lower() in {"<na>", "nan", "none", "inf", "-inf"} for value in row.values()):
+            if any(
+                value.strip().lower()
+                in {"<na>", "nan", "none", "inf", "-inf", "infinity", "-infinity"}
+                for value in row.values()
+            ):
                 raise ValueError(f"invalid missing/non-finite CSV token: {filename}")
     summary_rows = emitted["factor_summary.csv"]
     if "included_daily_identities" in _SUMMARY_COLUMNS:
@@ -805,7 +1197,74 @@ def _validate_emitted(
         raise ValueError("temporal review-status counts do not reconcile")
     if temporal_manifest.get("temporal_result_identity") != temporal.identity:
         raise ValueError("temporal manifest result identity does not reconcile")
-    (directory / "assumptions.md").read_text(encoding="utf-8")
+    for filename in (
+        "factor_redundancy_summary.csv",
+        "factor_redundancy_by_block.csv",
+        "factor_redundancy_by_date.csv",
+    ):
+        columns, expected_rows = rows[filename]
+        for actual, expected in zip(emitted[filename], expected_rows, strict=True):
+            serialized = {
+                column: str(_csv_value(expected.get(column))) for column in columns
+            }
+            if actual != serialized:
+                raise ValueError(f"redundancy CSV projection mismatch: {filename}")
+    for row in emitted["factor_redundancy_by_date.csv"]:
+        if date.fromisoformat(row["signal_date"]).isoformat() != row["signal_date"]:
+            raise ValueError("redundancy daily artifact contains a non-canonical date")
+    for row in emitted["factor_redundancy_by_block.csv"]:
+        for boundary in ("block_start_date", "block_end_date"):
+            if date.fromisoformat(row[boundary]).isoformat() != row[boundary]:
+                raise ValueError("redundancy block artifact contains a non-canonical date")
+    if "included_daily_identities" in _REDUNDANCY_BLOCK_COLUMNS:
+        raise ValueError("redundancy block artifact contains full daily identities")
+    if (
+        "included_daily_identities" in _REDUNDANCY_SUMMARY_COLUMNS
+        or "ordered_block_identities" in _REDUNDANCY_SUMMARY_COLUMNS
+    ):
+        raise ValueError("redundancy summary artifact contains full identity tuples")
+    redundancy_manifest = manifest.get("factor_redundancy", {})
+    redundancy_dates = sorted({
+        item.signal_date for item in redundancy.daily_correlations
+    })
+    defined = sum(
+        item.spearman_correlation is not None
+        for item in redundancy.daily_correlations
+    )
+    if (
+        redundancy_manifest.get("result_identity") != redundancy.identity
+        or redundancy_manifest.get("contract_name") != redundancy.contract_name
+        or redundancy_manifest.get("contract_version") != redundancy.contract_version
+        or redundancy_manifest.get("specification_fingerprint")
+        != redundancy.specification_fingerprint
+        or redundancy_manifest.get("source_dataset_identity")
+        != redundancy.source_dataset_identity
+        or redundancy_manifest.get("source_bounded_content_identity")
+        != redundancy.source_bounded_content_identity
+        or redundancy_manifest.get("factor_count") != 8
+        or redundancy_manifest.get("canonical_pair_count") != 28
+        or redundancy_manifest.get("temporal_block_count") != 4
+        or redundancy_manifest.get("block_result_count") != 112
+        or redundancy_manifest.get("summary_count") != 28
+        or redundancy_manifest.get("daily_record_count")
+        != len(redundancy.daily_correlations)
+        or redundancy_manifest.get("signal_date_count") != len(redundancy_dates)
+        or redundancy_manifest.get("dates_represented") != redundancy_dates
+        or redundancy_manifest.get("defined_daily_correlation_count") != defined
+        or redundancy_manifest.get("undefined_daily_correlation_count")
+        != len(redundancy.daily_correlations) - defined
+        or redundancy_manifest.get("artifacts") != [
+            "factor_redundancy_summary.csv",
+            "factor_redundancy_by_block.csv",
+            "factor_redundancy_by_date.csv",
+        ]
+        or redundancy_manifest.get("limitations") != list(_REDUNDANCY_LIMITATIONS)
+        or redundancy_manifest.get("completed") is not True
+    ):
+        raise ValueError("redundancy manifest does not reconcile")
+    assumptions = (directory / "assumptions.md").read_text(encoding="utf-8")
+    if any(item not in assumptions for item in _REDUNDANCY_ASSUMPTIONS):
+        raise ValueError("redundancy assumptions documentation is incomplete")
 
 
 def _publish_atomic(temporary: Path, output: Path) -> None:
@@ -903,6 +1362,10 @@ def run_neutral_panel_factor_evaluation(
         feature_panel,
         outcome_panel,
     )
+    redundancy = evaluate_panel_factor_redundancy(
+        dataset,
+        NEUTRAL_PANEL_FACTOR_REDUNDANCY_V1,
+    )
     evaluation = evaluate_point_in_time_panel_factors(
         dataset,
         NEUTRAL_TECHNICAL_FACTOR_EVALUATION_5_10_20_V1,
@@ -913,8 +1376,18 @@ def run_neutral_panel_factor_evaluation(
     )
     rows = _artifact_rows(evaluation, observation_index, feature_panel, outcome_panel)
     rows.update(_temporal_artifact_rows(temporal))
+    rows.update(_redundancy_artifact_rows(redundancy))
     _validate_reconciliation(
-        observation_index, feature_panel, outcome_panel, dataset, evaluation, temporal, rows,
+        observation_index,
+        feature_panel,
+        outcome_panel,
+        dataset,
+        evaluation,
+        temporal,
+        redundancy,
+        rows,
+        start_date=start,
+        end_date=end,
     )
     if _file_sha256(database) != database_digest:
         raise RuntimeError("market database changed during read-only evaluation")
@@ -1050,6 +1523,41 @@ def run_neutral_panel_factor_evaluation(
             },
             "limitations": list(_TEMPORAL_LIMITATIONS),
         },
+        "factor_redundancy": {
+            "contract_name": redundancy.contract_name,
+            "contract_version": redundancy.contract_version,
+            "specification_fingerprint": redundancy.specification_fingerprint,
+            "result_identity": redundancy.identity,
+            "source_dataset_identity": redundancy.source_dataset_identity,
+            "source_bounded_content_identity": redundancy.source_bounded_content_identity,
+            "factor_count": len(NEUTRAL_PANEL_FACTOR_REDUNDANCY_V1.factors),
+            "canonical_pair_count": len(NEUTRAL_PANEL_FACTOR_REDUNDANCY_V1.pairs),
+            "temporal_block_count": len(NEUTRAL_PANEL_FACTOR_REDUNDANCY_V1.blocks),
+            "block_result_count": len(redundancy.block_correlations),
+            "summary_count": len(redundancy.summaries),
+            "daily_record_count": len(redundancy.daily_correlations),
+            "signal_date_count": len({
+                item.signal_date for item in redundancy.daily_correlations
+            }),
+            "dates_represented": sorted({
+                item.signal_date for item in redundancy.daily_correlations
+            }),
+            "defined_daily_correlation_count": sum(
+                item.spearman_correlation is not None
+                for item in redundancy.daily_correlations
+            ),
+            "undefined_daily_correlation_count": sum(
+                item.spearman_correlation is None
+                for item in redundancy.daily_correlations
+            ),
+            "artifacts": [
+                "factor_redundancy_summary.csv",
+                "factor_redundancy_by_block.csv",
+                "factor_redundancy_by_date.csv",
+            ],
+            "completed": True,
+            "limitations": list(_REDUNDANCY_LIMITATIONS),
+        },
         "counts": {
             "observation_rows": observation_index.total_membership_row_count,
             "signal_dates": (
@@ -1075,7 +1583,7 @@ def run_neutral_panel_factor_evaluation(
             _ASSUMPTIONS, encoding="utf-8", newline="\n",
         )
         _write_json(temporary / "experiment_manifest.json", manifest)
-        _validate_emitted(temporary, rows, evaluation, temporal)
+        _validate_emitted(temporary, rows, evaluation, temporal, redundancy)
         if _file_sha256(database) != database_digest:
             raise RuntimeError("market database changed before publication")
         _publish_atomic(temporary, output)
@@ -1096,6 +1604,7 @@ def run_neutral_panel_factor_evaluation(
         "research_dataset": dataset,
         "evaluation": evaluation,
         "temporal_stability": temporal,
+        "factor_redundancy": redundancy,
     }
 
 

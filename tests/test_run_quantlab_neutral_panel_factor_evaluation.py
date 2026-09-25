@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -12,6 +13,7 @@ import pandas as pd
 import pytest
 
 from quantlab.evaluation import (
+    NEUTRAL_PANEL_FACTOR_REDUNDANCY_V1,
     NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V2,
     NEUTRAL_TECHNICAL_FACTOR_EVALUATION_5_10_20_V1,
     PanelTemporalDirection,
@@ -289,6 +291,208 @@ def _temporal(evaluation: Any):
     )
 
 
+def _redundancy(dataset: Any, dates: tuple[str, ...]):
+    spec = NEUTRAL_PANEL_FACTOR_REDUNDANCY_V1
+    daily = []
+    blocks = []
+    summaries = []
+    for pair_index, (first, second) in enumerate(spec.pairs):
+        pair_daily = []
+        correlations = (0.75, -0.5) if pair_index == 0 else (None, None)
+        for signal_date, correlation in zip(dates, correlations, strict=True):
+            identity = f"redundancy-daily-{first}-{second}-{signal_date}"
+            item = SimpleNamespace(
+                source_dataset_identity=dataset.identity,
+                source_bounded_content_identity="bounded-predictors-id",
+                specification_fingerprint=spec.fingerprint,
+                signal_date=signal_date,
+                first_factor=first,
+                second_factor=second,
+                observation_count=20,
+                pairwise_finite_count=(20 if correlation is not None else 2),
+                pairwise_coverage_pct=(100.0 if correlation is not None else 10.0),
+                spearman_correlation=correlation,
+                absolute_spearman_correlation=(
+                    None if correlation is None else abs(correlation)
+                ),
+                undefined_reason=(
+                    None
+                    if correlation is not None
+                    else "fewer_than_minimum_pairwise_finite_observations"
+                ),
+                pairwise_sample_evidence_sha256=("a" if correlation is not None else "b") * 64,
+                identity=identity,
+            )
+            daily.append(item)
+            pair_daily.append(item)
+        block_ids = []
+        for block in spec.blocks:
+            included = tuple(
+                item.identity
+                for item in pair_daily
+                if block.start_date <= item.signal_date <= block.end_date
+            )
+            defined_values = tuple(
+                item.spearman_correlation
+                for item in pair_daily
+                if item.identity in included and item.spearman_correlation is not None
+            )
+            block_identity = f"redundancy-block-{first}-{second}-{block.name}"
+            block_ids.append(block_identity)
+            included_hash = runner._identity_collection_sha256(included)
+            mean = (
+                None if not defined_values else sum(defined_values) / len(defined_values)
+            )
+            blocks.append(SimpleNamespace(
+                source_dataset_identity=dataset.identity,
+                source_bounded_content_identity="bounded-predictors-id",
+                source_daily_result_identity="redundancy-daily-result-id",
+                specification_fingerprint=spec.fingerprint,
+                first_factor=first,
+                second_factor=second,
+                block_name=block.name,
+                block_start_date=block.start_date,
+                block_end_date=block.end_date,
+                total_signal_date_count=len(included),
+                minimum_sample_date_count=len(defined_values),
+                defined_correlation_date_count=len(defined_values),
+                correlation_coverage_pct=(
+                    0.0 if not included else len(defined_values) / len(included) * 100.0
+                ),
+                mean_daily_correlation=mean,
+                median_daily_correlation=mean,
+                population_std_daily_correlation=(
+                    0.625 if len(defined_values) == 2 else (
+                        0.0 if len(defined_values) == 1 else None
+                    )
+                ),
+                minimum_daily_correlation=(
+                    None if not defined_values else min(defined_values)
+                ),
+                maximum_daily_correlation=(
+                    None if not defined_values else max(defined_values)
+                ),
+                mean_daily_absolute_correlation=(
+                    None
+                    if not defined_values
+                    else sum(abs(value) for value in defined_values) / len(defined_values)
+                ),
+                median_daily_absolute_correlation=(
+                    None if not defined_values else 0.625
+                ),
+                positive_correlation_date_count=sum(value > 0 for value in defined_values),
+                zero_correlation_date_count=sum(value == 0 for value in defined_values),
+                negative_correlation_date_count=sum(value < 0 for value in defined_values),
+                positive_correlation_rate=(
+                    None
+                    if not defined_values
+                    else sum(value > 0 for value in defined_values) / len(defined_values)
+                ),
+                zero_correlation_rate=(
+                    None
+                    if not defined_values
+                    else sum(value == 0 for value in defined_values) / len(defined_values)
+                ),
+                negative_correlation_rate=(
+                    None
+                    if not defined_values
+                    else sum(value < 0 for value in defined_values) / len(defined_values)
+                ),
+                average_pairwise_finite_count=(
+                    None if not included else (20.0 if defined_values else 2.0)
+                ),
+                median_pairwise_finite_count=(
+                    None if not included else (20.0 if defined_values else 2.0)
+                ),
+                included_daily_identities=included,
+                included_daily_identity_count=len(included),
+                included_daily_identities_sha256=included_hash,
+                warnings=("synthetic_redundancy_block",),
+                identity=block_identity,
+            ))
+        included_daily = tuple(item.identity for item in pair_daily)
+        included_daily_hash = runner._identity_collection_sha256(included_daily)
+        block_tuple = tuple(block_ids)
+        block_hash = runner._identity_collection_sha256(block_tuple)
+        defined = tuple(
+            item.spearman_correlation
+            for item in pair_daily
+            if item.spearman_correlation is not None
+        )
+        summaries.append(SimpleNamespace(
+            source_dataset_identity=dataset.identity,
+            source_bounded_content_identity="bounded-predictors-id",
+            source_daily_result_identity="redundancy-daily-result-id",
+            specification_fingerprint=spec.fingerprint,
+            first_factor=first,
+            second_factor=second,
+            total_signal_date_count=len(dates),
+            minimum_sample_date_count=len(defined),
+            defined_correlation_date_count=len(defined),
+            correlation_coverage_pct=len(defined) / len(dates) * 100.0,
+            mean_daily_correlation=(None if not defined else sum(defined) / len(defined)),
+            median_daily_correlation=(None if not defined else 0.125),
+            population_std_daily_correlation=(None if not defined else 0.625),
+            minimum_daily_correlation=(None if not defined else min(defined)),
+            maximum_daily_correlation=(None if not defined else max(defined)),
+            mean_daily_absolute_correlation=(
+                None if not defined else sum(abs(value) for value in defined) / len(defined)
+            ),
+            median_daily_absolute_correlation=(None if not defined else 0.625),
+            positive_correlation_date_count=sum(value > 0 for value in defined),
+            zero_correlation_date_count=sum(value == 0 for value in defined),
+            negative_correlation_date_count=sum(value < 0 for value in defined),
+            positive_correlation_rate=(
+                None if not defined else sum(value > 0 for value in defined) / len(defined)
+            ),
+            zero_correlation_rate=(
+                None if not defined else sum(value == 0 for value in defined) / len(defined)
+            ),
+            negative_correlation_rate=(
+                None if not defined else sum(value < 0 for value in defined) / len(defined)
+            ),
+            average_pairwise_finite_count=(None if not defined else 20.0),
+            median_pairwise_finite_count=(None if not defined else 20.0),
+            included_daily_identities=included_daily,
+            included_daily_identity_count=len(included_daily),
+            included_daily_identities_sha256=included_daily_hash,
+            ordered_block_identities=block_tuple,
+            ordered_block_identity_count=len(block_tuple),
+            ordered_block_identities_sha256=block_hash,
+            blocks_meeting_temporal_review_count=0,
+            chronological_sign_flip_count=(0 if not defined else 1),
+            largest_absolute_block_mean_concentration=(None if not defined else 1.0),
+            minimum_block_mean_correlation=(None if not defined else 0.125),
+            maximum_block_mean_correlation=(None if not defined else 0.125),
+            range_block_mean_correlation=(None if not defined else 0.0),
+            minimum_block_mean_absolute_daily_correlation=(
+                None if not defined else 0.625
+            ),
+            maximum_block_mean_absolute_daily_correlation=(
+                None if not defined else 0.625
+            ),
+            range_block_mean_absolute_daily_correlation=(
+                None if not defined else 0.0
+            ),
+            all_blocks_positive=False,
+            all_blocks_negative=False,
+            warnings=("descriptive_only",),
+            identity=f"redundancy-summary-{first}-{second}",
+        ))
+    return SimpleNamespace(
+        contract_name="quantlab.panel_factor_redundancy",
+        contract_version="v1",
+        source_dataset_identity=dataset.identity,
+        source_bounded_content_identity="bounded-predictors-id",
+        specification_fingerprint=spec.fingerprint,
+        source_daily_result_identity="redundancy-daily-result-id",
+        daily_correlations=tuple(daily),
+        block_correlations=tuple(blocks),
+        summaries=tuple(summaries),
+        identity="redundancy-result-id",
+    )
+
+
 def _install_pipeline(monkeypatch: pytest.MonkeyPatch, database: Path):
     dates = ("2021-01-04", "2021-01-05")
     keys = tuple((signal_date, symbol) for signal_date in dates for symbol in ("AAA", "BBB"))
@@ -351,8 +555,15 @@ def _install_pipeline(monkeypatch: pytest.MonkeyPatch, database: Path):
         identity="outcome-panel-id",
         outcome_content_identity="outcome-content",
     )
+    dataset_frame_calls: list[tuple[tuple[Any, ...], dict[str, Any]]] = []
+
+    def evaluation_frame():
+        dataset_frame_calls.append(((), {}))
+        return base.copy(deep=True)
+
     dataset = SimpleNamespace(
-        evaluation_frame=lambda: base.copy(deep=True),
+        evaluation_frame=evaluation_frame,
+        session_audit=audits,
         observation_row_count=4,
         observation_index_identity="observation-id",
         feature_panel_identity="feature-panel-id",
@@ -363,12 +574,14 @@ def _install_pipeline(monkeypatch: pytest.MonkeyPatch, database: Path):
     )
     evaluation = _evaluation(dates)
     temporal = _temporal(evaluation)
+    redundancy = _redundancy(dataset, dates)
     calls: dict[str, list[tuple[tuple[Any, ...], dict[str, Any]]]] = {
         name: [] for name in (
             "snapshot", "coverage", "universe", "observation", "source",
-            "features", "outcomes", "dataset", "evaluation", "temporal",
+            "features", "outcomes", "dataset", "redundancy", "evaluation", "temporal",
         )
     }
+    calls["dataset_frame"] = dataset_frame_calls
 
     def install(name: str, value: Any):
         def call(*args: Any, **kwargs: Any):
@@ -399,6 +612,11 @@ def _install_pipeline(monkeypatch: pytest.MonkeyPatch, database: Path):
         runner, "build_point_in_time_research_dataset", install("dataset", dataset),
     )
     monkeypatch.setattr(
+        runner,
+        "evaluate_panel_factor_redundancy",
+        install("redundancy", redundancy),
+    )
+    monkeypatch.setattr(
         runner, "evaluate_point_in_time_panel_factors", install("evaluation", evaluation),
     )
     monkeypatch.setattr(
@@ -417,6 +635,7 @@ def _install_pipeline(monkeypatch: pytest.MonkeyPatch, database: Path):
         dataset=dataset,
         evaluation=evaluation,
         temporal=temporal,
+        redundancy=redundancy,
         dates=dates,
     )
 
@@ -453,6 +672,10 @@ def test_exact_one_time_orchestration_and_identity_propagation(
     assert calls["observation"][0][1]["start_date"] == "2021-01-04"
     assert calls["observation"][0][1]["through_date"] == "2021-01-05"
     assert calls["outcomes"][0][0] == (objects.observation, objects.snapshot)
+    assert calls["redundancy"] == [((
+        objects.dataset,
+        NEUTRAL_PANEL_FACTOR_REDUNDANCY_V1,
+    ), {})]
     assert calls["evaluation"][0][0][0] is objects.dataset
     assert calls["temporal"] == [((
         objects.evaluation,
@@ -465,6 +688,8 @@ def test_exact_one_time_orchestration_and_identity_propagation(
     assert manifest["evaluation"]["result_identity"] == "evaluation-id"
     assert manifest["temporal_stability"]["source_evaluation_result_identity"] == "evaluation-id"
     assert result["temporal_stability"] is objects.temporal
+    assert manifest["factor_redundancy"]["source_dataset_identity"] == "dataset-id"
+    assert result["factor_redundancy"] is objects.redundancy
 
 
 def test_exact_artifacts_schemas_dimensions_order_and_complete_population(
@@ -478,6 +703,15 @@ def test_exact_artifacts_schemas_dimensions_order_and_complete_population(
     )
     summary_columns, summaries = _read_csv(output / "factor_summary.csv")
     daily_columns, daily = _read_csv(output / "factor_by_date.csv")
+    redundancy_summary_columns, redundancy_summaries = _read_csv(
+        output / "factor_redundancy_summary.csv",
+    )
+    redundancy_block_columns, redundancy_blocks = _read_csv(
+        output / "factor_redundancy_by_block.csv",
+    )
+    redundancy_daily_columns, redundancy_daily = _read_csv(
+        output / "factor_redundancy_by_date.csv",
+    )
     coverage_columns, coverage = _read_csv(output / "factor_coverage.csv")
     observation_columns, observations = _read_csv(output / "observation_counts_by_date.csv")
     temporal_summary_columns, temporal_summaries = _read_csv(
@@ -496,9 +730,15 @@ def test_exact_artifacts_schemas_dimensions_order_and_complete_population(
     assert temporal_summary_columns == runner._TEMPORAL_SUMMARY_COLUMNS
     assert temporal_block_columns == runner._TEMPORAL_BLOCK_COLUMNS
     assert temporal_coverage_columns == runner._TEMPORAL_COVERAGE_COLUMNS
+    assert redundancy_summary_columns == runner._REDUNDANCY_SUMMARY_COLUMNS
+    assert redundancy_block_columns == runner._REDUNDANCY_BLOCK_COLUMNS
+    assert redundancy_daily_columns == runner._REDUNDANCY_DAILY_COLUMNS
     assert (len(summaries), len(daily), len(coverage), len(observations)) == (48, 96, 48, 2)
     assert (len(temporal_summaries), len(temporal_blocks), len(temporal_coverage)) == (
         48, 192, 48,
+    )
+    assert (len(redundancy_summaries), len(redundancy_blocks), len(redundancy_daily)) == (
+        28, 112, len(objects.dates) * 28,
     )
     assert [row["signal_date"] for row in observations] == list(objects.dates)
     assert all(row["observation_row_count"] == "2" for row in observations)
@@ -508,6 +748,22 @@ def test_exact_artifacts_schemas_dimensions_order_and_complete_population(
     ] == [
         (item.factor, item.horizon_sessions, item.outcome_field, item.signal_date)
         for item in objects.evaluation.daily_evaluations
+    ]
+    assert [
+        (row["signal_date"], row["first_factor"], row["second_factor"])
+        for row in redundancy_daily
+    ] == [
+        (signal_date, first, second)
+        for signal_date in objects.dates
+        for first, second in NEUTRAL_PANEL_FACTOR_REDUNDANCY_V1.pairs
+    ]
+    assert [
+        (row["first_factor"], row["second_factor"], row["block_name"])
+        for row in redundancy_blocks
+    ] == [
+        (first, second, block.name)
+        for first, second in NEUTRAL_PANEL_FACTOR_REDUNDANCY_V1.pairs
+        for block in NEUTRAL_PANEL_FACTOR_REDUNDANCY_V1.blocks
     ]
 
 
@@ -519,6 +775,13 @@ def test_compact_identity_projection_nulls_json_and_no_evidence_payloads(
     output = result["output_root"]
     summary_columns, summaries = _read_csv(output / "factor_summary.csv")
     daily_columns, daily = _read_csv(output / "factor_by_date.csv")
+    redundancy_summary_columns, redundancy_summaries = _read_csv(
+        output / "factor_redundancy_summary.csv",
+    )
+    redundancy_block_columns, redundancy_blocks = _read_csv(
+        output / "factor_redundancy_by_block.csv",
+    )
+    _, redundancy_daily = _read_csv(output / "factor_redundancy_by_date.csv")
     assert "included_daily_identities" not in summary_columns
     assert "eligible_evidence" not in daily_columns
     assert "observation_status_evidence" not in daily_columns
@@ -529,9 +792,62 @@ def test_compact_identity_projection_nulls_json_and_no_evidence_payloads(
     assert summaries[0]["included_daily_identities_sha256"] == expected
     assert daily[0]["rank_ic"] == ""
     assert daily[0]["high_minus_low_mean_spread"] == ""
+    assert "included_daily_identities" not in redundancy_summary_columns
+    assert "ordered_block_identities" not in redundancy_summary_columns
+    assert "included_daily_identities" not in redundancy_block_columns
+    assert not {
+        "redundant", "independent", "selected", "rejected", "drop", "keep",
+    }.intersection(redundancy_summary_columns)
+    first_pair = NEUTRAL_PANEL_FACTOR_REDUNDANCY_V1.pairs[0]
+    first_pair_rows = [
+        row for row in redundancy_daily
+        if (row["first_factor"], row["second_factor"]) == first_pair
+    ]
+    assert [row["spearman_correlation"] for row in first_pair_rows] == ["0.75", "-0.5"]
+    assert [row["absolute_spearman_correlation"] for row in first_pair_rows] == [
+        "0.75", "0.5",
+    ]
+    undefined = redundancy_daily[2]
+    assert undefined["spearman_correlation"] == ""
+    assert undefined["absolute_spearman_correlation"] == ""
+    assert undefined["undefined_reason"] == (
+        "fewer_than_minimum_pairwise_finite_observations"
+    )
+    assert redundancy_blocks[0]["included_daily_identity_count"] == "0"
+    assert redundancy_blocks[0]["included_daily_identities_sha256"] == (
+        runner._identity_collection_sha256(())
+    )
+    assert redundancy_summaries[0]["included_daily_identity_count"] == "2"
+    assert redundancy_summaries[0]["block_identity_count"] == "4"
+    assert redundancy_summaries[0]["included_daily_identities_sha256"] == (
+        objects.redundancy.summaries[0].included_daily_identities_sha256
+    )
+    assert redundancy_summaries[0]["block_identities_sha256"] == (
+        objects.redundancy.summaries[0].ordered_block_identities_sha256
+    )
     manifest_text = (output / "experiment_manifest.json").read_text(encoding="utf-8")
     assert all(token not in manifest_text for token in ("NaN", "Infinity", "<NA>"))
     assert json.loads(manifest_text)["completed"] is True
+    redundancy_manifest = result["manifest"]["factor_redundancy"]
+    assert redundancy_manifest["result_identity"] == "redundancy-result-id"
+    assert redundancy_manifest["specification_fingerprint"] == (
+        NEUTRAL_PANEL_FACTOR_REDUNDANCY_V1.fingerprint
+    )
+    assert redundancy_manifest["daily_record_count"] == len(objects.dates) * 28
+    assert redundancy_manifest["factor_count"] == 8
+    assert redundancy_manifest["canonical_pair_count"] == 28
+    assert redundancy_manifest["temporal_block_count"] == 4
+    assert redundancy_manifest["block_result_count"] == 112
+    assert redundancy_manifest["dates_represented"] == list(objects.dates)
+    assert redundancy_manifest["defined_daily_correlation_count"] == 2
+    assert redundancy_manifest["undefined_daily_correlation_count"] == (
+        len(objects.dates) * 28 - 2
+    )
+    assert set(result["manifest"]["artifacts"]) == set(runner._REQUIRED_FILENAMES)
+    assert redundancy_manifest["limitations"] == list(runner._REDUNDANCY_LIMITATIONS)
+    assumptions = (output / "assumptions.md").read_text(encoding="utf-8")
+    assert "predictor projection" in assumptions
+    assert "No redundancy threshold or factor-selection decision" in assumptions
 
 
 def test_temporal_projection_hashes_review_statuses_and_manifest_reconcile(
@@ -626,6 +942,62 @@ def test_temporal_corruption_aborts_overwrite_and_preserves_previous_target(
     assert not tuple(output.parent.glob(f".{output.name}.tmp-*"))
 
 
+@pytest.mark.parametrize(
+    ("corruption", "message"),
+    (
+        ("source_identity", "source identity"),
+        ("pair_dimensions", "summary dimensions"),
+        ("block_dimensions", "block dimensions"),
+        ("ordering", "summary dimensions"),
+        ("duplicate_daily", "daily pair/date dimensions"),
+        ("block_membership", "block daily membership"),
+    ),
+)
+def test_redundancy_corruption_aborts_overwrite_and_preserves_previous_target(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    corruption: str,
+    message: str,
+) -> None:
+    database, _, _, first = _run(monkeypatch, tmp_path)
+    output = first["output_root"]
+    previous_manifest = (output / "experiment_manifest.json").read_bytes()
+    _, objects = _install_pipeline(monkeypatch, database)
+    if corruption == "source_identity":
+        objects.redundancy.source_dataset_identity = "wrong-source"
+    elif corruption == "pair_dimensions":
+        objects.redundancy.summaries = objects.redundancy.summaries[:-1]
+    elif corruption == "block_dimensions":
+        objects.redundancy.block_correlations = (
+            objects.redundancy.block_correlations[:-1]
+        )
+    elif corruption == "ordering":
+        values = list(objects.redundancy.summaries)
+        values[0], values[1] = values[1], values[0]
+        objects.redundancy.summaries = tuple(values)
+    elif corruption == "block_membership":
+        block = objects.redundancy.block_correlations[0]
+        block.included_daily_identities = ("wrong-daily-identity",)
+        block.included_daily_identity_count = 1
+        block.included_daily_identities_sha256 = runner._identity_collection_sha256(
+            block.included_daily_identities,
+        )
+    else:
+        values = list(objects.redundancy.daily_correlations)
+        values[1] = values[0]
+        objects.redundancy.daily_correlations = tuple(values)
+    with pytest.raises(ValueError, match=message):
+        runner.run_neutral_panel_factor_evaluation(
+            database_path=database,
+            start_date="2021-01-04",
+            end_date="2021-01-05",
+            output_root=output,
+            overwrite=True,
+        )
+    assert (output / "experiment_manifest.json").read_bytes() == previous_manifest
+    assert not tuple(output.parent.glob(f".{output.name}.tmp-*"))
+
+
 def test_database_is_unchanged_and_no_network_or_current_vn100_path(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -673,8 +1045,42 @@ def test_overwrite_is_exact_and_failed_validation_preserves_previous_target(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
-    _, _, _, first = _run(monkeypatch, tmp_path)
+    legacy_output = tmp_path / "result"
+    legacy_output.mkdir()
+    legacy_files = tuple(
+        name for name in runner._REQUIRED_FILENAMES
+        if not name.startswith("factor_redundancy_")
+    )
+    assert len(legacy_files) == 9
+    for filename in legacy_files:
+        (legacy_output / filename).write_text("legacy-nine-file-target", encoding="utf-8")
+    original_validate_emitted = runner._validate_emitted
+    monkeypatch.setattr(
+        runner,
+        "_validate_emitted",
+        lambda *args, **kwargs: (_ for _ in ()).throw(
+            ValueError("injected legacy-target validation failure")
+        ),
+    )
+    with pytest.raises(ValueError, match="legacy-target"):
+        _run(monkeypatch, tmp_path, overwrite=True)
+    assert tuple(sorted(path.name for path in legacy_output.iterdir())) == tuple(
+        sorted(legacy_files)
+    )
+    assert all(
+        path.read_text(encoding="utf-8") == "legacy-nine-file-target"
+        for path in legacy_output.iterdir()
+    )
+    monkeypatch.setattr(runner, "_validate_emitted", original_validate_emitted)
+    _, _, _, first = _run(monkeypatch, tmp_path, overwrite=True)
     output = first["output_root"]
+    assert tuple(sorted(path.name for path in output.iterdir())) == tuple(
+        sorted(runner._REQUIRED_FILENAMES)
+    )
+    assert all(
+        path.read_text(encoding="utf-8") != "legacy-nine-file-target"
+        for path in output.iterdir()
+    )
     previous_manifest = (output / "experiment_manifest.json").read_bytes()
     _run(monkeypatch, tmp_path, overwrite=True)
     assert output.is_dir()
@@ -701,6 +1107,7 @@ def test_cli_defaults_default_output_and_fresh_import_isolation(tmp_path: Path) 
     assert arguments.maximum_staleness_sessions == 5
     assert arguments.cache_root is None
     assert arguments.cache_codec == "npz_numeric_v1"
+    assert runner.RUNNER_VERSION == "v3"
     expected = runner.PROJECT_ROOT / "research_results" / (
         "quantlab_neutral_panel_factor_evaluation_2021-01-04_2021-01-05"
     )
@@ -709,16 +1116,31 @@ def test_cli_defaults_default_output_and_fresh_import_isolation(tmp_path: Path) 
     ) == expected.resolve()
     script = """
 import json
+import socket
+import sqlite3
 import sys
+sqlite3.connect = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError('database'))
+socket.create_connection = lambda *args, **kwargs: (_ for _ in ()).throw(RuntimeError('network'))
 import research.run_quantlab_neutral_panel_factor_evaluation
-forbidden = {'backtesting.engine', 'strategy.paper_v2_scanner', 'vnstock'}
+forbidden = {
+    'backtesting.engine', 'backtesting.trade', 'backtesting.portfolio_simulator',
+    'backtesting.walk_forward', 'backtesting.walk_forward_optimizer',
+    'quantlab.candidates.frozen_q70', 'quantlab.alpha.frozen_q70',
+    'strategy.paper_v2_scanner', 'vnstock',
+}
 print(json.dumps(sorted(forbidden.intersection(sys.modules))))
 """
     completed = subprocess.run(
         [sys.executable, "-c", script],
         cwd=runner.PROJECT_ROOT,
+        env=dict(
+            os.environ,
+            MARKET_DATABASE_PATH=str(tmp_path / "must-not-exist.db"),
+            PYTHONDONTWRITEBYTECODE="1",
+        ),
         check=True,
         capture_output=True,
         text=True,
     )
     assert json.loads(completed.stdout) == []
+    assert not (tmp_path / "must-not-exist.db").exists()
