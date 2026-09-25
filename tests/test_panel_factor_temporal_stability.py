@@ -12,10 +12,12 @@ import pytest
 
 from quantlab.evaluation import (
     NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V1,
+    NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V2,
     NEUTRAL_TECHNICAL_FACTOR_EVALUATION_5_10_20_V1,
     PanelDailyFactorEvaluation,
     PanelFactorHorizonSummary,
     PanelFactorTemporalStabilitySpec,
+    PanelTemporalDirection,
     PanelTemporalBlock,
     PointInTimePanelFactorEvaluationResult,
     evaluate_panel_factor_temporal_stability,
@@ -23,7 +25,8 @@ from quantlab.evaluation import (
 
 
 _PANEL_SPEC = NEUTRAL_TECHNICAL_FACTOR_EVALUATION_5_10_20_V1
-_TEMPORAL_SPEC = NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V1
+_V1_TEMPORAL_SPEC = NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V1
+_TEMPORAL_SPEC = NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V2
 
 
 def _daily(
@@ -266,6 +269,8 @@ def test_directional_flags_all_positive_and_zero_aware_sign_flips() -> None:
         _threshold(),
     ))
     assert supported.coverage_sufficient_for_temporal_review
+    assert supported.ic_consistent_direction is PanelTemporalDirection.POSITIVE
+    assert supported.spread_consistent_direction is PanelTemporalDirection.POSITIVE
     assert supported.directionally_consistent_ic
     assert supported.directionally_consistent_spread
     assert supported.descriptive_temporal_support
@@ -277,6 +282,65 @@ def test_directional_flags_all_positive_and_zero_aware_sign_flips() -> None:
     ))
     assert zero_summary.ic_sign_flip_count == 2
     assert zero_summary.spread_sign_flip_count == 2
+    assert zero_summary.ic_consistent_direction is PanelTemporalDirection.MIXED
+
+
+@pytest.mark.parametrize(
+    ("values", "threshold", "expected"),
+    (
+        ((1.0, 1.0, 1.0, 1.0), 1, PanelTemporalDirection.POSITIVE),
+        ((-1.0, -1.0, -1.0, -1.0), 1, PanelTemporalDirection.NEGATIVE),
+        ((-1.0, -1.0, -1.0, 1.0), 1, PanelTemporalDirection.NEGATIVE),
+        ((1.0, 1.0, -1.0, -1.0), 1, PanelTemporalDirection.MIXED),
+        ((1.0, 1.0, 1.0, 1.0), 30, PanelTemporalDirection.UNDEFINED),
+    ),
+)
+def test_neutral_direction_classification(
+    values: tuple[float, ...],
+    threshold: int,
+    expected: PanelTemporalDirection,
+) -> None:
+    dates = ("2019-01-02", "2021-01-04", "2023-01-03", "2025-01-03")
+    evidence = dict(zip(dates, values, strict=True))
+    summary = _target(evaluate_panel_factor_temporal_stability(
+        _source(dates, ic_by_date=evidence, spread_by_date=evidence),
+        _threshold(threshold),
+    ))
+    assert summary.ic_consistent_direction is expected
+    assert summary.directionally_consistent_ic == (
+        expected in {
+            PanelTemporalDirection.POSITIVE,
+            PanelTemporalDirection.NEGATIVE,
+        }
+    )
+
+
+def test_negative_temporal_support_and_direction_mismatch_are_neutral() -> None:
+    dates = ("2019-01-02", "2021-01-04", "2023-01-03", "2025-01-03")
+    negative = {signal_date: -1.0 for signal_date in dates}
+    positive = {signal_date: 1.0 for signal_date in dates}
+    negative_support = _target(evaluate_panel_factor_temporal_stability(
+        _source(dates, ic_by_date=negative, spread_by_date=negative), _threshold(),
+    ))
+    assert negative_support.ic_consistent_direction is PanelTemporalDirection.NEGATIVE
+    assert negative_support.spread_consistent_direction is PanelTemporalDirection.NEGATIVE
+    assert negative_support.directionally_consistent_ic
+    assert negative_support.directionally_consistent_spread
+    assert negative_support.descriptive_temporal_support
+    assert negative_support.all_blocks_negative_ic
+    assert negative_support.all_blocks_negative_spread
+    mismatch = _target(evaluate_panel_factor_temporal_stability(
+        _source(dates, ic_by_date=positive, spread_by_date=negative), _threshold(),
+    ))
+    assert mismatch.ic_consistent_direction is PanelTemporalDirection.POSITIVE
+    assert mismatch.spread_consistent_direction is PanelTemporalDirection.NEGATIVE
+    assert mismatch.directionally_consistent_ic and mismatch.directionally_consistent_spread
+    assert not mismatch.descriptive_temporal_support
+
+    return_shaped = evaluate_panel_factor_temporal_stability(
+        _source(dates, ic_by_date=negative, spread_by_date=negative), _threshold(),
+    ).summary_for("return_3d_pct", 5, "stock_forward_return_pct")
+    assert return_shaped.descriptive_temporal_support
 
 
 def test_concentration_and_zero_denominator_behavior() -> None:
@@ -307,6 +371,33 @@ def test_builtin_dimensions_order_and_no_adx_special_case() -> None:
     atr = result.summary_for("atr_percent_14", 5, "stock_forward_return_pct")
     assert adx.mean_ic_across_block_means == atr.mean_ic_across_block_means
     assert result.limitations_metadata["factor_selection_or_weighting_authority"] is False
+
+
+def test_v2_identity_changes_direction_contract_without_changing_block_statistics() -> None:
+    dates = ("2019-01-02", "2021-01-04", "2023-01-03", "2025-01-03")
+    negative = {signal_date: -1.0 for signal_date in dates}
+    source = _source(dates, ic_by_date=negative, spread_by_date=negative)
+    v1 = evaluate_panel_factor_temporal_stability(
+        source,
+        replace(_V1_TEMPORAL_SPEC, minimum_defined_dates_per_block=1),
+    )
+    v2 = evaluate_panel_factor_temporal_stability(source, _threshold())
+    assert _V1_TEMPORAL_SPEC.fingerprint != _TEMPORAL_SPEC.fingerprint
+    assert v1.identity != v2.identity
+    v1_block = v1.block_for(
+        "return_3d_pct", 5, "stock_forward_return_pct", "early_2018_2020",
+    )
+    v2_block = v2.block_for(
+        "return_3d_pct", 5, "stock_forward_return_pct", "early_2018_2020",
+    )
+    assert v1_block.mean_daily_rank_ic == v2_block.mean_daily_rank_ic
+    assert v1_block.mean_daily_mean_spread == v2_block.mean_daily_mean_spread
+    assert v1_block.included_daily_identities == v2_block.included_daily_identities
+    v1_summary = v1.summary_for("return_3d_pct", 5, "stock_forward_return_pct")
+    v2_summary = v2.summary_for("return_3d_pct", 5, "stock_forward_return_pct")
+    assert not v1_summary.directionally_consistent_ic
+    assert v2_summary.directionally_consistent_ic
+    assert v2_summary.ic_consistent_direction is PanelTemporalDirection.NEGATIVE
 
 
 @pytest.mark.parametrize("corruption", ("duplicate", "missing", "extra", "out_of_range"))

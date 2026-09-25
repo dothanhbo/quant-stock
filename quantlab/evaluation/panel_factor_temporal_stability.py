@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import date, timedelta
+from enum import Enum
 from hashlib import sha256
 import math
 from statistics import median
@@ -21,6 +22,7 @@ from .panel_factor_contracts import (
 
 TEMPORAL_STABILITY_CONTRACT = "quantlab.panel_factor_temporal_stability"
 TEMPORAL_STABILITY_VERSION = "v1"
+TEMPORAL_STABILITY_VERSION_V2 = "v2"
 OVERALL_START_DATE = "2018-08-07"
 OVERALL_END_DATE = "2026-09-17"
 DAILY_AGGREGATION_RULE = "defined_daily_statistics_equal_weight_within_calendar_block_v1"
@@ -30,7 +32,18 @@ SIGN_FLIP_RULE = "chronological_defined_blocks_only_zero_is_a_distinct_sign_v1"
 CONCENTRATION_RULE = "largest_absolute_block_mean_divided_by_sum_absolute_block_means_v1"
 COVERAGE_RULE = "at_least_three_of_four_blocks_each_with_minimum_defined_dates_v1"
 DIRECTION_RULE = "coverage_sufficient_and_at_least_three_eligible_blocks_strictly_positive_v1"
+DIRECTION_RULE_V2 = (
+    "coverage_sufficient_then_at_least_three_eligible_blocks_strictly_positive_or_negative_"
+    "else_mixed_with_zero_distinct_and_matching_nonundefined_ic_spread_required_for_support_v2"
+)
 DESCRIPTIVE_RESTRICTION = "descriptive_only_no_selection_weighting_or_production_authority_v1"
+
+
+class PanelTemporalDirection(str, Enum):
+    POSITIVE = "POSITIVE"
+    NEGATIVE = "NEGATIVE"
+    MIXED = "MIXED"
+    UNDEFINED = "UNDEFINED"
 
 
 def _text(value: Any, *, name: str) -> str:
@@ -95,6 +108,21 @@ def _concentration(values: tuple[float, ...]) -> float | None:
     if not values or denominator == 0.0 or not math.isfinite(denominator):
         return None
     return max(abs(value) for value in values) / denominator
+
+
+def _consistent_direction(
+    values: tuple[float, ...],
+    *,
+    coverage_sufficient: bool,
+    allow_negative: bool,
+) -> PanelTemporalDirection:
+    if not coverage_sufficient or not values:
+        return PanelTemporalDirection.UNDEFINED
+    if sum(value > 0 for value in values) >= 3:
+        return PanelTemporalDirection.POSITIVE
+    if allow_negative and sum(value < 0 for value in values) >= 3:
+        return PanelTemporalDirection.NEGATIVE
+    return PanelTemporalDirection.MIXED
 
 
 @dataclass(frozen=True, slots=True)
@@ -191,7 +219,7 @@ class PanelFactorTemporalStabilitySpec:
             self.direction_rule,
             self.descriptive_restriction,
         )
-        expected_rules = (
+        expected_v1_rules = (
             DAILY_AGGREGATION_RULE,
             BLOCK_AGGREGATION_RULE,
             SIGN_RULE,
@@ -201,10 +229,28 @@ class PanelFactorTemporalStabilitySpec:
             DIRECTION_RULE,
             DESCRIPTIVE_RESTRICTION,
         )
+        expected_v2_rules = (
+            DAILY_AGGREGATION_RULE,
+            BLOCK_AGGREGATION_RULE,
+            SIGN_RULE,
+            SIGN_FLIP_RULE,
+            CONCENTRATION_RULE,
+            COVERAGE_RULE,
+            DIRECTION_RULE_V2,
+            DESCRIPTIVE_RESTRICTION,
+        )
+        if version == "1":
+            contract_version = TEMPORAL_STABILITY_VERSION
+            expected_rules = expected_v1_rules
+        elif version == "2":
+            contract_version = TEMPORAL_STABILITY_VERSION_V2
+            expected_rules = expected_v2_rules
+        else:
+            raise ValueError("unsupported temporal stability specification version")
         if rules != expected_rules:
             raise ValueError("unsupported temporal stability aggregation contract")
         payload = {
-            "contract": {"name": TEMPORAL_STABILITY_CONTRACT, "version": TEMPORAL_STABILITY_VERSION},
+            "contract": {"name": TEMPORAL_STABILITY_CONTRACT, "version": contract_version},
             "name": name,
             "version": version,
             "factors": list(factors),
@@ -244,6 +290,16 @@ NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V1 = PanelFactorTemporalStabilitySpec(
         PanelTemporalBlock("middle_2023_2024", "2023-01-01", "2024-12-31"),
         PanelTemporalBlock("recent_2025_2026", "2025-01-01", "2026-09-17"),
     ),
+)
+
+NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V2 = PanelFactorTemporalStabilitySpec(
+    name="NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V2",
+    version="2",
+    factors=NEUTRAL_TECHNICAL_FACTOR_EVALUATION_5_10_20_V1.factors,
+    horizons=NEUTRAL_TECHNICAL_FACTOR_EVALUATION_5_10_20_V1.horizons,
+    outcome_fields=NEUTRAL_TECHNICAL_FACTOR_EVALUATION_5_10_20_V1.outcome_fields,
+    blocks=NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V1.blocks,
+    direction_rule=DIRECTION_RULE_V2,
 )
 
 
@@ -359,11 +415,15 @@ class PanelFactorTemporalStabilitySummary:
     range_block_mean_spread: float | None
     largest_absolute_mean_ic_block_concentration: float | None
     largest_absolute_mean_spread_block_concentration: float | None
+    ic_consistent_direction: PanelTemporalDirection
+    spread_consistent_direction: PanelTemporalDirection
     directionally_consistent_ic: bool
     directionally_consistent_spread: bool
     descriptive_temporal_support: bool
     all_blocks_positive_ic: bool
     all_blocks_positive_spread: bool
+    all_blocks_negative_ic: bool
+    all_blocks_negative_spread: bool
     ic_sign_flip_count: int
     spread_sign_flip_count: int
     warnings: tuple[str, ...]
@@ -371,6 +431,32 @@ class PanelFactorTemporalStabilitySummary:
     identity: str = field(init=False)
 
     def __post_init__(self) -> None:
+        if not isinstance(self.ic_consistent_direction, PanelTemporalDirection):
+            raise TypeError("ic_consistent_direction must be PanelTemporalDirection")
+        if not isinstance(self.spread_consistent_direction, PanelTemporalDirection):
+            raise TypeError("spread_consistent_direction must be PanelTemporalDirection")
+        consistent = {
+            PanelTemporalDirection.POSITIVE,
+            PanelTemporalDirection.NEGATIVE,
+        }
+        if self.directionally_consistent_ic != (self.ic_consistent_direction in consistent):
+            raise ValueError("IC directional flag does not match its direction")
+        if self.directionally_consistent_spread != (
+            self.spread_consistent_direction in consistent
+        ):
+            raise ValueError("spread directional flag does not match its direction")
+        expected_support = (
+            self.coverage_sufficient_for_temporal_review
+            and self.directionally_consistent_ic
+            and self.directionally_consistent_spread
+            and self.ic_consistent_direction is self.spread_consistent_direction
+        )
+        if self.descriptive_temporal_support != expected_support:
+            raise ValueError("temporal support does not match neutral direction evidence")
+        if self.all_blocks_positive_ic and self.all_blocks_negative_ic:
+            raise ValueError("IC blocks cannot be all positive and all negative")
+        if self.all_blocks_positive_spread and self.all_blocks_negative_spread:
+            raise ValueError("spread blocks cannot be all positive and all negative")
         optional_fields = (
             "mean_ic_across_block_means", "median_ic_across_block_means",
             "minimum_block_mean_ic", "maximum_block_mean_ic", "range_block_mean_ic",
@@ -414,9 +500,10 @@ class PanelFactorTemporalStabilityResult:
     _summaries_by_key: Mapping[tuple[str, int, str], PanelFactorTemporalStabilitySummary] = field(init=False, repr=False, compare=False)
 
     def __post_init__(self) -> None:
-        if (self.contract_name, self.contract_version) != (
-            TEMPORAL_STABILITY_CONTRACT, TEMPORAL_STABILITY_VERSION,
-        ):
+        if self.contract_name != TEMPORAL_STABILITY_CONTRACT or self.contract_version not in {
+            TEMPORAL_STABILITY_VERSION,
+            TEMPORAL_STABILITY_VERSION_V2,
+        }:
             raise ValueError("unsupported panel temporal stability result contract")
         for name in (
             "source_result_identity", "source_dataset_identity",
@@ -687,6 +774,8 @@ def _block_result(
 
 def _summary(
     blocks: tuple[PanelFactorBlockStability, ...],
+    *,
+    spec: PanelFactorTemporalStabilitySpec,
 ) -> PanelFactorTemporalStabilitySummary:
     first = blocks[0]
     ic_means = tuple(item.mean_daily_rank_ic for item in blocks if item.mean_daily_rank_ic is not None)
@@ -696,13 +785,37 @@ def _summary(
     ic_eligible = tuple(item for item in blocks if item.ic_review_eligible)
     spread_eligible = tuple(item for item in blocks if item.spread_review_eligible)
     coverage = len(ic_eligible) >= 3 and len(spread_eligible) >= 3
-    ic_consistent = coverage and sum(
-        item.mean_daily_rank_ic is not None and item.mean_daily_rank_ic > 0 for item in ic_eligible
-    ) >= 3
-    spread_consistent = coverage and sum(
-        item.mean_daily_mean_spread is not None and item.mean_daily_mean_spread > 0
-        for item in spread_eligible
-    ) >= 3
+    allow_negative = spec.version == "2"
+    ic_direction = _consistent_direction(
+        tuple(
+            item.mean_daily_rank_ic
+            for item in ic_eligible
+            if item.mean_daily_rank_ic is not None
+        ),
+        coverage_sufficient=coverage,
+        allow_negative=allow_negative,
+    )
+    spread_direction = _consistent_direction(
+        tuple(
+            item.mean_daily_mean_spread
+            for item in spread_eligible
+            if item.mean_daily_mean_spread is not None
+        ),
+        coverage_sufficient=coverage,
+        allow_negative=allow_negative,
+    )
+    consistent_directions = {
+        PanelTemporalDirection.POSITIVE,
+        PanelTemporalDirection.NEGATIVE,
+    }
+    ic_consistent = ic_direction in consistent_directions
+    spread_consistent = spread_direction in consistent_directions
+    support = (
+        coverage
+        and ic_consistent
+        and spread_consistent
+        and ic_direction is spread_direction
+    )
     warnings = ["descriptive_only_same_historical_dataset_not_independent_confirmation"]
     if not coverage:
         warnings.append("insufficient_block_coverage_for_temporal_review")
@@ -740,12 +853,18 @@ def _summary(
         ),
         largest_absolute_mean_ic_block_concentration=_concentration(ic_means),
         largest_absolute_mean_spread_block_concentration=_concentration(spread_means),
+        ic_consistent_direction=ic_direction,
+        spread_consistent_direction=spread_direction,
         directionally_consistent_ic=ic_consistent,
         directionally_consistent_spread=spread_consistent,
-        descriptive_temporal_support=ic_consistent and spread_consistent,
+        descriptive_temporal_support=support,
         all_blocks_positive_ic=len(ic_means) == len(blocks) and all(value > 0 for value in ic_means),
         all_blocks_positive_spread=(
             len(spread_means) == len(blocks) and all(value > 0 for value in spread_means)
+        ),
+        all_blocks_negative_ic=len(ic_means) == len(blocks) and all(value < 0 for value in ic_means),
+        all_blocks_negative_spread=(
+            len(spread_means) == len(blocks) and all(value < 0 for value in spread_means)
         ),
         ic_sign_flip_count=_sign_flips(tuple(item.mean_daily_rank_ic for item in blocks)),
         spread_sign_flip_count=_sign_flips(tuple(item.mean_daily_mean_spread for item in blocks)),
@@ -783,14 +902,18 @@ def evaluate_panel_factor_temporal_stability(
         for item in block_results
     }
     summaries = tuple(
-        _summary(tuple(
-            block_lookup[(factor, horizon, outcome, block.name)] for block in spec.blocks
-        ))
+        _summary(
+            tuple(
+                block_lookup[(factor, horizon, outcome, block.name)]
+                for block in spec.blocks
+            ),
+            spec=spec,
+        )
         for factor in spec.factors
         for horizon in spec.horizons
         for outcome in spec.outcome_fields
     )
-    metadata = MappingProxyType({
+    metadata_values = {
         "descriptive_only": True,
         "population": "complete PIT population carried by Phase 5.4A",
         "candidate_or_strategy_filter_applied": False,
@@ -801,7 +924,13 @@ def evaluate_panel_factor_temporal_stability(
         "p_values_or_multiple_testing_correction_provided": False,
         "portfolio_cost_turnover_liquidity_or_tradability_conclusion_provided": False,
         "factor_selection_or_weighting_authority": False,
-    })
+    }
+    if spec.version == "2":
+        metadata_values["negative_direction_interpretation"] = (
+            "higher factor values are empirically associated with lower future outcomes; "
+            "this is not a short signal or authorization to invert the factor"
+        )
+    metadata = MappingProxyType(metadata_values)
     return PanelFactorTemporalStabilityResult(
         source_result_identity=evaluation_result.identity,
         source_dataset_identity=evaluation_result.source_dataset_identity,
@@ -811,4 +940,9 @@ def evaluate_panel_factor_temporal_stability(
         block_results=block_results,
         summaries=summaries,
         limitations_metadata=metadata,
+        contract_version=(
+            TEMPORAL_STABILITY_VERSION_V2
+            if spec.version == "2"
+            else TEMPORAL_STABILITY_VERSION
+        ),
     )

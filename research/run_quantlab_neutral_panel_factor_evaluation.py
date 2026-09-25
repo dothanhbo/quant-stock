@@ -24,8 +24,9 @@ from core.database_coverage import build_database_coverage_index
 from core.paths import PROJECT_ROOT, resolve_market_database_path
 from quantlab.catalog.market_data_snapshot import build_market_data_snapshot
 from quantlab.evaluation import (
-    NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V1,
+    NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V2,
     NEUTRAL_TECHNICAL_FACTOR_EVALUATION_5_10_20_V1,
+    PanelTemporalDirection,
     evaluate_panel_factor_temporal_stability,
     evaluate_point_in_time_panel_factors,
 )
@@ -42,7 +43,7 @@ from quantlab.panels import (
 
 
 RUNNER_CONTRACT = "quantlab.neutral_panel_factor_evaluation_runner"
-RUNNER_VERSION = "v1"
+RUNNER_VERSION = "v2"
 CACHE_DEFAULT_CODEC = "npz_numeric_v1"
 REVIEW_MINIMUM_DEFINED_DATES = 30
 REVIEW_MINIMUM_AVERAGE_CROSS_SECTION = 20.0
@@ -101,8 +102,10 @@ _TEMPORAL_SUMMARY_COLUMNS = (
     "mean_spread_across_block_means", "median_spread_across_block_means",
     "minimum_block_mean_spread", "maximum_block_mean_spread",
     "range_block_mean_spread", "largest_absolute_mean_ic_block_concentration",
-    "largest_absolute_mean_spread_block_concentration", "all_blocks_positive_ic",
-    "all_blocks_positive_spread", "ic_sign_flip_count", "spread_sign_flip_count",
+    "largest_absolute_mean_spread_block_concentration", "ic_consistent_direction",
+    "spread_consistent_direction", "all_blocks_positive_ic",
+    "all_blocks_positive_spread", "all_blocks_negative_ic",
+    "all_blocks_negative_spread", "ic_sign_flip_count", "spread_sign_flip_count",
     "coverage_sufficient_for_temporal_review", "directionally_consistent_ic",
     "directionally_consistent_spread", "descriptive_temporal_support",
     "block_identity_count", "block_identities_sha256",
@@ -134,8 +137,10 @@ _TEMPORAL_COVERAGE_COLUMNS = (
     "ic_review_eligible_block_count", "spread_review_eligible_block_count",
     "coverage_sufficient_for_temporal_review", "directionally_consistent_ic",
     "directionally_consistent_spread", "descriptive_temporal_support",
-    "all_blocks_positive_ic", "all_blocks_positive_spread", "ic_sign_flip_count",
-    "spread_sign_flip_count", "largest_absolute_mean_ic_block_concentration",
+    "all_blocks_positive_ic", "all_blocks_positive_spread", "all_blocks_negative_ic",
+    "all_blocks_negative_spread", "ic_consistent_direction",
+    "spread_consistent_direction", "ic_sign_flip_count", "spread_sign_flip_count",
+    "largest_absolute_mean_ic_block_concentration",
     "largest_absolute_mean_spread_block_concentration", "review_status",
     "summary_identity",
 )
@@ -170,6 +175,7 @@ _TEMPORAL_LIMITATIONS = (
     "Stock and excess outcomes are not independent evidence.",
     "Database coverage is not necessarily historical VN100 membership.",
     "No multiple-testing correction, costs, turnover, liquidity, portfolio utility, or tradability conclusion is included.",
+    "A negative direction means higher factor values are empirically associated with lower future outcomes; it is not a short signal or authorization to invert the factor.",
 )
 
 
@@ -413,7 +419,23 @@ def _artifact_rows(
 
 def _temporal_review_status(summary: Any) -> str:
     if summary.descriptive_temporal_support:
-        return "TEMPORAL_SUPPORT"
+        if (
+            summary.ic_consistent_direction is PanelTemporalDirection.POSITIVE
+            and summary.spread_consistent_direction is PanelTemporalDirection.POSITIVE
+        ):
+            return "TEMPORAL_SUPPORT_POSITIVE"
+        if (
+            summary.ic_consistent_direction is PanelTemporalDirection.NEGATIVE
+            and summary.spread_consistent_direction is PanelTemporalDirection.NEGATIVE
+        ):
+            return "TEMPORAL_SUPPORT_NEGATIVE"
+        raise ValueError("temporal support has inconsistent direction evidence")
+    if (
+        summary.directionally_consistent_ic
+        and summary.directionally_consistent_spread
+        and summary.ic_consistent_direction is not summary.spread_consistent_direction
+    ):
+        return "DIRECTION_MISMATCH"
     if summary.coverage_sufficient_for_temporal_review:
         return "COVERAGE_ONLY"
     return "INSUFFICIENT_COVERAGE"
@@ -492,7 +514,7 @@ def _validate_temporal_reconciliation(
     temporal: Any,
     rows: Mapping[str, tuple[tuple[str, ...], list[dict[str, Any]]]],
 ) -> None:
-    spec = NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V1
+    spec = NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V2
     if temporal.source_result_identity != evaluation.identity:
         raise ValueError("temporal source result identity does not match Phase 5.4A")
     if temporal.source_specification_fingerprint != evaluation.specification_fingerprint:
@@ -771,7 +793,13 @@ def _validate_emitted(
         status: sum(
             row["review_status"] == status for row in emitted["temporal_coverage.csv"]
         )
-        for status in ("TEMPORAL_SUPPORT", "COVERAGE_ONLY", "INSUFFICIENT_COVERAGE")
+        for status in (
+            "TEMPORAL_SUPPORT_POSITIVE",
+            "TEMPORAL_SUPPORT_NEGATIVE",
+            "DIRECTION_MISMATCH",
+            "COVERAGE_ONLY",
+            "INSUFFICIENT_COVERAGE",
+        )
     }
     if temporal_manifest.get("review_status_counts") != review_counts:
         raise ValueError("temporal review-status counts do not reconcile")
@@ -881,7 +909,7 @@ def run_neutral_panel_factor_evaluation(
     )
     temporal = evaluate_panel_factor_temporal_stability(
         evaluation,
-        NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V1,
+        NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V2,
     )
     rows = _artifact_rows(evaluation, observation_index, feature_panel, outcome_panel)
     rows.update(_temporal_artifact_rows(temporal))
@@ -903,7 +931,13 @@ def run_neutral_panel_factor_evaluation(
     artifacts.update({"experiment_manifest.json": 1, "assumptions.md": 1})
     review_status_counts = {
         status: sum(_temporal_review_status(item) == status for item in temporal.summaries)
-        for status in ("TEMPORAL_SUPPORT", "COVERAGE_ONLY", "INSUFFICIENT_COVERAGE")
+        for status in (
+            "TEMPORAL_SUPPORT_POSITIVE",
+            "TEMPORAL_SUPPORT_NEGATIVE",
+            "DIRECTION_MISMATCH",
+            "COVERAGE_ONLY",
+            "INSUFFICIENT_COVERAGE",
+        )
     }
     manifest = {
         "runner_contract": RUNNER_CONTRACT,
@@ -979,10 +1013,10 @@ def run_neutral_panel_factor_evaluation(
                     "start_date": block.start_date,
                     "end_date": block.end_date,
                 }
-                for block in NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V1.blocks
+                for block in NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V2.blocks
             ],
             "minimum_defined_dates_per_block": (
-                NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V1.minimum_defined_dates_per_block
+                NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V2.minimum_defined_dates_per_block
             ),
             "block_result_count": len(temporal.block_results),
             "summary_count": len(temporal.summaries),
@@ -1006,6 +1040,12 @@ def run_neutral_panel_factor_evaluation(
                 ),
                 "all_blocks_positive_spread": sum(
                     item.all_blocks_positive_spread for item in temporal.summaries
+                ),
+                "all_blocks_negative_ic": sum(
+                    item.all_blocks_negative_ic for item in temporal.summaries
+                ),
+                "all_blocks_negative_spread": sum(
+                    item.all_blocks_negative_spread for item in temporal.summaries
                 ),
             },
             "limitations": list(_TEMPORAL_LIMITATIONS),

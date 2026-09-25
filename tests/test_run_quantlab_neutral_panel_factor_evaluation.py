@@ -12,8 +12,9 @@ import pandas as pd
 import pytest
 
 from quantlab.evaluation import (
-    NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V1,
+    NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V2,
     NEUTRAL_TECHNICAL_FACTOR_EVALUATION_5_10_20_V1,
+    PanelTemporalDirection,
 )
 from research import run_quantlab_neutral_panel_factor_evaluation as runner
 
@@ -103,7 +104,7 @@ def _evaluation(dates: tuple[str, ...]):
 
 
 def _temporal(evaluation: Any):
-    spec = NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V1
+    spec = NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V2
     blocks = []
     summaries = []
     daily_by_key = {
@@ -124,6 +125,7 @@ def _temporal(evaluation: Any):
                         if block.start_date <= item.signal_date <= block.end_date
                     )
                     identity = f"block-{factor}-{horizon}-{outcome}-{block.name}"
+                    spread_value = 1.25 if included else None
                     block_ids.append(identity)
                     blocks.append(SimpleNamespace(
                         factor=factor,
@@ -145,21 +147,21 @@ def _temporal(evaluation: Any):
                         zero_ic_date_count=0,
                         negative_ic_date_count=0,
                         positive_ic_rate=None,
-                        spread_defined_date_count=0,
-                        spread_coverage_pct=0.0,
-                        mean_daily_mean_spread=None,
-                        median_daily_mean_spread=None,
-                        population_std_daily_mean_spread=None,
-                        minimum_daily_mean_spread=None,
-                        maximum_daily_mean_spread=None,
-                        positive_spread_date_count=0,
+                        spread_defined_date_count=len(included),
+                        spread_coverage_pct=100.0 if included else 0.0,
+                        mean_daily_mean_spread=spread_value,
+                        median_daily_mean_spread=spread_value,
+                        population_std_daily_mean_spread=(0.0 if included else None),
+                        minimum_daily_mean_spread=spread_value,
+                        maximum_daily_mean_spread=spread_value,
+                        positive_spread_date_count=len(included),
                         zero_spread_date_count=0,
                         negative_spread_date_count=0,
-                        positive_spread_rate=None,
-                        mean_daily_median_spread=None,
-                        median_daily_median_spread=None,
-                        average_low_bucket_size=None,
-                        average_high_bucket_size=None,
+                        positive_spread_rate=1.0 if included else None,
+                        mean_daily_median_spread=spread_value,
+                        median_daily_median_spread=spread_value,
+                        average_low_bucket_size=1.0 if included else None,
+                        average_high_bucket_size=1.0 if included else None,
                         average_eligible_observation_count=(
                             None if not included else 2.0
                         ),
@@ -180,12 +182,51 @@ def _temporal(evaluation: Any):
                         included_daily_identities=included,
                         warnings=("synthetic_temporal_block",),
                         ic_undefined_reason="no_defined_daily_ic",
-                        spread_undefined_reason="no_defined_daily_spread",
+                        spread_undefined_reason=(
+                            None if included else "no_defined_daily_spread"
+                        ),
                         identity=identity,
                     ))
-                supported = summary_index == 0
-                coverage_only = summary_index == 1
-                coverage = supported or coverage_only
+                positive_support = summary_index == 0
+                negative_support = summary_index == 1
+                mismatch = summary_index == 2
+                coverage_only = summary_index == 3
+                supported = positive_support or negative_support
+                coverage = supported or mismatch or coverage_only
+                ic_direction = (
+                    PanelTemporalDirection.POSITIVE
+                    if positive_support or mismatch
+                    else (
+                        PanelTemporalDirection.NEGATIVE
+                        if negative_support
+                        else (
+                            PanelTemporalDirection.MIXED
+                            if coverage_only
+                            else PanelTemporalDirection.UNDEFINED
+                        )
+                    )
+                )
+                spread_direction = (
+                    PanelTemporalDirection.POSITIVE
+                    if positive_support
+                    else (
+                        PanelTemporalDirection.NEGATIVE
+                        if negative_support or mismatch
+                        else (
+                            PanelTemporalDirection.MIXED
+                            if coverage_only
+                            else PanelTemporalDirection.UNDEFINED
+                        )
+                    )
+                )
+                summary_ic = (
+                    -0.1 if negative_support else (0.1 if positive_support or mismatch else None)
+                )
+                summary_spread = (
+                    -1.0
+                    if negative_support or mismatch
+                    else (1.0 if positive_support else None)
+                )
                 summaries.append(SimpleNamespace(
                     factor=factor,
                     horizon_sessions=horizon,
@@ -193,35 +234,43 @@ def _temporal(evaluation: Any):
                     total_block_count=4,
                     ic_review_eligible_block_count=3 if coverage else 0,
                     spread_review_eligible_block_count=3 if coverage else 0,
-                    positive_mean_ic_block_count=3 if supported else 0,
+                    positive_mean_ic_block_count=3 if positive_support or mismatch else 0,
                     zero_mean_ic_block_count=0,
-                    negative_mean_ic_block_count=0,
-                    positive_mean_spread_block_count=3 if supported else 0,
+                    negative_mean_ic_block_count=3 if negative_support else 0,
+                    positive_mean_spread_block_count=3 if positive_support else 0,
                     zero_mean_spread_block_count=0,
-                    negative_mean_spread_block_count=0,
-                    mean_ic_across_block_means=0.1 if supported else None,
-                    median_ic_across_block_means=0.1 if supported else None,
-                    minimum_block_mean_ic=0.1 if supported else None,
-                    maximum_block_mean_ic=0.1 if supported else None,
-                    range_block_mean_ic=0.0 if supported else None,
-                    mean_spread_across_block_means=1.0 if supported else None,
-                    median_spread_across_block_means=1.0 if supported else None,
-                    minimum_block_mean_spread=1.0 if supported else None,
-                    maximum_block_mean_spread=1.0 if supported else None,
-                    range_block_mean_spread=0.0 if supported else None,
+                    negative_mean_spread_block_count=(
+                        3 if negative_support or mismatch else 0
+                    ),
+                    mean_ic_across_block_means=summary_ic,
+                    median_ic_across_block_means=summary_ic,
+                    minimum_block_mean_ic=summary_ic,
+                    maximum_block_mean_ic=summary_ic,
+                    range_block_mean_ic=0.0 if summary_ic is not None else None,
+                    mean_spread_across_block_means=summary_spread,
+                    median_spread_across_block_means=summary_spread,
+                    minimum_block_mean_spread=summary_spread,
+                    maximum_block_mean_spread=summary_spread,
+                    range_block_mean_spread=(
+                        0.0 if summary_spread is not None else None
+                    ),
                     largest_absolute_mean_ic_block_concentration=(
-                        1.0 / 3.0 if supported else None
+                        1.0 / 3.0 if summary_ic is not None else None
                     ),
                     largest_absolute_mean_spread_block_concentration=(
-                        1.0 / 3.0 if supported else None
+                        1.0 / 3.0 if summary_spread is not None else None
                     ),
                     all_blocks_positive_ic=False,
                     all_blocks_positive_spread=False,
+                    all_blocks_negative_ic=negative_support,
+                    all_blocks_negative_spread=negative_support,
+                    ic_consistent_direction=ic_direction,
+                    spread_consistent_direction=spread_direction,
                     ic_sign_flip_count=0,
                     spread_sign_flip_count=0,
                     coverage_sufficient_for_temporal_review=coverage,
-                    directionally_consistent_ic=supported,
-                    directionally_consistent_spread=supported,
+                    directionally_consistent_ic=supported or mismatch,
+                    directionally_consistent_spread=supported or mismatch,
                     descriptive_temporal_support=supported,
                     included_block_identities=tuple(block_ids),
                     warnings=("descriptive_only",),
@@ -233,7 +282,7 @@ def _temporal(evaluation: Any):
         source_specification_fingerprint=evaluation.specification_fingerprint,
         temporal_specification_fingerprint=spec.fingerprint,
         contract_name="quantlab.panel_factor_temporal_stability",
-        contract_version="v1",
+        contract_version="v2",
         block_results=tuple(blocks),
         summaries=tuple(summaries),
         identity="temporal-result-id",
@@ -407,7 +456,7 @@ def test_exact_one_time_orchestration_and_identity_propagation(
     assert calls["evaluation"][0][0][0] is objects.dataset
     assert calls["temporal"] == [((
         objects.evaluation,
-        NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V1,
+        NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V2,
     ), {})]
     manifest = result["manifest"]
     assert manifest["observation_index"]["identity"] == "observation-id"
@@ -507,8 +556,17 @@ def test_temporal_projection_hashes_review_statuses_and_manifest_reconcile(
         runner._identity_collection_sha256(())
     )
     assert blocks[0]["mean_daily_rank_ic"] == ""
-    assert [row["review_status"] for row in coverage[:3]] == [
-        "TEMPORAL_SUPPORT", "COVERAGE_ONLY", "INSUFFICIENT_COVERAGE",
+    assert "mean_daily_high_minus_low_mean_spread" not in block_columns
+    assert blocks[1]["mean_daily_mean_spread"] == "1.25"
+    assert summaries[0]["ic_consistent_direction"] == "POSITIVE"
+    assert summaries[1]["ic_consistent_direction"] == "NEGATIVE"
+    assert summaries[1]["all_blocks_negative_ic"] == "true"
+    assert [row["review_status"] for row in coverage[:5]] == [
+        "TEMPORAL_SUPPORT_POSITIVE",
+        "TEMPORAL_SUPPORT_NEGATIVE",
+        "DIRECTION_MISMATCH",
+        "COVERAGE_ONLY",
+        "INSUFFICIENT_COVERAGE",
     ]
     assert [
         (row["factor"], int(row["horizon_sessions"]), row["outcome_field"])
@@ -519,14 +577,25 @@ def test_temporal_projection_hashes_review_statuses_and_manifest_reconcile(
     ]
     temporal_manifest = result["manifest"]["temporal_stability"]
     assert temporal_manifest["review_status_counts"] == {
-        "TEMPORAL_SUPPORT": 1,
+        "TEMPORAL_SUPPORT_POSITIVE": 1,
+        "TEMPORAL_SUPPORT_NEGATIVE": 1,
+        "DIRECTION_MISMATCH": 1,
         "COVERAGE_ONLY": 1,
-        "INSUFFICIENT_COVERAGE": 46,
+        "INSUFFICIENT_COVERAGE": 44,
     }
     assert temporal_manifest["block_result_count"] == 192
     assert temporal_manifest["summary_count"] == 48
     assert temporal_manifest["temporal_result_identity"] == "temporal-result-id"
+    assert temporal_manifest["descriptive_flag_counts"]["all_blocks_negative_ic"] == 1
+    assert temporal_manifest["descriptive_flag_counts"]["all_blocks_negative_spread"] == 1
     assert temporal_manifest["limitations"] == list(runner._TEMPORAL_LIMITATIONS)
+
+    missing_spread = SimpleNamespace(**vars(objects.temporal.block_results[0]))
+    delattr(missing_spread, "mean_daily_mean_spread")
+    malformed = SimpleNamespace(**vars(objects.temporal))
+    malformed.block_results = (missing_spread, *objects.temporal.block_results[1:])
+    with pytest.raises(AttributeError, match="mean_daily_mean_spread"):
+        runner._temporal_artifact_rows(malformed)
 
 
 @pytest.mark.parametrize("corruption", ("source_identity", "dimensions"))
