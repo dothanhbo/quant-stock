@@ -41,6 +41,14 @@ _EXPORT_MODULES = {
     "PanelFactorRedundancyResult": ".panel_factor_redundancy",
     "NEUTRAL_PANEL_FACTOR_REDUNDANCY_V1": ".panel_factor_redundancy",
     "evaluate_panel_factor_redundancy": ".panel_factor_redundancy",
+    "IncrementalFactorHypothesis": ".panel_factor_incremental_analysis",
+    "PanelFactorIncrementalAnalysisSpec": ".panel_factor_incremental_analysis",
+    "DailyIncrementalFactorEvaluation": ".panel_factor_incremental_analysis",
+    "IncrementalFactorBlockEvaluation": ".panel_factor_incremental_analysis",
+    "IncrementalFactorEvaluationSummary": ".panel_factor_incremental_analysis",
+    "PanelFactorIncrementalAnalysisResult": ".panel_factor_incremental_analysis",
+    "NEUTRAL_PANEL_INCREMENTAL_FACTOR_ANALYSIS_V1": ".panel_factor_incremental_analysis",
+    "evaluate_panel_factor_incremental_analysis": ".panel_factor_incremental_analysis",
 }
 
 __all__ = tuple(_EXPORT_MODULES)
