@@ -58,6 +58,14 @@ _EXPORT_MODULES = {
     "PanelCompositeAnalysisResult": ".panel_composite_analysis",
     "NEUTRAL_ADX_RSI_COMPOSITE_COMPARISON_V1": ".panel_composite_analysis",
     "evaluate_panel_composites": ".panel_composite_analysis",
+    "PanelSelectionPolicy": ".panel_policy_selection_diagnostics",
+    "PanelSelectionDiagnosticsSpec": ".panel_policy_selection_diagnostics",
+    "DailyPolicySelectionDiagnostics": ".panel_policy_selection_diagnostics",
+    "PolicySelectionTurnoverSummary": ".panel_policy_selection_diagnostics",
+    "PolicySelectionOverlapSummary": ".panel_policy_selection_diagnostics",
+    "PanelPolicySelectionDiagnosticsResult": ".panel_policy_selection_diagnostics",
+    "NEUTRAL_ADX_RSI_SELECTION_DIAGNOSTICS_V1": ".panel_policy_selection_diagnostics",
+    "evaluate_panel_policy_selection_diagnostics": ".panel_policy_selection_diagnostics",
 }
 
 __all__ = tuple(_EXPORT_MODULES)
