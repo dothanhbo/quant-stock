@@ -24,15 +24,21 @@ from core.database_coverage import build_database_coverage_index
 from core.paths import PROJECT_ROOT, resolve_market_database_path
 from quantlab.catalog.market_data_snapshot import build_market_data_snapshot
 from quantlab.evaluation import (
+    NEUTRAL_ADX_RSI_COMPOSITE_COMPARISON_V1,
     NEUTRAL_PANEL_INCREMENTAL_FACTOR_ANALYSIS_V1,
     NEUTRAL_PANEL_FACTOR_REDUNDANCY_V1,
     NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V2,
     NEUTRAL_TECHNICAL_FACTOR_EVALUATION_5_10_20_V1,
     PanelTemporalDirection,
     evaluate_panel_factor_incremental_analysis,
+    evaluate_panel_composites,
     evaluate_panel_factor_redundancy,
     evaluate_panel_factor_temporal_stability,
     evaluate_point_in_time_panel_factors,
+)
+from quantlab.evaluation.panel_composite_analysis import (
+    COMPOSITE_CONTRACT,
+    COMPOSITE_VERSION,
 )
 from quantlab.features import PointInTimeUniverseContext, PreparedFeatureCache
 from quantlab.identity import canonical_json
@@ -47,7 +53,7 @@ from quantlab.panels import (
 
 
 RUNNER_CONTRACT = "quantlab.neutral_panel_factor_evaluation_runner"
-RUNNER_VERSION = "v4"
+RUNNER_VERSION = "v5"
 CACHE_DEFAULT_CODEC = "npz_numeric_v1"
 REVIEW_MINIMUM_DEFINED_DATES = 30
 REVIEW_MINIMUM_AVERAGE_CROSS_SECTION = 20.0
@@ -249,6 +255,96 @@ _INCREMENTAL_SUMMARY_COLUMNS = (
     "included_daily_identity_count", "included_daily_identities_sha256",
     "block_identity_count", "block_identities_sha256", "warnings", "identity",
 )
+_COMPOSITE_DAILY_COLUMNS = (
+    "signal_date", "policy_name", "factor_weights", "policy_fingerprint",
+    "horizon_sessions", "outcome_field", "total_observation_count",
+    "outcome_available_count", "outcome_unavailable_count",
+    "outcome_missing_or_nonfinite_available_count",
+    "factor_missing_or_nonfinite_counts", "shared_listwise_finite_count",
+    "shared_excluded_count", "shared_coverage_pct", "rank_ic",
+    "absolute_rank_ic", "low_bucket_count", "high_bucket_count",
+    "low_bucket_mean_outcome", "high_bucket_mean_outcome",
+    "low_bucket_median_outcome", "high_bucket_median_outcome",
+    "high_minus_low_mean_spread", "high_minus_low_median_spread",
+    "ic_undefined_reason", "spread_undefined_reason",
+    "shared_sample_evidence_sha256", "identity",
+)
+_COMPOSITE_BLOCK_COLUMNS = (
+    "policy_name", "factor_weights", "policy_fingerprint", "horizon_sessions",
+    "outcome_field", "block_name", "block_start_date", "block_end_date",
+    "total_signal_date_count", "minimum_sample_date_count",
+    "ic_defined_date_count", "ic_coverage_pct", "spread_defined_date_count",
+    "spread_coverage_pct", "mean_daily_rank_ic", "median_daily_rank_ic",
+    "population_std_daily_rank_ic", "minimum_daily_rank_ic",
+    "maximum_daily_rank_ic", "mean_absolute_daily_rank_ic",
+    "median_absolute_daily_rank_ic", "positive_ic_date_count",
+    "zero_ic_date_count", "negative_ic_date_count", "positive_ic_rate",
+    "zero_ic_rate", "negative_ic_rate", "mean_daily_mean_spread",
+    "median_daily_mean_spread", "population_std_daily_mean_spread",
+    "minimum_daily_mean_spread", "maximum_daily_mean_spread",
+    "mean_daily_median_spread", "median_daily_median_spread",
+    "positive_spread_date_count", "zero_spread_date_count",
+    "negative_spread_date_count", "positive_spread_rate", "zero_spread_rate",
+    "negative_spread_rate", "average_low_bucket_size",
+    "average_high_bucket_size", "average_shared_cross_section_size",
+    "median_shared_cross_section_size", "included_daily_identity_count",
+    "included_daily_identities_sha256", "warnings", "identity",
+)
+_COMPOSITE_SUMMARY_COLUMNS = (
+    "policy_name", "factor_weights", "policy_fingerprint", "horizon_sessions",
+    "outcome_field", "total_signal_date_count", "minimum_sample_date_count",
+    "ic_defined_date_count", "ic_coverage_pct", "spread_defined_date_count",
+    "spread_coverage_pct", "mean_daily_rank_ic", "median_daily_rank_ic",
+    "population_std_daily_rank_ic", "minimum_daily_rank_ic",
+    "maximum_daily_rank_ic", "mean_absolute_daily_rank_ic",
+    "median_absolute_daily_rank_ic", "positive_ic_date_count",
+    "zero_ic_date_count", "negative_ic_date_count", "positive_ic_rate",
+    "zero_ic_rate", "negative_ic_rate", "mean_daily_mean_spread",
+    "median_daily_mean_spread", "population_std_daily_mean_spread",
+    "minimum_daily_mean_spread", "maximum_daily_mean_spread",
+    "mean_daily_median_spread", "median_daily_median_spread",
+    "positive_spread_date_count", "zero_spread_date_count",
+    "negative_spread_date_count", "positive_spread_rate", "zero_spread_rate",
+    "negative_spread_rate", "average_low_bucket_size",
+    "average_high_bucket_size", "average_shared_cross_section_size",
+    "median_shared_cross_section_size", "included_daily_identity_count",
+    "included_daily_identities_sha256", "block_identity_count",
+    "block_identities_sha256", "blocks_meeting_ic_review_count",
+    "blocks_meeting_spread_review_count",
+    "chronological_block_mean_ic_sign_flip_count",
+    "chronological_block_mean_spread_sign_flip_count", "all_blocks_positive_ic",
+    "all_blocks_negative_ic", "all_blocks_positive_spread",
+    "all_blocks_negative_spread", "minimum_block_mean_ic",
+    "maximum_block_mean_ic", "range_block_mean_ic",
+    "minimum_block_mean_spread", "maximum_block_mean_spread",
+    "range_block_mean_spread", "largest_absolute_block_mean_ic_concentration",
+    "largest_absolute_block_mean_spread_concentration", "warnings", "identity",
+)
+_COMPOSITE_CONTRAST_BLOCK_COLUMNS = (
+    "contrast_name", "variant_policy", "reference_policy", "horizon_sessions",
+    "outcome_field", "block_name", "block_start_date", "block_end_date",
+    "paired_ic_date_count", "mean_daily_ic_delta", "median_daily_ic_delta",
+    "positive_ic_delta_count", "zero_ic_delta_count", "negative_ic_delta_count",
+    "positive_ic_delta_rate", "zero_ic_delta_rate", "negative_ic_delta_rate",
+    "paired_spread_date_count", "mean_daily_spread_delta",
+    "median_daily_spread_delta", "positive_spread_delta_count",
+    "zero_spread_delta_count", "negative_spread_delta_count",
+    "positive_spread_delta_rate", "zero_spread_delta_rate",
+    "negative_spread_delta_rate", "included_daily_pair_identity_count",
+    "included_daily_pair_identities_sha256", "identity",
+)
+_COMPOSITE_CONTRAST_SUMMARY_COLUMNS = (
+    "contrast_name", "variant_policy", "reference_policy", "horizon_sessions",
+    "outcome_field", "paired_ic_date_count", "mean_daily_ic_delta",
+    "median_daily_ic_delta", "positive_ic_delta_count", "zero_ic_delta_count",
+    "negative_ic_delta_count", "positive_ic_delta_rate", "zero_ic_delta_rate",
+    "negative_ic_delta_rate", "paired_spread_date_count",
+    "mean_daily_spread_delta", "median_daily_spread_delta",
+    "positive_spread_delta_count", "zero_spread_delta_count",
+    "negative_spread_delta_count", "positive_spread_delta_rate",
+    "zero_spread_delta_rate", "negative_spread_delta_rate",
+    "block_identity_count", "block_identities_sha256", "identity",
+)
 _REQUIRED_FILENAMES = (
     "experiment_manifest.json",
     "factor_summary.csv",
@@ -265,6 +361,11 @@ _REQUIRED_FILENAMES = (
     "factor_incremental_summary.csv",
     "factor_incremental_by_block.csv",
     "factor_incremental_by_date.csv",
+    "composite_policy_summary.csv",
+    "composite_policy_by_block.csv",
+    "composite_policy_by_date.csv",
+    "composite_contrast_summary.csv",
+    "composite_contrast_by_block.csv",
 )
 
 _LIMITATIONS = (
@@ -335,12 +436,42 @@ _INCREMENTAL_ASSUMPTIONS = (
     "Future outcomes are used only for offline research evaluation.",
 )
 
+_COMPOSITE_LIMITATIONS = (
+    "Policies and equal weights were fixed before evaluation.",
+    "No policy or weight search occurred.",
+    "All comparisons reuse the same historical sample.",
+    "This is descriptive historical comparison, not independent out-of-sample confirmation.",
+    "Stock and excess rank evidence may be algebraically non-independent.",
+    "Descriptive IC or spread differences do not prove portfolio improvement.",
+    "No statistical significance or multiple-testing correction is included.",
+    "Database coverage is not historical VN100 membership.",
+    "No costs, turnover, liquidity, capacity, execution, or portfolio risk is evaluated.",
+    "No production or capital-allocation authority is granted.",
+)
+
+_COMPOSITE_ASSUMPTIONS = (
+    "Four fixed higher-is-better policies: ADX_ONLY (ADX 1.0), RSI_ONLY (RSI 1.0), ADX_RSI_EQUAL_WEIGHT (ADX 0.5, RSI 0.5), and ADX_RSI_VOLUME_EQUAL_WEIGHT (ADX, RSI, and volume ratio each 1/3).",
+    "Three fixed contrasts: ADX_RSI_vs_ADX, ADX_RSI_vs_RSI, and VOLUME_ADDON_vs_ADX_RSI.",
+    "Every policy uses the same available-outcome and finite ADX, RSI, and volume-ratio sample, with a minimum of 20 observations.",
+    "Factor values use ascending average ranks for ties and (rank - 1) / (N - 1) percentiles.",
+    "Composite scores are the declared weighted sum of factor percentiles and are reranked using ascending average ranks.",
+    "Rank IC is Pearson correlation between final composite ranks and outcome ranks.",
+    "Low and high buckets use final composite percentiles <= 0.30 and >= 0.70.",
+    "Contrasts are same-date paired variant-minus-reference IC and spread deltas.",
+    "Defined daily statistics receive equal signal-date weight and use the four fixed Phase 5.5 temporal blocks.",
+    "No optimization, winner selection, or production decision is performed.",
+)
+
 _ASSUMPTIONS += "\n## Factor-redundancy methodology\n\n" + "\n".join(
     f"- {item}" for item in _REDUNDANCY_ASSUMPTIONS
 ) + "\n"
 
 _ASSUMPTIONS += "\n## Incremental factor-value methodology\n\n" + "\n".join(
     f"- {item}" for item in _INCREMENTAL_ASSUMPTIONS
+) + "\n"
+
+_ASSUMPTIONS += "\n## Composite-factor comparison methodology\n\n" + "\n".join(
+    f"- {item}" for item in _COMPOSITE_ASSUMPTIONS
 ) + "\n"
 
 
@@ -835,6 +966,159 @@ def _incremental_artifact_rows(
         "factor_incremental_summary.csv": (_INCREMENTAL_SUMMARY_COLUMNS, summary_rows),
         "factor_incremental_by_block.csv": (_INCREMENTAL_BLOCK_COLUMNS, block_rows),
         "factor_incremental_by_date.csv": (_INCREMENTAL_DAILY_COLUMNS, daily_rows),
+    }
+
+
+def _composite_factor_weights_json(weights: tuple[Any, ...]) -> str:
+    payload = [
+        {
+            "factor": item.factor,
+            "weight": item.weight,
+            "direction": item.direction,
+        }
+        for item in weights
+    ]
+    return canonical_json(payload).decode("utf-8")
+
+
+def _compact_json_mapping(values: Mapping[str, Any]) -> str:
+    return canonical_json(dict(values)).decode("utf-8")
+
+
+def _composite_artifact_rows(
+    composite: Any,
+) -> dict[str, tuple[tuple[str, ...], list[dict[str, Any]]]]:
+    spec = NEUTRAL_ADX_RSI_COMPOSITE_COMPARISON_V1
+    policy_order = {item.name: index for index, item in enumerate(spec.policies)}
+    contrast_order = {item.name: index for index, item in enumerate(spec.contrasts)}
+    horizon_order = {item: index for index, item in enumerate(spec.horizons)}
+    outcome_order = {item: index for index, item in enumerate(spec.outcome_fields)}
+    block_order = {item.name: index for index, item in enumerate(spec.blocks)}
+
+    daily = sorted(
+        composite.daily_evaluations,
+        key=lambda item: (
+            item.signal_date,
+            policy_order[item.policy_name],
+            horizon_order[item.horizon_sessions],
+            outcome_order[item.outcome_field],
+        ),
+    )
+    daily_rows = [
+        {
+            **{
+                column: getattr(item, column)
+                for column in _COMPOSITE_DAILY_COLUMNS
+                if column not in {
+                    "factor_weights", "factor_missing_or_nonfinite_counts",
+                }
+            },
+            "factor_weights": _composite_factor_weights_json(item.factor_weights),
+            "factor_missing_or_nonfinite_counts": _compact_json_mapping(
+                item.factor_missing_or_nonfinite_counts,
+            ),
+        }
+        for item in daily
+    ]
+    blocks = sorted(
+        composite.block_evaluations,
+        key=lambda item: (
+            policy_order[item.policy_name],
+            horizon_order[item.horizon_sessions],
+            outcome_order[item.outcome_field],
+            block_order[item.block_name],
+        ),
+    )
+    block_rows = [
+        {
+            **{
+                column: (
+                    " | ".join(item.warnings)
+                    if column == "warnings"
+                    else getattr(item, column)
+                )
+                for column in _COMPOSITE_BLOCK_COLUMNS
+                if column != "factor_weights"
+            },
+            "factor_weights": _composite_factor_weights_json(item.factor_weights),
+        }
+        for item in blocks
+    ]
+    summaries = sorted(
+        composite.summaries,
+        key=lambda item: (
+            policy_order[item.policy_name],
+            horizon_order[item.horizon_sessions],
+            outcome_order[item.outcome_field],
+        ),
+    )
+    summary_rows = [
+        {
+            **{
+                column: (
+                    " | ".join(item.warnings)
+                    if column == "warnings"
+                    else getattr(item, column)
+                )
+                for column in _COMPOSITE_SUMMARY_COLUMNS
+                if column not in {
+                    "factor_weights", "block_identity_count",
+                    "block_identities_sha256",
+                }
+            },
+            "factor_weights": _composite_factor_weights_json(item.factor_weights),
+            "block_identity_count": len(item.ordered_block_identities),
+            "block_identities_sha256": _identity_collection_sha256(
+                item.ordered_block_identities,
+            ),
+        }
+        for item in summaries
+    ]
+    contrast_blocks = sorted(
+        composite.contrast_block_evaluations,
+        key=lambda item: (
+            contrast_order[item.contrast_name],
+            horizon_order[item.horizon_sessions],
+            outcome_order[item.outcome_field],
+            block_order[item.block_name],
+        ),
+    )
+    contrast_block_rows = [
+        {column: getattr(item, column) for column in _COMPOSITE_CONTRAST_BLOCK_COLUMNS}
+        for item in contrast_blocks
+    ]
+    contrasts = sorted(
+        composite.contrast_summaries,
+        key=lambda item: (
+            contrast_order[item.contrast_name],
+            horizon_order[item.horizon_sessions],
+            outcome_order[item.outcome_field],
+        ),
+    )
+    contrast_summary_rows = [
+        {
+            **{
+                column: getattr(item, column)
+                for column in _COMPOSITE_CONTRAST_SUMMARY_COLUMNS
+                if column not in {"block_identity_count", "block_identities_sha256"}
+            },
+            "block_identity_count": len(item.ordered_block_identities),
+            "block_identities_sha256": _identity_collection_sha256(
+                item.ordered_block_identities,
+            ),
+        }
+        for item in contrasts
+    ]
+    return {
+        "composite_policy_summary.csv": (_COMPOSITE_SUMMARY_COLUMNS, summary_rows),
+        "composite_policy_by_block.csv": (_COMPOSITE_BLOCK_COLUMNS, block_rows),
+        "composite_policy_by_date.csv": (_COMPOSITE_DAILY_COLUMNS, daily_rows),
+        "composite_contrast_summary.csv": (
+            _COMPOSITE_CONTRAST_SUMMARY_COLUMNS, contrast_summary_rows,
+        ),
+        "composite_contrast_by_block.csv": (
+            _COMPOSITE_CONTRAST_BLOCK_COLUMNS, contrast_block_rows,
+        ),
     }
 
 
@@ -1399,6 +1683,281 @@ def _validate_incremental_reconciliation(
         raise ValueError("selection or production-policy field entered incremental artifacts")
 
 
+def _daily_pair_identity(left: str, right: str) -> str:
+    return sha256(canonical_json([left, right])).hexdigest()
+
+
+def _validate_composite_reconciliation(
+    dataset: Any,
+    composite: Any,
+    rows: Mapping[str, tuple[tuple[str, ...], list[dict[str, Any]]]],
+) -> None:
+    spec = NEUTRAL_ADX_RSI_COMPOSITE_COMPARISON_V1
+    expected_policies = (
+        ("ADX_ONLY", (("adx_14", 1.0),)),
+        ("RSI_ONLY", (("rsi_14", 1.0),)),
+        ("ADX_RSI_EQUAL_WEIGHT", (("adx_14", .5), ("rsi_14", .5))),
+        (
+            "ADX_RSI_VOLUME_EQUAL_WEIGHT",
+            (("adx_14", 1.0 / 3.0), ("rsi_14", 1.0 / 3.0),
+             ("volume_ratio_20", 1.0 / 3.0)),
+        ),
+    )
+    policies = tuple(
+        (item.name, tuple((weight.factor, weight.weight) for weight in item.factor_weights))
+        for item in spec.policies
+    )
+    expected_contrasts = (
+        ("ADX_RSI_vs_ADX", "ADX_RSI_EQUAL_WEIGHT", "ADX_ONLY"),
+        ("ADX_RSI_vs_RSI", "ADX_RSI_EQUAL_WEIGHT", "RSI_ONLY"),
+        ("VOLUME_ADDON_vs_ADX_RSI", "ADX_RSI_VOLUME_EQUAL_WEIGHT", "ADX_RSI_EQUAL_WEIGHT"),
+    )
+    contrasts = tuple(
+        (item.name, item.variant_policy, item.reference_policy) for item in spec.contrasts
+    )
+    if (
+        policies != expected_policies
+        or contrasts != expected_contrasts
+        or spec.horizons != (5, 10, 20)
+        or spec.outcome_fields
+        != ("stock_forward_return_pct", "excess_forward_return_pct_points")
+        or len(spec.blocks) != 4
+    ):
+        raise ValueError("built-in composite policy, contrast, or temporal scope changed")
+    if any(
+        weight.direction != "HIGHER_IS_BETTER"
+        for policy in spec.policies for weight in policy.factor_weights
+    ):
+        raise ValueError("composite factor direction changed")
+    forbidden = set(dataset.forbidden_predictor_columns)
+    if any(forbidden.intersection(policy.factors) for policy in spec.policies):
+        raise ValueError("future or outcome field entered a composite policy")
+    provenance = (
+        ("source_dataset_identity", "identity"),
+        ("source_dataset_content_identity", "content_identity"),
+        ("source_observation_index_identity", "observation_index_identity"),
+        ("source_observation_content_identity", "observation_content_identity"),
+        ("source_feature_panel_identity", "feature_panel_identity"),
+        ("source_feature_content_identity", "feature_content_identity"),
+        ("source_outcome_panel_identity", "outcome_panel_identity"),
+        ("source_outcome_content_identity", "outcome_content_identity"),
+    )
+    if (
+        any(getattr(composite, left) != getattr(dataset, right) for left, right in provenance)
+        or composite.specification_fingerprint != spec.fingerprint
+        or not str(composite.source_bounded_content_identity).strip()
+    ):
+        raise ValueError("composite source identity or specification does not reconcile")
+
+    signal_dates = tuple(audit.session_date for audit in dataset.session_audit)
+    policy_names = tuple(item.name for item in spec.policies)
+    contrast_names = tuple(item.name for item in spec.contrasts)
+    block_names = tuple(item.name for item in spec.blocks)
+    expected_daily_keys = tuple(
+        (signal_date, policy, horizon, outcome)
+        for signal_date in signal_dates
+        for policy in policy_names
+        for horizon in spec.horizons
+        for outcome in spec.outcome_fields
+    )
+    daily_keys = tuple(
+        (item.signal_date, item.policy_name, item.horizon_sessions, item.outcome_field)
+        for item in composite.daily_evaluations
+    )
+    expected_summary_keys = tuple(
+        (policy, horizon, outcome)
+        for policy in policy_names
+        for horizon in spec.horizons
+        for outcome in spec.outcome_fields
+    )
+    summary_keys = tuple(
+        (item.policy_name, item.horizon_sessions, item.outcome_field)
+        for item in composite.summaries
+    )
+    expected_block_keys = tuple(
+        (*key, block) for key in expected_summary_keys for block in block_names
+    )
+    block_keys = tuple(
+        (item.policy_name, item.horizon_sessions, item.outcome_field, item.block_name)
+        for item in composite.block_evaluations
+    )
+    expected_contrast_keys = tuple(
+        (name, horizon, outcome)
+        for name in contrast_names
+        for horizon in spec.horizons
+        for outcome in spec.outcome_fields
+    )
+    contrast_keys = tuple(
+        (item.contrast_name, item.horizon_sessions, item.outcome_field)
+        for item in composite.contrast_summaries
+    )
+    expected_contrast_block_keys = tuple(
+        (*key, block) for key in expected_contrast_keys for block in block_names
+    )
+    contrast_block_keys = tuple(
+        (item.contrast_name, item.horizon_sessions, item.outcome_field, item.block_name)
+        for item in composite.contrast_block_evaluations
+    )
+    if (
+        set(daily_keys) != set(expected_daily_keys)
+        or len(daily_keys) != len(expected_daily_keys)
+        or len(set(daily_keys)) != len(daily_keys)
+        or summary_keys != expected_summary_keys
+        or len(set(summary_keys)) != 24
+        or block_keys != expected_block_keys
+        or len(set(block_keys)) != 96
+        or contrast_keys != expected_contrast_keys
+        or len(set(contrast_keys)) != 18
+        or contrast_block_keys != expected_contrast_block_keys
+        or len(set(contrast_block_keys)) != 72
+    ):
+        raise ValueError("composite dimensions, keys, or canonical ordering do not reconcile")
+    emitted_daily_keys = tuple(
+        (row["signal_date"], row["policy_name"], row["horizon_sessions"], row["outcome_field"])
+        for row in rows["composite_policy_by_date.csv"][1]
+    )
+    if emitted_daily_keys != expected_daily_keys:
+        raise ValueError("composite daily artifact ordering does not reconcile")
+
+    daily_map = {key: item for key, item in zip(daily_keys, composite.daily_evaluations, strict=True)}
+    block_map = {key: item for key, item in zip(block_keys, composite.block_evaluations, strict=True)}
+    contrast_block_map = {
+        key: item for key, item in zip(
+            contrast_block_keys, composite.contrast_block_evaluations, strict=True,
+        )
+    }
+    policy_lookup = {item.name: item for item in spec.policies}
+    if any(
+        item.factor_weights != policy_lookup[item.policy_name].factor_weights
+        or item.policy_fingerprint != policy_lookup[item.policy_name].fingerprint
+        or item.source_dataset_identity != dataset.identity
+        or item.source_dataset_content_identity != dataset.content_identity
+        or item.source_bounded_content_identity != composite.source_bounded_content_identity
+        or item.specification_fingerprint != spec.fingerprint
+        for item in composite.daily_evaluations
+    ):
+        raise ValueError("composite daily provenance, policy weights, or fingerprint changed")
+    if any(
+        item.factor_weights != policy_lookup[item.policy_name].factor_weights
+        or item.policy_fingerprint != policy_lookup[item.policy_name].fingerprint
+        for item in (*composite.block_evaluations, *composite.summaries)
+    ):
+        raise ValueError("composite aggregate policy weights or fingerprint changed")
+    for signal_date in signal_dates:
+        for horizon in spec.horizons:
+            for outcome in spec.outcome_fields:
+                group = tuple(
+                    daily_map[(signal_date, policy, horizon, outcome)]
+                    for policy in policy_names
+                )
+                if (
+                    len({item.shared_listwise_finite_count for item in group}) != 1
+                    or len({item.shared_sample_evidence_sha256 for item in group}) != 1
+                ):
+                    raise ValueError("composite policies do not share the same daily sample")
+    for summary in composite.summaries:
+        key = (summary.policy_name, summary.horizon_sessions, summary.outcome_field)
+        expected_ids = tuple(block_map[(*key, block)].identity for block in block_names)
+        if summary.ordered_block_identities != expected_ids or len(expected_ids) != 4:
+            raise ValueError("composite summary block membership does not reconcile")
+        daily_ids = tuple(
+            daily_map[(signal_date, *key)].identity for signal_date in signal_dates
+        )
+        if (
+            summary.included_daily_identity_count != len(daily_ids)
+            or summary.included_daily_identities_sha256
+            != _identity_collection_sha256(daily_ids)
+        ):
+            raise ValueError("composite summary daily identity projection does not reconcile")
+    for block in composite.block_evaluations:
+        definition = next(item for item in spec.blocks if item.name == block.block_name)
+        key = (block.policy_name, block.horizon_sessions, block.outcome_field)
+        daily_ids = tuple(
+            daily_map[(signal_date, *key)].identity
+            for signal_date in signal_dates if definition.contains(signal_date)
+        )
+        if (
+            block.block_start_date != definition.start_date
+            or block.block_end_date != definition.end_date
+            or block.included_daily_identity_count != len(daily_ids)
+            or block.included_daily_identities_sha256
+            != _identity_collection_sha256(daily_ids)
+        ):
+            raise ValueError("composite block membership or compact identities do not reconcile")
+    contrast_lookup = {item.name: item for item in spec.contrasts}
+    for summary in composite.contrast_summaries:
+        definition = contrast_lookup[summary.contrast_name]
+        if (
+            summary.variant_policy != definition.variant_policy
+            or summary.reference_policy != definition.reference_policy
+        ):
+            raise ValueError("composite contrast policy references do not reconcile")
+        key = (summary.contrast_name, summary.horizon_sessions, summary.outcome_field)
+        expected_ids = tuple(
+            contrast_block_map[(*key, block)].identity for block in block_names
+        )
+        if summary.ordered_block_identities != expected_ids or len(expected_ids) != 4:
+            raise ValueError("composite contrast block membership does not reconcile")
+    for block in composite.contrast_block_evaluations:
+        contrast = contrast_lookup[block.contrast_name]
+        definition = next(item for item in spec.blocks if item.name == block.block_name)
+        pair_ids = tuple(
+            _daily_pair_identity(
+                daily_map[(signal_date, contrast.variant_policy, block.horizon_sessions, block.outcome_field)].identity,
+                daily_map[(signal_date, contrast.reference_policy, block.horizon_sessions, block.outcome_field)].identity,
+            )
+            for signal_date in signal_dates if definition.contains(signal_date)
+        )
+        if (
+            block.variant_policy != contrast.variant_policy
+            or block.reference_policy != contrast.reference_policy
+            or block.block_start_date != definition.start_date
+            or block.block_end_date != definition.end_date
+            or block.included_daily_pair_identity_count != len(pair_ids)
+            or block.included_daily_pair_identities_sha256
+            != _identity_collection_sha256(pair_ids)
+        ):
+            raise ValueError("composite contrast block membership does not reconcile")
+
+    expected_rows = _composite_artifact_rows(composite)
+    for filename, (columns, projected) in expected_rows.items():
+        if filename not in rows or rows[filename][0] != columns or rows[filename][1] != projected:
+            raise ValueError(f"composite artifact projection does not reconcile: {filename}")
+    rank_values = tuple(item.rank_ic for item in composite.daily_evaluations)
+    spread_values = tuple(item.high_minus_low_mean_spread for item in composite.daily_evaluations)
+    paired_ic_deltas = tuple(
+        daily_map[(date_value, contrast.variant_policy, horizon, outcome)].rank_ic
+        - daily_map[(date_value, contrast.reference_policy, horizon, outcome)].rank_ic
+        for date_value in signal_dates
+        for contrast in spec.contrasts
+        for horizon in spec.horizons
+        for outcome in spec.outcome_fields
+        if daily_map[(date_value, contrast.variant_policy, horizon, outcome)].rank_ic is not None
+        and daily_map[(date_value, contrast.reference_policy, horizon, outcome)].rank_ic is not None
+    )
+    if not (
+        any(value is None for value in rank_values)
+        and any(value is not None and value > 0 for value in rank_values)
+        and any(value is not None and value < 0 for value in rank_values)
+        and any(value is not None and value > 0 for value in spread_values)
+        and any(value is not None and value < 0 for value in spread_values)
+        and any(value > 0 for value in paired_ic_deltas)
+        and any(value < 0 for value in paired_ic_deltas)
+    ):
+        raise ValueError("composite round-trip examples do not cover signed and undefined evidence")
+    forbidden_columns = {
+        "winner", "recommended", "pass", "fail", "selected",
+        "production_candidate", "optimized_weight", "production_policy",
+    }
+    all_columns = set().union(
+        _COMPOSITE_DAILY_COLUMNS, _COMPOSITE_BLOCK_COLUMNS,
+        _COMPOSITE_SUMMARY_COLUMNS, _COMPOSITE_CONTRAST_BLOCK_COLUMNS,
+        _COMPOSITE_CONTRAST_SUMMARY_COLUMNS,
+    )
+    if forbidden_columns.intersection(all_columns):
+        raise ValueError("selection, optimization, or production field entered composite artifacts")
+
+
 def _validate_reconciliation(
     observation_index: Any,
     feature_panel: Any,
@@ -1408,6 +1967,7 @@ def _validate_reconciliation(
     temporal: Any,
     redundancy: Any,
     incremental: Any,
+    composite: Any,
     rows: Mapping[str, tuple[tuple[str, ...], list[dict[str, Any]]]],
     *,
     start_date: str,
@@ -1507,6 +2067,7 @@ def _validate_reconciliation(
         start_date=start_date,
         end_date=end_date,
     )
+    _validate_composite_reconciliation(dataset, composite, rows)
 
 
 def _validate_emitted(
@@ -1516,6 +2077,7 @@ def _validate_emitted(
     temporal: Any,
     redundancy: Any,
     incremental: Any,
+    composite: Any,
 ) -> None:
     if tuple(sorted(path.name for path in directory.iterdir())) != tuple(sorted(_REQUIRED_FILENAMES)):
         raise ValueError("experiment artifact set is incomplete")
@@ -1782,6 +2344,123 @@ def _validate_emitted(
     if any(item not in assumptions for item in _INCREMENTAL_ASSUMPTIONS):
         raise ValueError("incremental-analysis assumptions documentation is incomplete")
 
+    composite_files = (
+        "composite_policy_summary.csv", "composite_policy_by_block.csv",
+        "composite_policy_by_date.csv", "composite_contrast_summary.csv",
+        "composite_contrast_by_block.csv",
+    )
+    for filename in composite_files:
+        columns, expected_rows = rows[filename]
+        for actual, expected in zip(emitted[filename], expected_rows, strict=True):
+            serialized = {
+                column: str(_csv_value(expected.get(column))) for column in columns
+            }
+            if actual != serialized:
+                raise ValueError(f"composite CSV projection mismatch: {filename}")
+    for row in emitted["composite_policy_by_date.csv"]:
+        if date.fromisoformat(row["signal_date"]).isoformat() != row["signal_date"]:
+            raise ValueError("composite daily artifact contains a non-canonical date")
+        weights = json.loads(row["factor_weights"])
+        diagnostics = json.loads(row["factor_missing_or_nonfinite_counts"])
+        if (
+            not isinstance(weights, list)
+            or not isinstance(diagnostics, dict)
+            or canonical_json(weights).decode("utf-8") != row["factor_weights"]
+            or canonical_json(diagnostics).decode("utf-8")
+            != row["factor_missing_or_nonfinite_counts"]
+        ):
+            raise ValueError("composite daily JSON fields are not canonical compact JSON")
+    for filename in ("composite_policy_by_block.csv", "composite_contrast_by_block.csv"):
+        for row in emitted[filename]:
+            for boundary in ("block_start_date", "block_end_date"):
+                if date.fromisoformat(row[boundary]).isoformat() != row[boundary]:
+                    raise ValueError("composite block artifact contains a non-canonical date")
+    if (
+        "ordered_block_identities" in _COMPOSITE_SUMMARY_COLUMNS
+        or "ordered_block_identities" in _COMPOSITE_CONTRAST_SUMMARY_COLUMNS
+        or "included_daily_identities" in _COMPOSITE_BLOCK_COLUMNS
+        or "included_daily_pair_identities" in _COMPOSITE_CONTRAST_BLOCK_COLUMNS
+    ):
+        raise ValueError("composite artifacts contain complete child identity tuples")
+    for row, item in zip(
+        emitted["composite_policy_summary.csv"], composite.summaries, strict=True,
+    ):
+        if (
+            int(row["included_daily_identity_count"])
+            != item.included_daily_identity_count
+            or row["included_daily_identities_sha256"]
+            != item.included_daily_identities_sha256
+            or int(row["block_identity_count"]) != len(item.ordered_block_identities)
+            or row["block_identities_sha256"]
+            != _identity_collection_sha256(item.ordered_block_identities)
+            or row["identity"] != item.identity
+        ):
+            raise ValueError("emitted composite policy summary identities do not reconcile")
+    for row, item in zip(
+        emitted["composite_policy_by_block.csv"], composite.block_evaluations, strict=True,
+    ):
+        if (
+            int(row["included_daily_identity_count"])
+            != item.included_daily_identity_count
+            or row["included_daily_identities_sha256"]
+            != item.included_daily_identities_sha256
+            or row["identity"] != item.identity
+        ):
+            raise ValueError("emitted composite policy block identities do not reconcile")
+    for row, item in zip(
+        emitted["composite_contrast_summary.csv"], composite.contrast_summaries, strict=True,
+    ):
+        if (
+            int(row["block_identity_count"]) != len(item.ordered_block_identities)
+            or row["block_identities_sha256"]
+            != _identity_collection_sha256(item.ordered_block_identities)
+            or row["identity"] != item.identity
+        ):
+            raise ValueError("emitted composite contrast summary identities do not reconcile")
+    composite_manifest = manifest.get("composite_comparison", {})
+    daily_count = len(composite.daily_evaluations)
+    if (
+        composite_manifest.get("contract_name") != COMPOSITE_CONTRACT
+        or composite_manifest.get("contract_version") != COMPOSITE_VERSION
+        or composite_manifest.get("specification_fingerprint")
+        != composite.specification_fingerprint
+        or composite_manifest.get("result_identity") != composite.identity
+        or composite_manifest.get("source_dataset_identity")
+        != composite.source_dataset_identity
+        or composite_manifest.get("source_bounded_content_identity")
+        != composite.source_bounded_content_identity
+        or composite_manifest.get("policy_count") != 4
+        or composite_manifest.get("contrast_count") != 3
+        or composite_manifest.get("horizon_count") != 3
+        or composite_manifest.get("outcome_count") != 2
+        or composite_manifest.get("temporal_block_count") != 4
+        or composite_manifest.get("policy_summary_count") != 24
+        or composite_manifest.get("policy_block_count") != 96
+        or composite_manifest.get("daily_policy_record_count") != daily_count
+        or composite_manifest.get("contrast_summary_count") != 18
+        or composite_manifest.get("contrast_block_count") != 72
+        or composite_manifest.get("ic_defined_policy_record_count")
+        != sum(item.rank_ic is not None for item in composite.daily_evaluations)
+        or composite_manifest.get("ic_undefined_policy_record_count")
+        != sum(item.rank_ic is None for item in composite.daily_evaluations)
+        or composite_manifest.get("spread_defined_policy_record_count")
+        != sum(
+            item.high_minus_low_mean_spread is not None
+            for item in composite.daily_evaluations
+        )
+        or composite_manifest.get("spread_undefined_policy_record_count")
+        != sum(
+            item.high_minus_low_mean_spread is None
+            for item in composite.daily_evaluations
+        )
+        or composite_manifest.get("artifacts") != list(composite_files)
+        or composite_manifest.get("limitations") != list(_COMPOSITE_LIMITATIONS)
+        or composite_manifest.get("completed") is not True
+    ):
+        raise ValueError("composite-comparison manifest does not reconcile")
+    if any(item not in assumptions for item in _COMPOSITE_ASSUMPTIONS):
+        raise ValueError("composite-comparison assumptions documentation is incomplete")
+
 
 def _publish_atomic(temporary: Path, output: Path) -> None:
     if not output.exists():
@@ -1894,10 +2573,15 @@ def run_neutral_panel_factor_evaluation(
         dataset,
         NEUTRAL_PANEL_INCREMENTAL_FACTOR_ANALYSIS_V1,
     )
+    composite = evaluate_panel_composites(
+        dataset,
+        NEUTRAL_ADX_RSI_COMPOSITE_COMPARISON_V1,
+    )
     rows = _artifact_rows(evaluation, observation_index, feature_panel, outcome_panel)
     rows.update(_temporal_artifact_rows(temporal))
     rows.update(_redundancy_artifact_rows(redundancy))
     rows.update(_incremental_artifact_rows(incremental))
+    rows.update(_composite_artifact_rows(composite))
     _validate_reconciliation(
         observation_index,
         feature_panel,
@@ -1907,6 +2591,7 @@ def run_neutral_panel_factor_evaluation(
         temporal,
         redundancy,
         incremental,
+        composite,
         rows,
         start_date=start,
         end_date=end,
@@ -2125,6 +2810,51 @@ def run_neutral_panel_factor_evaluation(
             "completed": True,
             "limitations": list(_INCREMENTAL_LIMITATIONS),
         },
+        "composite_comparison": {
+            "contract_name": COMPOSITE_CONTRACT,
+            "contract_version": COMPOSITE_VERSION,
+            "specification_fingerprint": composite.specification_fingerprint,
+            "result_identity": composite.identity,
+            "source_dataset_identity": composite.source_dataset_identity,
+            "source_bounded_content_identity": composite.source_bounded_content_identity,
+            "policy_count": len({item.policy_name for item in composite.summaries}),
+            "contrast_count": len({
+                item.contrast_name for item in composite.contrast_summaries
+            }),
+            "horizon_count": len({item.horizon_sessions for item in composite.summaries}),
+            "outcome_count": len({item.outcome_field for item in composite.summaries}),
+            "temporal_block_count": len({
+                item.block_name for item in composite.block_evaluations
+            }),
+            "policy_summary_count": len(composite.summaries),
+            "policy_block_count": len(composite.block_evaluations),
+            "daily_policy_record_count": len(composite.daily_evaluations),
+            "contrast_summary_count": len(composite.contrast_summaries),
+            "contrast_block_count": len(composite.contrast_block_evaluations),
+            "ic_defined_policy_record_count": sum(
+                item.rank_ic is not None for item in composite.daily_evaluations
+            ),
+            "ic_undefined_policy_record_count": sum(
+                item.rank_ic is None for item in composite.daily_evaluations
+            ),
+            "spread_defined_policy_record_count": sum(
+                item.high_minus_low_mean_spread is not None
+                for item in composite.daily_evaluations
+            ),
+            "spread_undefined_policy_record_count": sum(
+                item.high_minus_low_mean_spread is None
+                for item in composite.daily_evaluations
+            ),
+            "artifacts": [
+                "composite_policy_summary.csv",
+                "composite_policy_by_block.csv",
+                "composite_policy_by_date.csv",
+                "composite_contrast_summary.csv",
+                "composite_contrast_by_block.csv",
+            ],
+            "completed": True,
+            "limitations": list(_COMPOSITE_LIMITATIONS),
+        },
         "counts": {
             "observation_rows": observation_index.total_membership_row_count,
             "signal_dates": (
@@ -2151,7 +2881,7 @@ def run_neutral_panel_factor_evaluation(
         )
         _write_json(temporary / "experiment_manifest.json", manifest)
         _validate_emitted(
-            temporary, rows, evaluation, temporal, redundancy, incremental,
+            temporary, rows, evaluation, temporal, redundancy, incremental, composite,
         )
         if _file_sha256(database) != database_digest:
             raise RuntimeError("market database changed before publication")
@@ -2175,6 +2905,7 @@ def run_neutral_panel_factor_evaluation(
         "temporal_stability": temporal,
         "factor_redundancy": redundancy,
         "factor_incremental_analysis": incremental,
+        "composite_comparison": composite,
     }
 
 

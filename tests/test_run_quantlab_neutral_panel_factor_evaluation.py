@@ -13,6 +13,7 @@ import pandas as pd
 import pytest
 
 from quantlab.evaluation import (
+    NEUTRAL_ADX_RSI_COMPOSITE_COMPARISON_V1,
     NEUTRAL_PANEL_INCREMENTAL_FACTOR_ANALYSIS_V1,
     NEUTRAL_PANEL_FACTOR_REDUNDANCY_V1,
     NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V2,
@@ -755,6 +756,232 @@ def _incremental(dataset: Any, dates: tuple[str, ...]):
     )
 
 
+def _composite(dataset: Any, dates: tuple[str, ...]):
+    spec = NEUTRAL_ADX_RSI_COMPOSITE_COMPARISON_V1
+    rank_patterns = ((0.30, -0.30, 0.10, -0.10), (None, 0.20, -0.20, 0.40))
+    spread_patterns = ((2.0, -2.0, 1.0, -1.0), (None, 1.0, -1.0, 2.0))
+    daily = []
+    for date_index, signal_date in enumerate(dates):
+        for policy_index, policy in enumerate(spec.policies):
+            for horizon in spec.horizons:
+                for outcome in spec.outcome_fields:
+                    rank_ic = rank_patterns[date_index][policy_index]
+                    spread = spread_patterns[date_index][policy_index]
+                    daily.append(SimpleNamespace(
+                        source_dataset_identity=dataset.identity,
+                        source_dataset_content_identity=dataset.content_identity,
+                        source_bounded_content_identity="composite-bounded-id",
+                        specification_fingerprint=spec.fingerprint,
+                        signal_date=signal_date,
+                        policy_name=policy.name,
+                        factor_weights=policy.factor_weights,
+                        policy_fingerprint=policy.fingerprint,
+                        horizon_sessions=horizon,
+                        outcome_field=outcome,
+                        total_observation_count=20,
+                        outcome_available_count=20,
+                        outcome_unavailable_count=0,
+                        outcome_missing_or_nonfinite_available_count=0,
+                        factor_missing_or_nonfinite_counts=MappingProxyType({
+                            "adx_14": 0, "rsi_14": 0, "volume_ratio_20": 0,
+                        }),
+                        shared_listwise_finite_count=20,
+                        shared_excluded_count=0,
+                        shared_coverage_pct=100.0,
+                        rank_ic=rank_ic,
+                        absolute_rank_ic=None if rank_ic is None else abs(rank_ic),
+                        low_bucket_count=6 if spread is not None else 0,
+                        high_bucket_count=6 if spread is not None else 0,
+                        low_bucket_mean_outcome=0.0 if spread is not None else None,
+                        high_bucket_mean_outcome=spread,
+                        low_bucket_median_outcome=0.0 if spread is not None else None,
+                        high_bucket_median_outcome=spread,
+                        high_minus_low_mean_spread=spread,
+                        high_minus_low_median_spread=spread,
+                        ic_undefined_reason=(None if rank_ic is not None else "fewer_than_minimum_shared_observations"),
+                        spread_undefined_reason=(None if spread is not None else "fewer_than_minimum_shared_observations"),
+                        shared_sample_evidence_sha256=f"sample-{signal_date}-{horizon}-{outcome}",
+                        identity=f"composite-daily-{signal_date}-{policy.name}-{horizon}-{outcome}",
+                    ))
+    daily_map = {
+        (item.signal_date, item.policy_name, item.horizon_sessions, item.outcome_field): item
+        for item in daily
+    }
+
+    def aggregate_fields(included: tuple[Any, ...]) -> dict[str, Any]:
+        ic = tuple(item.rank_ic for item in included if item.rank_ic is not None)
+        spreads = tuple(
+            item.high_minus_low_mean_spread
+            for item in included if item.high_minus_low_mean_spread is not None
+        )
+        return {
+            "total_signal_date_count": len(included),
+            "minimum_sample_date_count": len(included),
+            "ic_defined_date_count": len(ic),
+            "ic_coverage_pct": 0.0 if not included else len(ic) / len(included) * 100.0,
+            "spread_defined_date_count": len(spreads),
+            "spread_coverage_pct": 0.0 if not included else len(spreads) / len(included) * 100.0,
+            "mean_daily_rank_ic": None if not ic else sum(ic) / len(ic),
+            "median_daily_rank_ic": None if not ic else sum(ic) / len(ic),
+            "population_std_daily_rank_ic": 0.0 if ic else None,
+            "minimum_daily_rank_ic": None if not ic else min(ic),
+            "maximum_daily_rank_ic": None if not ic else max(ic),
+            "mean_absolute_daily_rank_ic": None if not ic else sum(abs(x) for x in ic) / len(ic),
+            "median_absolute_daily_rank_ic": None if not ic else sum(abs(x) for x in ic) / len(ic),
+            "positive_ic_date_count": sum(x > 0 for x in ic),
+            "zero_ic_date_count": sum(x == 0 for x in ic),
+            "negative_ic_date_count": sum(x < 0 for x in ic),
+            "positive_ic_rate": None if not ic else sum(x > 0 for x in ic) / len(ic),
+            "zero_ic_rate": None if not ic else sum(x == 0 for x in ic) / len(ic),
+            "negative_ic_rate": None if not ic else sum(x < 0 for x in ic) / len(ic),
+            "mean_daily_mean_spread": None if not spreads else sum(spreads) / len(spreads),
+            "median_daily_mean_spread": None if not spreads else sum(spreads) / len(spreads),
+            "population_std_daily_mean_spread": 0.0 if spreads else None,
+            "minimum_daily_mean_spread": None if not spreads else min(spreads),
+            "maximum_daily_mean_spread": None if not spreads else max(spreads),
+            "mean_daily_median_spread": None if not spreads else sum(spreads) / len(spreads),
+            "median_daily_median_spread": None if not spreads else sum(spreads) / len(spreads),
+            "positive_spread_date_count": sum(x > 0 for x in spreads),
+            "zero_spread_date_count": sum(x == 0 for x in spreads),
+            "negative_spread_date_count": sum(x < 0 for x in spreads),
+            "positive_spread_rate": None if not spreads else sum(x > 0 for x in spreads) / len(spreads),
+            "zero_spread_rate": None if not spreads else sum(x == 0 for x in spreads) / len(spreads),
+            "negative_spread_rate": None if not spreads else sum(x < 0 for x in spreads) / len(spreads),
+            "average_low_bucket_size": 6.0 if spreads else None,
+            "average_high_bucket_size": 6.0 if spreads else None,
+            "average_shared_cross_section_size": 20.0 if included else None,
+            "median_shared_cross_section_size": 20.0 if included else None,
+        }
+
+    blocks = []
+    summaries = []
+    for policy in spec.policies:
+        for horizon in spec.horizons:
+            for outcome in spec.outcome_fields:
+                items = tuple(
+                    daily_map[(signal_date, policy.name, horizon, outcome)]
+                    for signal_date in dates
+                )
+                policy_blocks = []
+                for block in spec.blocks:
+                    included = tuple(item for item in items if block.contains(item.signal_date))
+                    ids = tuple(item.identity for item in included)
+                    item = SimpleNamespace(
+                        policy_name=policy.name, factor_weights=policy.factor_weights,
+                        policy_fingerprint=policy.fingerprint, horizon_sessions=horizon,
+                        outcome_field=outcome, block_name=block.name,
+                        block_start_date=block.start_date, block_end_date=block.end_date,
+                        **aggregate_fields(included),
+                        included_daily_identity_count=len(ids),
+                        included_daily_identities_sha256=runner._identity_collection_sha256(ids),
+                        warnings=("synthetic_composite_block",),
+                        identity=f"composite-block-{policy.name}-{horizon}-{outcome}-{block.name}",
+                    )
+                    blocks.append(item)
+                    policy_blocks.append(item)
+                ids = tuple(item.identity for item in items)
+                block_ids = tuple(item.identity for item in policy_blocks)
+                summaries.append(SimpleNamespace(
+                    policy_name=policy.name, factor_weights=policy.factor_weights,
+                    policy_fingerprint=policy.fingerprint, horizon_sessions=horizon,
+                    outcome_field=outcome, **aggregate_fields(items),
+                    included_daily_identity_count=len(ids),
+                    included_daily_identities_sha256=runner._identity_collection_sha256(ids),
+                    ordered_block_identities=block_ids,
+                    blocks_meeting_ic_review_count=0, blocks_meeting_spread_review_count=0,
+                    chronological_block_mean_ic_sign_flip_count=0,
+                    chronological_block_mean_spread_sign_flip_count=0,
+                    all_blocks_positive_ic=False, all_blocks_negative_ic=False,
+                    all_blocks_positive_spread=False, all_blocks_negative_spread=False,
+                    minimum_block_mean_ic=-0.3, maximum_block_mean_ic=0.4,
+                    range_block_mean_ic=0.7, minimum_block_mean_spread=-2.0,
+                    maximum_block_mean_spread=2.0, range_block_mean_spread=4.0,
+                    largest_absolute_block_mean_ic_concentration=1.0,
+                    largest_absolute_block_mean_spread_concentration=1.0,
+                    warnings=("synthetic_composite_summary",),
+                    identity=f"composite-summary-{policy.name}-{horizon}-{outcome}",
+                ))
+
+    def contrast_metrics(pairs: tuple[tuple[Any, Any], ...]) -> dict[str, Any]:
+        ic = tuple(
+            left.rank_ic - right.rank_ic for left, right in pairs
+            if left.rank_ic is not None and right.rank_ic is not None
+        )
+        spreads = tuple(
+            left.high_minus_low_mean_spread - right.high_minus_low_mean_spread
+            for left, right in pairs
+            if left.high_minus_low_mean_spread is not None
+            and right.high_minus_low_mean_spread is not None
+        )
+        def fields(prefix: str, values: tuple[float, ...]) -> dict[str, Any]:
+            return {
+                f"paired_{prefix}_date_count": len(values),
+                f"mean_daily_{prefix}_delta": None if not values else sum(values) / len(values),
+                f"median_daily_{prefix}_delta": None if not values else sum(values) / len(values),
+                f"positive_{prefix}_delta_count": sum(value > 0 for value in values),
+                f"zero_{prefix}_delta_count": sum(value == 0 for value in values),
+                f"negative_{prefix}_delta_count": sum(value < 0 for value in values),
+                f"positive_{prefix}_delta_rate": None if not values else sum(value > 0 for value in values) / len(values),
+                f"zero_{prefix}_delta_rate": None if not values else sum(value == 0 for value in values) / len(values),
+                f"negative_{prefix}_delta_rate": None if not values else sum(value < 0 for value in values) / len(values),
+            }
+        return {**fields("ic", ic), **fields("spread", spreads)}
+
+    contrast_blocks = []
+    contrast_summaries = []
+    for contrast in spec.contrasts:
+        for horizon in spec.horizons:
+            for outcome in spec.outcome_fields:
+                pairs = tuple(
+                    (
+                        daily_map[(signal_date, contrast.variant_policy, horizon, outcome)],
+                        daily_map[(signal_date, contrast.reference_policy, horizon, outcome)],
+                    )
+                    for signal_date in dates
+                )
+                block_ids = []
+                for block in spec.blocks:
+                    included = tuple(pair for pair in pairs if block.contains(pair[0].signal_date))
+                    pair_ids = tuple(
+                        runner._daily_pair_identity(left.identity, right.identity)
+                        for left, right in included
+                    )
+                    identity = f"composite-contrast-block-{contrast.name}-{horizon}-{outcome}-{block.name}"
+                    block_ids.append(identity)
+                    contrast_blocks.append(SimpleNamespace(
+                        contrast_name=contrast.name, variant_policy=contrast.variant_policy,
+                        reference_policy=contrast.reference_policy,
+                        horizon_sessions=horizon, outcome_field=outcome,
+                        block_name=block.name, block_start_date=block.start_date,
+                        block_end_date=block.end_date, **contrast_metrics(included),
+                        included_daily_pair_identity_count=len(pair_ids),
+                        included_daily_pair_identities_sha256=runner._identity_collection_sha256(pair_ids),
+                        identity=identity,
+                    ))
+                contrast_summaries.append(SimpleNamespace(
+                    contrast_name=contrast.name, variant_policy=contrast.variant_policy,
+                    reference_policy=contrast.reference_policy,
+                    horizon_sessions=horizon, outcome_field=outcome,
+                    **contrast_metrics(pairs), ordered_block_identities=tuple(block_ids),
+                    identity=f"composite-contrast-{contrast.name}-{horizon}-{outcome}",
+                ))
+    return SimpleNamespace(
+        source_dataset_identity=dataset.identity,
+        source_dataset_content_identity=dataset.content_identity,
+        source_bounded_content_identity="composite-bounded-id",
+        source_observation_index_identity=dataset.observation_index_identity,
+        source_observation_content_identity=dataset.observation_content_identity,
+        source_feature_panel_identity=dataset.feature_panel_identity,
+        source_feature_content_identity=dataset.feature_content_identity,
+        source_outcome_panel_identity=dataset.outcome_panel_identity,
+        source_outcome_content_identity=dataset.outcome_content_identity,
+        specification_fingerprint=spec.fingerprint,
+        daily_evaluations=tuple(daily), block_evaluations=tuple(blocks),
+        summaries=tuple(summaries), contrast_block_evaluations=tuple(contrast_blocks),
+        contrast_summaries=tuple(contrast_summaries), identity="composite-result-id",
+    )
+
+
 def _install_pipeline(monkeypatch: pytest.MonkeyPatch, database: Path):
     dates = ("2021-01-04", "2021-01-05")
     keys = tuple((signal_date, symbol) for signal_date in dates for symbol in ("AAA", "BBB"))
@@ -841,11 +1068,13 @@ def _install_pipeline(monkeypatch: pytest.MonkeyPatch, database: Path):
     temporal = _temporal(evaluation)
     redundancy = _redundancy(dataset, dates)
     incremental = _incremental(dataset, dates)
+    composite = _composite(dataset, dates)
     calls: dict[str, list[tuple[tuple[Any, ...], dict[str, Any]]]] = {
         name: [] for name in (
             "snapshot", "coverage", "universe", "observation", "source",
             "features", "outcomes", "dataset", "redundancy", "evaluation", "temporal",
             "incremental",
+            "composite",
         )
     }
     calls["dataset_frame"] = dataset_frame_calls
@@ -896,6 +1125,11 @@ def _install_pipeline(monkeypatch: pytest.MonkeyPatch, database: Path):
         "evaluate_panel_factor_incremental_analysis",
         install("incremental", incremental),
     )
+    monkeypatch.setattr(
+        runner,
+        "evaluate_panel_composites",
+        install("composite", composite),
+    )
     return calls, SimpleNamespace(
         snapshot=snapshot,
         coverage=coverage,
@@ -909,6 +1143,7 @@ def _install_pipeline(monkeypatch: pytest.MonkeyPatch, database: Path):
         temporal=temporal,
         redundancy=redundancy,
         incremental=incremental,
+        composite=composite,
         dates=dates,
     )
 
@@ -958,6 +1193,10 @@ def test_exact_one_time_orchestration_and_identity_propagation(
         objects.dataset,
         NEUTRAL_PANEL_INCREMENTAL_FACTOR_ANALYSIS_V1,
     ), {})]
+    assert calls["composite"] == [((
+        objects.dataset,
+        NEUTRAL_ADX_RSI_COMPOSITE_COMPARISON_V1,
+    ), {})]
     manifest = result["manifest"]
     assert manifest["observation_index"]["identity"] == "observation-id"
     assert manifest["features"]["computation_identity"] == "feature-computation-id"
@@ -969,6 +1208,8 @@ def test_exact_one_time_orchestration_and_identity_propagation(
     assert result["factor_redundancy"] is objects.redundancy
     assert manifest["factor_incremental_analysis"]["source_dataset_identity"] == "dataset-id"
     assert result["factor_incremental_analysis"] is objects.incremental
+    assert manifest["composite_comparison"]["source_dataset_identity"] == "dataset-id"
+    assert result["composite_comparison"] is objects.composite
 
 
 def test_exact_artifacts_schemas_dimensions_order_and_complete_population(
@@ -977,7 +1218,7 @@ def test_exact_artifacts_schemas_dimensions_order_and_complete_population(
 ) -> None:
     _, _, objects, result = _run(monkeypatch, tmp_path)
     output = result["output_root"]
-    assert len(runner._REQUIRED_FILENAMES) == 15
+    assert len(runner._REQUIRED_FILENAMES) == 20
     assert tuple(sorted(path.name for path in output.iterdir())) == tuple(
         sorted(runner._REQUIRED_FILENAMES)
     )
@@ -1012,6 +1253,21 @@ def test_exact_artifacts_schemas_dimensions_order_and_complete_population(
     temporal_coverage_columns, temporal_coverage = _read_csv(
         output / "temporal_coverage.csv",
     )
+    composite_summary_columns, composite_summaries = _read_csv(
+        output / "composite_policy_summary.csv",
+    )
+    composite_block_columns, composite_blocks = _read_csv(
+        output / "composite_policy_by_block.csv",
+    )
+    composite_daily_columns, composite_daily = _read_csv(
+        output / "composite_policy_by_date.csv",
+    )
+    contrast_summary_columns, contrast_summaries = _read_csv(
+        output / "composite_contrast_summary.csv",
+    )
+    contrast_block_columns, contrast_blocks = _read_csv(
+        output / "composite_contrast_by_block.csv",
+    )
     assert summary_columns == runner._SUMMARY_COLUMNS
     assert daily_columns == runner._DAILY_COLUMNS
     assert coverage_columns == runner._COVERAGE_COLUMNS
@@ -1025,6 +1281,11 @@ def test_exact_artifacts_schemas_dimensions_order_and_complete_population(
     assert incremental_summary_columns == runner._INCREMENTAL_SUMMARY_COLUMNS
     assert incremental_block_columns == runner._INCREMENTAL_BLOCK_COLUMNS
     assert incremental_daily_columns == runner._INCREMENTAL_DAILY_COLUMNS
+    assert composite_summary_columns == runner._COMPOSITE_SUMMARY_COLUMNS
+    assert composite_block_columns == runner._COMPOSITE_BLOCK_COLUMNS
+    assert composite_daily_columns == runner._COMPOSITE_DAILY_COLUMNS
+    assert contrast_summary_columns == runner._COMPOSITE_CONTRAST_SUMMARY_COLUMNS
+    assert contrast_block_columns == runner._COMPOSITE_CONTRAST_BLOCK_COLUMNS
     assert (len(summaries), len(daily), len(coverage), len(observations)) == (48, 96, 48, 2)
     assert (len(temporal_summaries), len(temporal_blocks), len(temporal_coverage)) == (
         48, 192, 48,
@@ -1035,6 +1296,29 @@ def test_exact_artifacts_schemas_dimensions_order_and_complete_population(
     assert (
         len(incremental_summaries), len(incremental_blocks), len(incremental_daily),
     ) == (48, 192, len(objects.dates) * 48)
+    assert (
+        len(composite_summaries), len(composite_blocks), len(composite_daily),
+        len(contrast_summaries), len(contrast_blocks),
+    ) == (24, 96, len(objects.dates) * 24, 18, 72)
+    assert [
+        (
+            row["signal_date"], row["policy_name"], int(row["horizon_sessions"]),
+            row["outcome_field"],
+        )
+        for row in composite_daily
+    ] == [
+        (
+            signal_date, policy.name, horizon, outcome,
+        )
+        for signal_date in objects.dates
+        for policy in NEUTRAL_ADX_RSI_COMPOSITE_COMPARISON_V1.policies
+        for horizon in NEUTRAL_ADX_RSI_COMPOSITE_COMPARISON_V1.horizons
+        for outcome in NEUTRAL_ADX_RSI_COMPOSITE_COMPARISON_V1.outcome_fields
+    ]
+    assert len({
+        (row["signal_date"], row["policy_name"], row["horizon_sessions"], row["outcome_field"])
+        for row in composite_daily
+    }) == len(composite_daily)
     expected_incremental_daily_keys = [
         (signal_date, hypothesis.name, str(horizon), outcome)
         for signal_date in objects.dates
@@ -1100,6 +1384,21 @@ def test_compact_identity_projection_nulls_json_and_no_evidence_payloads(
     )
     incremental_daily_columns, incremental_daily = _read_csv(
         output / "factor_incremental_by_date.csv",
+    )
+    composite_summary_columns, composite_summaries = _read_csv(
+        output / "composite_policy_summary.csv",
+    )
+    composite_block_columns, composite_blocks = _read_csv(
+        output / "composite_policy_by_block.csv",
+    )
+    composite_daily_columns, composite_daily = _read_csv(
+        output / "composite_policy_by_date.csv",
+    )
+    contrast_summary_columns, contrast_summaries = _read_csv(
+        output / "composite_contrast_summary.csv",
+    )
+    contrast_block_columns, _ = _read_csv(
+        output / "composite_contrast_by_block.csv",
     )
     assert "included_daily_identities" not in summary_columns
     assert "eligible_evidence" not in daily_columns
@@ -1168,6 +1467,40 @@ def test_compact_identity_projection_nulls_json_and_no_evidence_payloads(
     assert incremental_summaries[0]["block_identities_sha256"] == (
         objects.incremental.summaries[0].ordered_block_identities_sha256
     )
+    assert "ordered_block_identities" not in composite_summary_columns
+    assert "included_daily_identities" not in composite_block_columns
+    assert "ordered_block_identities" not in contrast_summary_columns
+    forbidden_composite = {
+        "winner", "recommended", "pass", "fail", "selected",
+        "production_candidate", "optimized_weight", "production_policy",
+    }
+    assert not forbidden_composite.intersection(
+        set(composite_summary_columns) | set(composite_block_columns)
+        | set(composite_daily_columns) | set(contrast_summary_columns)
+        | set(contrast_block_columns)
+    )
+    assert json.loads(composite_daily[0]["factor_weights"]) == [
+        {"direction": "HIGHER_IS_BETTER", "factor": "adx_14", "weight": 1.0},
+    ]
+    assert composite_daily[0]["rank_ic"] == "0.3"
+    assert composite_daily[24]["rank_ic"] == ""
+    assert any(float(row["rank_ic"]) < 0 for row in composite_daily if row["rank_ic"])
+    assert any(
+        float(row["high_minus_low_mean_spread"]) < 0
+        for row in composite_daily if row["high_minus_low_mean_spread"]
+    )
+    assert composite_blocks[0]["included_daily_identity_count"] == "0"
+    assert composite_summaries[0]["included_daily_identity_count"] == "2"
+    assert composite_summaries[0]["block_identity_count"] == "4"
+    assert contrast_summaries[0]["block_identity_count"] == "4"
+    assert any(
+        float(row["mean_daily_ic_delta"]) > 0
+        for row in contrast_summaries if row["mean_daily_ic_delta"]
+    )
+    assert any(
+        float(row["mean_daily_ic_delta"]) < 0
+        for row in contrast_summaries if row["mean_daily_ic_delta"]
+    )
     forbidden_incremental = {
         "keep", "drop", "selected", "rejected", "improved", "degraded",
         "incremental_pass", "recommended_weight", "composite_role",
@@ -1210,11 +1543,32 @@ def test_compact_identity_projection_nulls_json_and_no_evidence_payloads(
     assert incremental_manifest["block_result_count"] == 192
     assert incremental_manifest["daily_record_count"] == len(objects.dates) * 48
     assert incremental_manifest["limitations"] == list(runner._INCREMENTAL_LIMITATIONS)
+    composite_manifest = result["manifest"]["composite_comparison"]
+    assert composite_manifest["result_identity"] == "composite-result-id"
+    assert composite_manifest["specification_fingerprint"] == (
+        NEUTRAL_ADX_RSI_COMPOSITE_COMPARISON_V1.fingerprint
+    )
+    assert composite_manifest["policy_summary_count"] == 24
+    assert composite_manifest["policy_block_count"] == 96
+    assert composite_manifest["daily_policy_record_count"] == len(objects.dates) * 24
+    assert composite_manifest["contrast_summary_count"] == 18
+    assert composite_manifest["contrast_block_count"] == 72
+    assert (
+        composite_manifest["ic_defined_policy_record_count"]
+        + composite_manifest["ic_undefined_policy_record_count"]
+    ) == len(objects.dates) * 24
+    assert (
+        composite_manifest["spread_defined_policy_record_count"]
+        + composite_manifest["spread_undefined_policy_record_count"]
+    ) == len(objects.dates) * 24
+    assert composite_manifest["limitations"] == list(runner._COMPOSITE_LIMITATIONS)
     assumptions = (output / "assumptions.md").read_text(encoding="utf-8")
     assert "predictor projection" in assumptions
     assert "No redundancy threshold or factor-selection decision" in assumptions
     assert "Eight fixed hypotheses" in assumptions
     assert "No automatic factor-selection threshold" in assumptions
+    assert "Four fixed higher-is-better policies" in assumptions
+    assert "No optimization, winner selection" in assumptions
 
 
 def test_temporal_projection_hashes_review_statuses_and_manifest_reconcile(
@@ -1420,6 +1774,60 @@ def test_incremental_corruption_aborts_overwrite_and_preserves_previous_target(
     assert not tuple(output.parent.glob(f".{output.name}.tmp-*"))
 
 
+@pytest.mark.parametrize(
+    ("corruption", "message"),
+    (
+        ("source_identity", "source identity"),
+        ("policy_order", "dimensions, keys, or canonical ordering"),
+        ("weights", "policy weights"),
+        ("dimensions", "dimensions, keys, or canonical ordering"),
+        ("duplicate_daily", "dimensions, keys, or canonical ordering"),
+        ("block_membership", "block membership"),
+        ("contrast", "contrast policy references"),
+    ),
+)
+def test_composite_corruption_aborts_overwrite_and_preserves_previous_target(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    corruption: str,
+    message: str,
+) -> None:
+    database, _, _, first = _run(monkeypatch, tmp_path)
+    output = first["output_root"]
+    previous_manifest = (output / "experiment_manifest.json").read_bytes()
+    _, objects = _install_pipeline(monkeypatch, database)
+    if corruption == "source_identity":
+        objects.composite.source_dataset_identity = "wrong-source"
+    elif corruption == "policy_order":
+        values = list(objects.composite.summaries)
+        values[0], values[1] = values[1], values[0]
+        objects.composite.summaries = tuple(values)
+    elif corruption == "weights":
+        objects.composite.daily_evaluations[0].factor_weights = (
+            NEUTRAL_ADX_RSI_COMPOSITE_COMPARISON_V1.policies[1].factor_weights
+        )
+    elif corruption == "dimensions":
+        objects.composite.block_evaluations = objects.composite.block_evaluations[:-1]
+    elif corruption == "duplicate_daily":
+        values = list(objects.composite.daily_evaluations)
+        values[1] = values[0]
+        objects.composite.daily_evaluations = tuple(values)
+    elif corruption == "block_membership":
+        objects.composite.block_evaluations[1].included_daily_identity_count = 99
+    else:
+        objects.composite.contrast_summaries[0].reference_policy = "RSI_ONLY"
+    with pytest.raises(ValueError, match=message):
+        runner.run_neutral_panel_factor_evaluation(
+            database_path=database,
+            start_date="2021-01-04",
+            end_date="2021-01-05",
+            output_root=output,
+            overwrite=True,
+        )
+    assert (output / "experiment_manifest.json").read_bytes() == previous_manifest
+    assert not tuple(output.parent.glob(f".{output.name}.tmp-*"))
+
+
 def test_database_is_unchanged_and_no_network_or_current_vn100_path(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1471,11 +1879,11 @@ def test_overwrite_is_exact_and_failed_validation_preserves_previous_target(
     legacy_output.mkdir()
     legacy_files = tuple(
         name for name in runner._REQUIRED_FILENAMES
-        if not name.startswith("factor_incremental_")
+        if not name.startswith("composite_")
     )
-    assert len(legacy_files) == 12
+    assert len(legacy_files) == 15
     for filename in legacy_files:
-        (legacy_output / filename).write_text("legacy-twelve-file-target", encoding="utf-8")
+        (legacy_output / filename).write_text("legacy-fifteen-file-target", encoding="utf-8")
     original_validate_emitted = runner._validate_emitted
     monkeypatch.setattr(
         runner,
@@ -1490,7 +1898,7 @@ def test_overwrite_is_exact_and_failed_validation_preserves_previous_target(
         sorted(legacy_files)
     )
     assert all(
-        path.read_text(encoding="utf-8") == "legacy-twelve-file-target"
+        path.read_text(encoding="utf-8") == "legacy-fifteen-file-target"
         for path in legacy_output.iterdir()
     )
     monkeypatch.setattr(runner, "_validate_emitted", original_validate_emitted)
@@ -1500,7 +1908,7 @@ def test_overwrite_is_exact_and_failed_validation_preserves_previous_target(
         sorted(runner._REQUIRED_FILENAMES)
     )
     assert all(
-        path.read_text(encoding="utf-8") != "legacy-twelve-file-target"
+        path.read_text(encoding="utf-8") != "legacy-fifteen-file-target"
         for path in output.iterdir()
     )
     previous_manifest = (output / "experiment_manifest.json").read_bytes()
@@ -1529,7 +1937,7 @@ def test_cli_defaults_default_output_and_fresh_import_isolation(tmp_path: Path) 
     assert arguments.maximum_staleness_sessions == 5
     assert arguments.cache_root is None
     assert arguments.cache_codec == "npz_numeric_v1"
-    assert runner.RUNNER_VERSION == "v4"
+    assert runner.RUNNER_VERSION == "v5"
     expected = runner.PROJECT_ROOT / "research_results" / (
         "quantlab_neutral_panel_factor_evaluation_2021-01-04_2021-01-05"
     )
