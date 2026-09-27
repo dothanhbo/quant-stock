@@ -188,7 +188,8 @@ def test_protocol_version_change_isolated_and_schema_initialization_idempotent(t
     ledger.initialize(); ledger.initialize()
     ledger.activate(activation)
     assert ledger.activation(protocol.protocol_id) == activation
-    assert not (ROOT / "data/forward_validation.db").exists()
+    assert ledger.path == (tmp_path / "forward.db").resolve()
+    assert ledger.path != (ROOT / "data/forward_validation.db").resolve()
 
 
 def test_status_is_deterministic_and_contains_no_performance_conclusion(tmp_path, protocol, activation):

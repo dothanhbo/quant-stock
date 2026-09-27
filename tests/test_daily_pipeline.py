@@ -175,6 +175,11 @@ def test_run_daily_passes_pending_result_to_scanner(
     )
     monkeypatch.setattr(
         run_daily,
+        "run_forward_validation_daily",
+        lambda: None,
+    )
+    monkeypatch.setattr(
+        run_daily,
         "run_paper_v2_lifecycle",
         lambda: pending_result,
     )
@@ -285,6 +290,7 @@ def test_run_daily_uses_v3_when_configured(monkeypatch):
 
     monkeypatch.setenv("PAPER_STRATEGY_VERSION", "V3_BREADTH_40_60")
     monkeypatch.setattr(run_daily, "update_market_data", lambda: (101, []))
+    monkeypatch.setattr(run_daily, "run_forward_validation_daily", lambda: None)
     monkeypatch.setattr(
         run_daily,
         "run_paper_v3_lifecycle",

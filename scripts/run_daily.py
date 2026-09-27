@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 
 from dotenv import load_dotenv
@@ -77,6 +78,14 @@ def get_market_date() -> str | None:
     )
 
     return get_reference_market_date()
+
+
+def run_forward_validation_daily():
+    from quantlab.forward import run_forward_validation_daily as run_forward
+
+    result = run_forward()
+    print(json.dumps(result.as_dict(), sort_keys=True))
+    return result
 
 
 PAPER_V3_VERSION = "V3_BREADTH_40_60"
@@ -158,6 +167,9 @@ def main() -> int:
         ),
         run_scanner=(
             scanner_stage
+        ),
+        run_forward_validation=(
+            run_forward_validation_daily
         ),
         get_market_date=(
             get_market_date

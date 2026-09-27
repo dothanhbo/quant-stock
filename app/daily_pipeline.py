@@ -48,8 +48,9 @@ class DailyPipeline:
 
     Default order:
         1. Update market data
-        2. Manage existing paper positions and exits
-        3. Scan new signals and execute paper BUY orders
+        2. Record/mature prospective forward evidence
+        3. Manage existing paper positions and exits
+        4. Scan new signals and execute paper BUY orders
 
     Exits run before entries so released cash can be reused by the
     scanner on the same daily run.
@@ -70,6 +71,7 @@ class DailyPipeline:
             [],
             object,
         ],
+        run_forward_validation: Callable[[], object] | None = None,
         get_market_date: Callable[[], str | None] | None = None,
         get_today: Callable[[], date] = date.today,
     ) -> None:
@@ -78,6 +80,7 @@ class DailyPipeline:
         )
         self.run_lifecycle = run_lifecycle
         self.run_scanner = run_scanner
+        self.run_forward_validation = run_forward_validation
         self.get_market_date = get_market_date
         self.get_today = get_today
 
@@ -104,7 +107,7 @@ class DailyPipeline:
             "=" * 68
         )
         print(
-            "Thứ tự: Update Data → "
+            "Thứ tự: Update Data → Forward Validation → "
             "Paper Lifecycle → Scanner"
         )
 
@@ -135,6 +138,45 @@ class DailyPipeline:
                     warning="Đã bỏ qua theo yêu cầu.",
                 )
             )
+
+        if self.run_forward_validation is not None:
+            if skip_update:
+                result.stages.append(
+                    PipelineStageResult(
+                        name="Forward Validation",
+                        success=True,
+                        duration_seconds=0.0,
+                        warning=(
+                            "Không chạy vì market-data update "
+                            "đã bị bỏ qua."
+                        ),
+                    )
+                )
+            elif data_stage.warning:
+                result.stages.append(
+                    PipelineStageResult(
+                        name="Forward Validation",
+                        success=False,
+                        duration_seconds=0.0,
+                        error=(
+                            "Không ghi forward evidence vì market-data "
+                            "update chưa hoàn tất cho toàn bộ universe."
+                        ),
+                    )
+                )
+                result.finished_at = datetime.now()
+                self._print_summary(result)
+                return result
+            else:
+                forward_stage = self._run_stage(
+                    name="Forward Validation",
+                    function=self.run_forward_validation,
+                )
+                result.stages.append(forward_stage)
+                if not forward_stage.success:
+                    result.finished_at = datetime.now()
+                    self._print_summary(result)
+                    return result
 
         # Sau khi update, chỉ chạy lifecycle/scanner khi market DB đã có
         # phiên của ngày hiện tại. Nhờ vậy weekend/ngày lễ/nghỉ bù được
@@ -344,8 +386,9 @@ class DailyPipeline:
         ],
     ) -> PipelineStageResult:
         stage_number = {
-            "Paper Lifecycle": "2/3",
-            "Strategy Scanner": "3/3",
+            "Forward Validation": "2/4",
+            "Paper Lifecycle": "3/4",
+            "Strategy Scanner": "4/4",
         }.get(
             name,
             "",

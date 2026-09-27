@@ -709,6 +709,34 @@ def _policy_ordering(
     return tuple(sorted(scored, key=lambda item: (-item[1], item[0])))
 
 
+def rank_panel_policy_candidates(
+    eligible: tuple[tuple[str, float, float], ...],
+    policy: PanelSelectionPolicy,
+) -> tuple[tuple[str, float], ...]:
+    """Apply the frozen Phase 5.9 cross-sectional ordering to one date.
+
+    ``eligible`` contains normalized ``(symbol, adx_14, rsi_14)`` evidence.
+    Keeping this small entry point beside the authoritative percentile logic
+    lets prospective evidence reuse the frozen policy without constructing an
+    outcome-bearing historical research dataset.
+    """
+    if not isinstance(policy, PanelSelectionPolicy):
+        raise TypeError("policy must be PanelSelectionPolicy")
+    normalized: list[tuple[str, float, float]] = []
+    for item in tuple(eligible):
+        if not isinstance(item, tuple) or len(item) != 3:
+            raise TypeError("eligible rows must be (symbol, adx_14, rsi_14) tuples")
+        symbol = _text(item[0], name="eligible symbol").upper()
+        adx = _finite(item[1], column="adx_14")
+        rsi = _finite(item[2], column="rsi_14")
+        if adx is None or rsi is None:
+            raise ValueError("eligible rows require finite ADX and RSI values")
+        normalized.append((symbol, adx, rsi))
+    if len({item[0] for item in normalized}) != len(normalized):
+        raise ValueError("eligible rows contain duplicate symbols")
+    return _policy_ordering(tuple(sorted(normalized)), policy)
+
+
 def _daily_selection(
     *,
     dataset: Any,
@@ -942,7 +970,7 @@ def evaluate_panel_policy_selection_diagnostics(
     for signal_date in signal_dates:
         eligible = rows_by_date[signal_date]
         ordering_by_policy = {
-            policy.name: _policy_ordering(eligible, policy)
+            policy.name: rank_panel_policy_candidates(eligible, policy)
             for policy in spec.policies
         }
         for policy in spec.policies:

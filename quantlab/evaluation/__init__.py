@@ -66,6 +66,7 @@ _EXPORT_MODULES = {
     "PanelPolicySelectionDiagnosticsResult": ".panel_policy_selection_diagnostics",
     "NEUTRAL_ADX_RSI_SELECTION_DIAGNOSTICS_V1": ".panel_policy_selection_diagnostics",
     "evaluate_panel_policy_selection_diagnostics": ".panel_policy_selection_diagnostics",
+    "rank_panel_policy_candidates": ".panel_policy_selection_diagnostics",
     "ResearchDecision": ".research_decision_gate",
     "EvidenceStatus": ".research_decision_gate",
     "ResearchDecisionGateSpec": ".research_decision_gate",

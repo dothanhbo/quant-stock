@@ -202,6 +202,65 @@ class ForwardValidationStatus:
         object.__setattr__(self, "matured_count_by_horizon", MappingProxyType(dict(self.matured_count_by_horizon)))
 
 
+class ForwardDailyOperationState(str, Enum):
+    NO_NEW_SESSION = "NO_NEW_SESSION"
+    FORMATION_CREATED = "FORMATION_CREATED"
+    FORMATION_EXISTING = "FORMATION_EXISTING"
+
+
+@dataclass(frozen=True, slots=True)
+class ForwardDailyOperationResult:
+    protocol_id: str
+    completed_market_session: str
+    operation_state: ForwardDailyOperationState
+    formation_created: bool
+    formation_existing: bool
+    latest_recorded_formation: str | None
+    formation_count: int
+    pending_maturity_count: int
+    matured_count_by_horizon: Mapping[int, int]
+    outcome_unavailable_count: int
+    missing_formation_sessions: tuple[str, ...]
+    maturity_events_created: int
+    outcomes_created: int
+    gap_events_created: int
+    status_identity: str
+
+    def __post_init__(self) -> None:
+        object.__setattr__(
+            self,
+            "matured_count_by_horizon",
+            MappingProxyType(dict(self.matured_count_by_horizon)),
+        )
+        object.__setattr__(
+            self,
+            "missing_formation_sessions",
+            tuple(self.missing_formation_sessions),
+        )
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "protocol_id": self.protocol_id,
+            "completed_market_session": self.completed_market_session,
+            "operation_state": self.operation_state.value,
+            "formation_created": self.formation_created,
+            "formation_existing": self.formation_existing,
+            "latest_recorded_formation": self.latest_recorded_formation,
+            "formation_count": self.formation_count,
+            "pending_maturity_count": self.pending_maturity_count,
+            "matured_count_by_horizon": {
+                str(key): value
+                for key, value in self.matured_count_by_horizon.items()
+            },
+            "outcome_unavailable_count": self.outcome_unavailable_count,
+            "missing_formation_sessions": list(self.missing_formation_sessions),
+            "maturity_events_created": self.maturity_events_created,
+            "outcomes_created": self.outcomes_created,
+            "gap_events_created": self.gap_events_created,
+            "status_identity": self.status_identity,
+        }
+
+
 def finite_positive_or_none(value: float | None, *, name: str) -> float | None:
     if value is None:
         return None

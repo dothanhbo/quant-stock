@@ -72,6 +72,7 @@ def test_full_v3_daily_order_instantiates_intended_scanner_policy_and_executor(
     v3_database = _configure_isolated_v3_environment(monkeypatch, tmp_path)
     monkeypatch.setenv("PAPER_STRATEGY_VERSION", "V3_BREADTH_40_60")
     monkeypatch.setattr(run_daily, "update_market_data", lambda: (101, []))
+    monkeypatch.setattr(run_daily, "run_forward_validation_daily", lambda: None)
     monkeypatch.setattr(
         run_daily,
         "get_market_date",
