@@ -14,6 +14,7 @@ import pytest
 
 from quantlab.evaluation import (
     NEUTRAL_ADX_RSI_COMPOSITE_COMPARISON_V1,
+    NEUTRAL_ADX_RSI_SELECTION_DIAGNOSTICS_V1,
     NEUTRAL_PANEL_INCREMENTAL_FACTOR_ANALYSIS_V1,
     NEUTRAL_PANEL_FACTOR_REDUNDANCY_V1,
     NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V2,
@@ -982,6 +983,229 @@ def _composite(dataset: Any, dates: tuple[str, ...]):
     )
 
 
+def _selection_diagnostics(dataset: Any, dates: tuple[str, ...]):
+    spec = NEUTRAL_ADX_RSI_SELECTION_DIAGNOSTICS_V1
+    policies = tuple(item.name for item in spec.policies)
+    eligible = (("AAA", 10.0, 60.0), ("BBB", 20.0, 40.0))
+    orderings = {
+        "ADX_ONLY": (("BBB", 1.0), ("AAA", 0.0)),
+        "ADX_RSI_EQUAL_WEIGHT": (("AAA", 0.5), ("BBB", 0.5)),
+    }
+    daily = []
+    daily_map = {}
+    previous = {}
+    for signal_date in dates:
+        for policy in spec.policies:
+            ordering = orderings[policy.name]
+            for budget in spec.selection_budgets:
+                key = (policy.name, budget)
+                prior = previous.get(key)
+                selected = tuple(item[0] for item in ordering)
+                if prior is None:
+                    previous_date = previous_identity = previous_count = overlap = None
+                    entries = exits = retained = ()
+                    one_way = symmetric = None
+                    one_reason = symmetric_reason = "first_available_date"
+                else:
+                    previous_date = prior.signal_date
+                    previous_identity = prior.identity
+                    previous_count = len(prior.ordered_selected_symbols)
+                    overlap = previous_count
+                    entries = exits = ()
+                    retained = selected
+                    one_way = symmetric = 0.0
+                    one_reason = symmetric_reason = None
+                item = SimpleNamespace(
+                    source_dataset_identity=dataset.identity,
+                    source_bounded_content_identity="selection-bounded-id",
+                    specification_fingerprint=spec.fingerprint,
+                    signal_date=signal_date,
+                    policy_name=policy.name,
+                    policy_fingerprint=policy.fingerprint,
+                    requested_selection_count=budget,
+                    eligible_cross_section_count=2,
+                    actual_selected_count=2,
+                    ordered_selected_symbols=selected,
+                    ordered_selected_score_evidence=ordering,
+                    complete_eligible_factor_evidence=eligible,
+                    complete_policy_score_ordering=ordering,
+                    boundary_score=ordering[-1][1],
+                    boundary_tie_count=(2 if policy.name == "ADX_RSI_EQUAL_WEIGHT" else 1),
+                    selected_from_boundary_tie_count=(
+                        2 if policy.name == "ADX_RSI_EQUAL_WEIGHT" else 1
+                    ),
+                    boundary_split_equal_score_group=False,
+                    insufficient_cross_section=True,
+                    previous_signal_date=previous_date,
+                    previous_selection_identity=previous_identity,
+                    previous_selected_count=previous_count,
+                    overlap_with_previous_count=overlap,
+                    entries=entries,
+                    exits=exits,
+                    retained_symbols=retained,
+                    one_way_turnover=one_way,
+                    symmetric_turnover=symmetric,
+                    one_way_turnover_undefined_reason=one_reason,
+                    symmetric_turnover_undefined_reason=symmetric_reason,
+                    identity=f"selection-{signal_date}-{policy.name}-{budget}",
+                )
+                daily.append(item)
+                daily_map[(signal_date, policy.name, budget)] = item
+                previous[key] = item
+
+    comparisons = []
+    comparison_map = {}
+    for signal_date in dates:
+        for budget in spec.selection_budgets:
+            reference = daily_map[(signal_date, policies[0], budget)]
+            challenger = daily_map[(signal_date, policies[1], budget)]
+            item = SimpleNamespace(
+                source_bounded_content_identity="selection-bounded-id",
+                specification_fingerprint=spec.fingerprint,
+                signal_date=signal_date,
+                requested_selection_count=budget,
+                reference_policy_name=policies[0],
+                challenger_policy_name=policies[1],
+                reference_selection_identity=reference.identity,
+                challenger_selection_identity=challenger.identity,
+                intersection_count=2,
+                union_count=2,
+                overlap_coefficient=1.0,
+                jaccard_similarity=1.0,
+                symbols_unique_to_reference=(),
+                symbols_unique_to_challenger=(),
+                shared_ordinal_displacements=(
+                    ("BBB", 1, 2, 1, 1),
+                    ("AAA", 2, 1, -1, 1),
+                ),
+                mean_absolute_ordinal_displacement=1.0,
+                maximum_absolute_ordinal_displacement=1,
+                exact_ordered_list_equality=False,
+                exact_selected_set_equality=True,
+                identity=f"comparison-{signal_date}-{budget}",
+            )
+            comparisons.append(item)
+            comparison_map[(signal_date, budget)] = item
+
+    scopes = (
+        ("whole_period", "2018-08-07", "2026-09-17"),
+        *((item.name, item.start_date, item.end_date) for item in spec.blocks),
+    )
+    turnover = []
+    for policy in policies:
+        for budget in spec.selection_budgets:
+            for scope_name, scope_start, scope_end in scopes:
+                included = tuple(
+                    item for item in daily
+                    if item.policy_name == policy
+                    and item.requested_selection_count == budget
+                    and scope_start <= item.signal_date <= scope_end
+                )
+                defined = tuple(
+                    item.one_way_turnover for item in included
+                    if item.one_way_turnover is not None
+                )
+                symmetric = tuple(
+                    item.symmetric_turnover for item in included
+                    if item.symmetric_turnover is not None
+                )
+                sizes = tuple(float(item.actual_selected_count) for item in included)
+                retained = tuple(
+                    float(len(item.retained_symbols)) for item in included
+                    if item.previous_signal_date is not None
+                )
+                turnover.append(SimpleNamespace(
+                    specification_fingerprint=spec.fingerprint,
+                    policy_name=policy,
+                    requested_selection_count=budget,
+                    scope_name=scope_name,
+                    scope_start_date=scope_start,
+                    scope_end_date=scope_end,
+                    dates_evaluated=len(included),
+                    defined_one_way_turnover_date_count=len(defined),
+                    defined_symmetric_turnover_date_count=len(symmetric),
+                    mean_actual_selection_size=None if not sizes else sum(sizes) / len(sizes),
+                    median_actual_selection_size=None if not sizes else 2.0,
+                    mean_one_way_turnover=None if not defined else 0.0,
+                    median_one_way_turnover=None if not defined else 0.0,
+                    population_std_one_way_turnover=None if not defined else 0.0,
+                    mean_symmetric_turnover=None if not symmetric else 0.0,
+                    median_symmetric_turnover=None if not symmetric else 0.0,
+                    mean_retained_count=None if not retained else 2.0,
+                    total_entry_count=0,
+                    boundary_tie_date_count=sum(
+                        item.boundary_tie_count > 1 for item in included
+                    ),
+                    boundary_split_date_count=0,
+                    warnings=() if included else ("no_signal_dates_in_scope",),
+                    included_daily_identities=tuple(item.identity for item in included),
+                    identity=f"turnover-{policy}-{budget}-{scope_name}",
+                ))
+
+    overlap_summaries = []
+    for budget in spec.selection_budgets:
+        for scope_name, scope_start, scope_end in scopes:
+            included = tuple(
+                item for item in comparisons
+                if item.requested_selection_count == budget
+                and scope_start <= item.signal_date <= scope_end
+            )
+            count = len(included)
+            overlap_summaries.append(SimpleNamespace(
+                specification_fingerprint=spec.fingerprint,
+                requested_selection_count=budget,
+                scope_name=scope_name,
+                scope_start_date=scope_start,
+                scope_end_date=scope_end,
+                dates_evaluated=count,
+                defined_overlap_date_count=count,
+                defined_jaccard_date_count=count,
+                defined_ordinal_displacement_date_count=count,
+                mean_overlap_coefficient=None if not count else 1.0,
+                median_overlap_coefficient=None if not count else 1.0,
+                population_std_overlap_coefficient=None if not count else 0.0,
+                minimum_overlap_coefficient=None if not count else 1.0,
+                maximum_overlap_coefficient=None if not count else 1.0,
+                mean_jaccard_similarity=None if not count else 1.0,
+                median_jaccard_similarity=None if not count else 1.0,
+                population_std_jaccard_similarity=None if not count else 0.0,
+                minimum_jaccard_similarity=None if not count else 1.0,
+                maximum_jaccard_similarity=None if not count else 1.0,
+                mean_ordinal_displacement=None if not count else 1.0,
+                median_ordinal_displacement=None if not count else 1.0,
+                population_std_ordinal_displacement=None if not count else 0.0,
+                exact_selected_set_equality_date_count=count,
+                exact_selected_set_equality_rate=None if not count else 1.0,
+                exact_ordered_list_equality_date_count=0,
+                exact_ordered_list_equality_rate=None if not count else 0.0,
+                warnings=() if included else ("no_signal_dates_in_scope",),
+                included_comparison_identities=tuple(item.identity for item in included),
+                identity=f"overlap-{budget}-{scope_name}",
+            ))
+    return SimpleNamespace(
+        source_dataset_identity=dataset.identity,
+        source_dataset_content_identity=dataset.content_identity,
+        source_bounded_content_identity="selection-bounded-id",
+        source_observation_index_identity=dataset.observation_index_identity,
+        source_observation_content_identity=dataset.observation_content_identity,
+        source_feature_panel_identity=dataset.feature_panel_identity,
+        source_feature_content_identity=dataset.feature_content_identity,
+        source_snapshot_id=dataset.snapshot_id,
+        source_universe_membership_identity=dataset.universe_membership_identity,
+        specification_fingerprint=spec.fingerprint,
+        daily_selections=tuple(daily),
+        daily_policy_comparisons=tuple(comparisons),
+        turnover_summaries=tuple(turnover),
+        overlap_summaries=tuple(overlap_summaries),
+        limitations_metadata=MappingProxyType({
+            "outcome_free_descriptive_selection_diagnostics_only": True,
+            "database_coverage_is_historical_vn100": False,
+            "turnover_is_membership_not_traded_portfolio_turnover": True,
+        }),
+        identity="selection-result-id",
+    )
+
+
 def _install_pipeline(monkeypatch: pytest.MonkeyPatch, database: Path):
     dates = ("2021-01-04", "2021-01-05")
     keys = tuple((signal_date, symbol) for signal_date in dates for symbol in ("AAA", "BBB"))
@@ -1060,6 +1284,8 @@ def _install_pipeline(monkeypatch: pytest.MonkeyPatch, database: Path):
         feature_content_identity="feature-content",
         outcome_panel_identity="outcome-panel-id",
         outcome_content_identity="outcome-content",
+        snapshot_id="snapshot-id",
+        universe_membership_identity="universe-id",
         identity="dataset-id",
         content_identity="dataset-content",
         forbidden_predictor_columns=(),
@@ -1069,12 +1295,14 @@ def _install_pipeline(monkeypatch: pytest.MonkeyPatch, database: Path):
     redundancy = _redundancy(dataset, dates)
     incremental = _incremental(dataset, dates)
     composite = _composite(dataset, dates)
+    selection = _selection_diagnostics(dataset, dates)
     calls: dict[str, list[tuple[tuple[Any, ...], dict[str, Any]]]] = {
         name: [] for name in (
             "snapshot", "coverage", "universe", "observation", "source",
             "features", "outcomes", "dataset", "redundancy", "evaluation", "temporal",
             "incremental",
             "composite",
+            "selection",
         )
     }
     calls["dataset_frame"] = dataset_frame_calls
@@ -1130,6 +1358,11 @@ def _install_pipeline(monkeypatch: pytest.MonkeyPatch, database: Path):
         "evaluate_panel_composites",
         install("composite", composite),
     )
+    monkeypatch.setattr(
+        runner,
+        "evaluate_panel_policy_selection_diagnostics",
+        install("selection", selection),
+    )
     return calls, SimpleNamespace(
         snapshot=snapshot,
         coverage=coverage,
@@ -1144,6 +1377,7 @@ def _install_pipeline(monkeypatch: pytest.MonkeyPatch, database: Path):
         redundancy=redundancy,
         incremental=incremental,
         composite=composite,
+        selection=selection,
         dates=dates,
     )
 
@@ -1197,6 +1431,11 @@ def test_exact_one_time_orchestration_and_identity_propagation(
         objects.dataset,
         NEUTRAL_ADX_RSI_COMPOSITE_COMPARISON_V1,
     ), {})]
+    assert calls["selection"] == [((
+        objects.dataset,
+        NEUTRAL_ADX_RSI_SELECTION_DIAGNOSTICS_V1,
+    ), {})]
+    assert calls["selection"][0][0][0] is objects.dataset
     manifest = result["manifest"]
     assert manifest["observation_index"]["identity"] == "observation-id"
     assert manifest["features"]["computation_identity"] == "feature-computation-id"
@@ -1210,6 +1449,8 @@ def test_exact_one_time_orchestration_and_identity_propagation(
     assert result["factor_incremental_analysis"] is objects.incremental
     assert manifest["composite_comparison"]["source_dataset_identity"] == "dataset-id"
     assert result["composite_comparison"] is objects.composite
+    assert manifest["policy_selection_diagnostics"]["source_dataset_identity"] == "dataset-id"
+    assert result["policy_selection_diagnostics"] is objects.selection
 
 
 def test_exact_artifacts_schemas_dimensions_order_and_complete_population(
@@ -1218,7 +1459,7 @@ def test_exact_artifacts_schemas_dimensions_order_and_complete_population(
 ) -> None:
     _, _, objects, result = _run(monkeypatch, tmp_path)
     output = result["output_root"]
-    assert len(runner._REQUIRED_FILENAMES) == 20
+    assert len(runner._REQUIRED_FILENAMES) == 24
     assert tuple(sorted(path.name for path in output.iterdir())) == tuple(
         sorted(runner._REQUIRED_FILENAMES)
     )
@@ -1268,6 +1509,18 @@ def test_exact_artifacts_schemas_dimensions_order_and_complete_population(
     contrast_block_columns, contrast_blocks = _read_csv(
         output / "composite_contrast_by_block.csv",
     )
+    selection_daily_columns, selection_daily = _read_csv(
+        output / "policy_selection_by_date.csv",
+    )
+    turnover_columns, turnover = _read_csv(
+        output / "policy_selection_turnover_summary.csv",
+    )
+    overlap_daily_columns, overlap_daily = _read_csv(
+        output / "policy_selection_overlap_by_date.csv",
+    )
+    overlap_summary_columns, overlap_summaries = _read_csv(
+        output / "policy_selection_overlap_summary.csv",
+    )
     assert summary_columns == runner._SUMMARY_COLUMNS
     assert daily_columns == runner._DAILY_COLUMNS
     assert coverage_columns == runner._COVERAGE_COLUMNS
@@ -1286,6 +1539,10 @@ def test_exact_artifacts_schemas_dimensions_order_and_complete_population(
     assert composite_daily_columns == runner._COMPOSITE_DAILY_COLUMNS
     assert contrast_summary_columns == runner._COMPOSITE_CONTRAST_SUMMARY_COLUMNS
     assert contrast_block_columns == runner._COMPOSITE_CONTRAST_BLOCK_COLUMNS
+    assert selection_daily_columns == runner._POLICY_SELECTION_DAILY_COLUMNS
+    assert turnover_columns == runner._POLICY_SELECTION_TURNOVER_SUMMARY_COLUMNS
+    assert overlap_daily_columns == runner._POLICY_SELECTION_OVERLAP_DAILY_COLUMNS
+    assert overlap_summary_columns == runner._POLICY_SELECTION_OVERLAP_SUMMARY_COLUMNS
     assert (len(summaries), len(daily), len(coverage), len(observations)) == (48, 96, 48, 2)
     assert (len(temporal_summaries), len(temporal_blocks), len(temporal_coverage)) == (
         48, 192, 48,
@@ -1300,6 +1557,48 @@ def test_exact_artifacts_schemas_dimensions_order_and_complete_population(
         len(composite_summaries), len(composite_blocks), len(composite_daily),
         len(contrast_summaries), len(contrast_blocks),
     ) == (24, 96, len(objects.dates) * 24, 18, 72)
+    assert (
+        len(selection_daily), len(turnover), len(overlap_daily),
+        len(overlap_summaries),
+    ) == (len(objects.dates) * 6, 30, len(objects.dates) * 3, 15)
+    assert [
+        (row["session_date"], row["policy_name"], int(row["selection_budget"]))
+        for row in selection_daily
+    ] == [
+        (signal_date, policy.name, budget)
+        for signal_date in objects.dates
+        for policy in NEUTRAL_ADX_RSI_SELECTION_DIAGNOSTICS_V1.policies
+        for budget in NEUTRAL_ADX_RSI_SELECTION_DIAGNOSTICS_V1.selection_budgets
+    ]
+    scopes = (
+        "whole_period", "early_2018_2020", "middle_2021_2022",
+        "middle_2023_2024", "recent_2025_2026",
+    )
+    assert [
+        (row["policy_name"], int(row["selection_budget"]), row["scope_name"])
+        for row in turnover
+    ] == [
+        (policy.name, budget, scope)
+        for policy in NEUTRAL_ADX_RSI_SELECTION_DIAGNOSTICS_V1.policies
+        for budget in NEUTRAL_ADX_RSI_SELECTION_DIAGNOSTICS_V1.selection_budgets
+        for scope in scopes
+    ]
+    assert [
+        (row["session_date"], int(row["selection_budget"]))
+        for row in overlap_daily
+    ] == [
+        (signal_date, budget)
+        for signal_date in objects.dates
+        for budget in NEUTRAL_ADX_RSI_SELECTION_DIAGNOSTICS_V1.selection_budgets
+    ]
+    assert [
+        (int(row["selection_budget"]), row["scope_name"])
+        for row in overlap_summaries
+    ] == [
+        (budget, scope)
+        for budget in NEUTRAL_ADX_RSI_SELECTION_DIAGNOSTICS_V1.selection_budgets
+        for scope in scopes
+    ]
     assert [
         (
             row["signal_date"], row["policy_name"], int(row["horizon_sessions"]),
@@ -1400,6 +1699,13 @@ def test_compact_identity_projection_nulls_json_and_no_evidence_payloads(
     contrast_block_columns, _ = _read_csv(
         output / "composite_contrast_by_block.csv",
     )
+    selection_columns, selection_rows = _read_csv(
+        output / "policy_selection_by_date.csv",
+    )
+    _, turnover_rows = _read_csv(output / "policy_selection_turnover_summary.csv")
+    overlap_columns, overlap_rows = _read_csv(
+        output / "policy_selection_overlap_by_date.csv",
+    )
     assert "included_daily_identities" not in summary_columns
     assert "eligible_evidence" not in daily_columns
     assert "observation_status_evidence" not in daily_columns
@@ -1479,6 +1785,75 @@ def test_compact_identity_projection_nulls_json_and_no_evidence_payloads(
         | set(composite_daily_columns) | set(contrast_summary_columns)
         | set(contrast_block_columns)
     )
+    assert "ordered_selected_score_evidence" not in selection_columns
+    assert "shared_ordinal_displacements" not in overlap_columns
+    first_selection = objects.selection.daily_selections[0]
+    assert json.loads(selection_rows[0]["selected_symbols_json"]) == ["BBB", "AAA"]
+    assert json.loads(selection_rows[0]["entries_json"]) == []
+    assert selection_rows[0]["one_way_turnover"] == ""
+    assert selection_rows[0]["symmetric_turnover"] == ""
+    assert selection_rows[0]["turnover_undefined_reason"] == "first_available_date"
+    assert selection_rows[0]["selected_score_evidence_count"] == "2"
+    assert selection_rows[0]["selected_score_evidence_sha256"] == (
+        runner._identity_collection_sha256(
+            first_selection.ordered_selected_score_evidence,
+        )
+    )
+    assert json.loads(overlap_rows[0]["unique_to_reference_json"]) == []
+    assert overlap_rows[0]["overlap_coefficient"] == "1.0"
+    assert overlap_rows[0]["jaccard_similarity"] == "1.0"
+    assert overlap_rows[0]["exact_selected_set_equal"] == "true"
+    assert overlap_rows[0]["exact_ordered_list_equal"] == "false"
+    assert overlap_rows[0]["ordinal_displacement_evidence_count"] == "2"
+    assert overlap_rows[0]["ordinal_displacement_evidence_sha256"] == (
+        runner._identity_collection_sha256(
+            objects.selection.daily_policy_comparisons[0].shared_ordinal_displacements,
+        )
+    )
+    second_date = next(
+        row for row in selection_rows
+        if row["session_date"] == objects.dates[1]
+        and row["policy_name"] == "ADX_ONLY"
+        and row["selection_budget"] == "5"
+    )
+    assert second_date["one_way_turnover"] == "0.0"
+    assert json.loads(second_date["retained_symbols_json"]) == ["BBB", "AAA"]
+    assert turnover_rows[0]["included_daily_identity_count"] == "2"
+    forbidden_selection_tokens = {
+        "outcome", "forward_return", "rank_ic", "spread", "pnl", "trade",
+        "winner", "recommendation", "preferred_policy", "production_policy",
+        "optimized_budget", "optimized_weight",
+    }
+    assert not forbidden_selection_tokens.intersection(
+        set(selection_columns) | set(overlap_columns)
+        | set(runner._POLICY_SELECTION_TURNOVER_SUMMARY_COLUMNS)
+        | set(runner._POLICY_SELECTION_OVERLAP_SUMMARY_COLUMNS)
+    )
+
+    projected_item = SimpleNamespace(**vars(objects.selection.daily_selections[0]))
+    projected_item.boundary_tie_count = 3
+    projected_item.selected_from_boundary_tie_count = 2
+    projected_item.boundary_split_equal_score_group = True
+    projected_item.one_way_turnover = 0.5
+    projected_item.one_way_turnover_undefined_reason = None
+    projected_item.entries = ("CCC",)
+    projected_item.exits = ("DDD",)
+    projected_item.retained_symbols = ("BBB",)
+    projected_selection = SimpleNamespace(**vars(objects.selection))
+    projected_selection.daily_selections = (
+        projected_item,
+        *objects.selection.daily_selections[1:],
+    )
+    projected = runner._policy_selection_artifact_rows(projected_selection)[
+        "policy_selection_by_date.csv"
+    ][1][0]
+    assert projected["boundary_tie_count"] == 3
+    assert projected["boundary_selected_tie_count"] == 2
+    assert projected["boundary_split_equal_score_group"] is True
+    assert projected["one_way_turnover"] == 0.5
+    assert json.loads(projected["entries_json"]) == ["CCC"]
+    assert json.loads(projected["exits_json"]) == ["DDD"]
+    assert json.loads(projected["retained_symbols_json"]) == ["BBB"]
     assert json.loads(composite_daily[0]["factor_weights"]) == [
         {"direction": "HIGHER_IS_BETTER", "factor": "adx_14", "weight": 1.0},
     ]
@@ -1562,6 +1937,36 @@ def test_compact_identity_projection_nulls_json_and_no_evidence_payloads(
         + composite_manifest["spread_undefined_policy_record_count"]
     ) == len(objects.dates) * 24
     assert composite_manifest["limitations"] == list(runner._COMPOSITE_LIMITATIONS)
+    selection_manifest = result["manifest"]["policy_selection_diagnostics"]
+    assert selection_manifest["result_identity"] == "selection-result-id"
+    assert selection_manifest["specification_fingerprint"] == (
+        NEUTRAL_ADX_RSI_SELECTION_DIAGNOSTICS_V1.fingerprint
+    )
+    assert [item["name"] for item in selection_manifest["policies"]] == [
+        "ADX_ONLY", "ADX_RSI_EQUAL_WEIGHT",
+    ]
+    assert selection_manifest["policies"][0]["factor_weights"] == [
+        {"factor": "adx_14", "weight": 1.0, "direction": "HIGHER_IS_BETTER"},
+    ]
+    assert selection_manifest["policies"][1]["factor_weights"] == [
+        {"factor": "adx_14", "weight": 0.5, "direction": "HIGHER_IS_BETTER"},
+        {"factor": "rsi_14", "weight": 0.5, "direction": "HIGHER_IS_BETTER"},
+    ]
+    assert selection_manifest["selection_budgets"] == [5, 10, 20]
+    assert selection_manifest["daily_selection_row_count"] == len(objects.dates) * 6
+    assert selection_manifest["turnover_summary_row_count"] == 30
+    assert selection_manifest["daily_overlap_row_count"] == len(objects.dates) * 3
+    assert selection_manifest["overlap_summary_row_count"] == 15
+    assert selection_manifest["boundary_tie_date_count"] == 6
+    assert selection_manifest["boundary_split_date_count"] == 0
+    assert selection_manifest["undefined_first_date_turnover_record_count"] == 6
+    assert selection_manifest["exact_set_equality_counts_by_budget"] == {
+        "5": 2, "10": 2, "20": 2,
+    }
+    assert selection_manifest["exact_order_equality_counts_by_budget"] == {
+        "5": 0, "10": 0, "20": 0,
+    }
+    assert selection_manifest["completed"] is True
     assumptions = (output / "assumptions.md").read_text(encoding="utf-8")
     assert "predictor projection" in assumptions
     assert "No redundancy threshold or factor-selection decision" in assumptions
@@ -1569,6 +1974,8 @@ def test_compact_identity_projection_nulls_json_and_no_evidence_payloads(
     assert "No automatic factor-selection threshold" in assumptions
     assert "Four fixed higher-is-better policies" in assumptions
     assert "No optimization, winner selection" in assumptions
+    assert "Selection diagnostics compare only ADX_ONLY" in assumptions
+    assert "membership turnover" in assumptions
 
 
 def test_temporal_projection_hashes_review_statuses_and_manifest_reconcile(
@@ -1828,6 +2235,67 @@ def test_composite_corruption_aborts_overwrite_and_preserves_previous_target(
     assert not tuple(output.parent.glob(f".{output.name}.tmp-*"))
 
 
+@pytest.mark.parametrize(
+    ("corruption", "message"),
+    (
+        ("source_identity", "source identity"),
+        ("missing_daily", "comparison references"),
+        ("daily_order", "daily dimensions"),
+        ("comparison_reference", "comparison references"),
+        ("turnover_value", "turnover summary"),
+        ("overlap_value", "overlap formula"),
+        ("compact_hash", "compact daily evidence"),
+    ),
+)
+def test_policy_selection_corruption_preserves_previous_target(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    corruption: str,
+    message: str,
+) -> None:
+    database, _, _, first = _run(monkeypatch, tmp_path)
+    output = first["output_root"]
+    previous_manifest = (output / "experiment_manifest.json").read_bytes()
+    _, objects = _install_pipeline(monkeypatch, database)
+    if corruption == "source_identity":
+        objects.selection.source_dataset_identity = "wrong-dataset"
+    elif corruption == "missing_daily":
+        objects.selection.daily_selections = objects.selection.daily_selections[:-1]
+    elif corruption == "daily_order":
+        values = list(objects.selection.daily_selections)
+        values[0], values[1] = values[1], values[0]
+        objects.selection.daily_selections = tuple(values)
+    elif corruption == "comparison_reference":
+        objects.selection.daily_policy_comparisons[0].reference_selection_identity = (
+            "unknown-selection"
+        )
+    elif corruption == "turnover_value":
+        objects.selection.turnover_summaries[0].mean_one_way_turnover = 0.5
+    elif corruption == "overlap_value":
+        objects.selection.daily_policy_comparisons[0].jaccard_similarity = 0.5
+    else:
+        original = runner._policy_selection_artifact_rows
+
+        def corrupt_hash(selection):
+            projected = original(selection)
+            projected["policy_selection_by_date.csv"][1][0][
+                "selected_score_evidence_sha256"
+            ] = "corrupted"
+            return projected
+
+        monkeypatch.setattr(runner, "_policy_selection_artifact_rows", corrupt_hash)
+    with pytest.raises(ValueError, match=message):
+        runner.run_neutral_panel_factor_evaluation(
+            database_path=database,
+            start_date="2021-01-04",
+            end_date="2021-01-05",
+            output_root=output,
+            overwrite=True,
+        )
+    assert (output / "experiment_manifest.json").read_bytes() == previous_manifest
+    assert not tuple(output.parent.glob(f".{output.name}.tmp-*"))
+
+
 def test_database_is_unchanged_and_no_network_or_current_vn100_path(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -1879,11 +2347,11 @@ def test_overwrite_is_exact_and_failed_validation_preserves_previous_target(
     legacy_output.mkdir()
     legacy_files = tuple(
         name for name in runner._REQUIRED_FILENAMES
-        if not name.startswith("composite_")
+        if not name.startswith("policy_selection_")
     )
-    assert len(legacy_files) == 15
+    assert len(legacy_files) == 20
     for filename in legacy_files:
-        (legacy_output / filename).write_text("legacy-fifteen-file-target", encoding="utf-8")
+        (legacy_output / filename).write_text("legacy-twenty-file-target", encoding="utf-8")
     original_validate_emitted = runner._validate_emitted
     monkeypatch.setattr(
         runner,
@@ -1898,7 +2366,7 @@ def test_overwrite_is_exact_and_failed_validation_preserves_previous_target(
         sorted(legacy_files)
     )
     assert all(
-        path.read_text(encoding="utf-8") == "legacy-fifteen-file-target"
+        path.read_text(encoding="utf-8") == "legacy-twenty-file-target"
         for path in legacy_output.iterdir()
     )
     monkeypatch.setattr(runner, "_validate_emitted", original_validate_emitted)
@@ -1908,7 +2376,7 @@ def test_overwrite_is_exact_and_failed_validation_preserves_previous_target(
         sorted(runner._REQUIRED_FILENAMES)
     )
     assert all(
-        path.read_text(encoding="utf-8") != "legacy-fifteen-file-target"
+        path.read_text(encoding="utf-8") != "legacy-twenty-file-target"
         for path in output.iterdir()
     )
     previous_manifest = (output / "experiment_manifest.json").read_bytes()
@@ -1937,7 +2405,7 @@ def test_cli_defaults_default_output_and_fresh_import_isolation(tmp_path: Path) 
     assert arguments.maximum_staleness_sessions == 5
     assert arguments.cache_root is None
     assert arguments.cache_codec == "npz_numeric_v1"
-    assert runner.RUNNER_VERSION == "v5"
+    assert runner.RUNNER_VERSION == "v6"
     expected = runner.PROJECT_ROOT / "research_results" / (
         "quantlab_neutral_panel_factor_evaluation_2021-01-04_2021-01-05"
     )

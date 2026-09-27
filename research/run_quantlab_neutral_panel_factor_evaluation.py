@@ -11,6 +11,7 @@ import json
 import math
 from pathlib import Path
 import shutil
+from statistics import median
 import sys
 import tempfile
 from typing import Any, Iterable, Mapping
@@ -25,6 +26,7 @@ from core.paths import PROJECT_ROOT, resolve_market_database_path
 from quantlab.catalog.market_data_snapshot import build_market_data_snapshot
 from quantlab.evaluation import (
     NEUTRAL_ADX_RSI_COMPOSITE_COMPARISON_V1,
+    NEUTRAL_ADX_RSI_SELECTION_DIAGNOSTICS_V1,
     NEUTRAL_PANEL_INCREMENTAL_FACTOR_ANALYSIS_V1,
     NEUTRAL_PANEL_FACTOR_REDUNDANCY_V1,
     NEUTRAL_PANEL_FACTOR_TEMPORAL_STABILITY_V2,
@@ -32,6 +34,7 @@ from quantlab.evaluation import (
     PanelTemporalDirection,
     evaluate_panel_factor_incremental_analysis,
     evaluate_panel_composites,
+    evaluate_panel_policy_selection_diagnostics,
     evaluate_panel_factor_redundancy,
     evaluate_panel_factor_temporal_stability,
     evaluate_point_in_time_panel_factors,
@@ -53,7 +56,7 @@ from quantlab.panels import (
 
 
 RUNNER_CONTRACT = "quantlab.neutral_panel_factor_evaluation_runner"
-RUNNER_VERSION = "v5"
+RUNNER_VERSION = "v6"
 CACHE_DEFAULT_CODEC = "npz_numeric_v1"
 REVIEW_MINIMUM_DEFINED_DATES = 30
 REVIEW_MINIMUM_AVERAGE_CROSS_SECTION = 20.0
@@ -345,6 +348,59 @@ _COMPOSITE_CONTRAST_SUMMARY_COLUMNS = (
     "zero_spread_delta_rate", "negative_spread_delta_rate",
     "block_identity_count", "block_identities_sha256", "identity",
 )
+_POLICY_SELECTION_DAILY_COLUMNS = (
+    "session_date", "policy_name", "selection_budget",
+    "eligible_cross_section_count", "requested_selection_count",
+    "actual_selected_count", "selected_symbols_json", "boundary_score",
+    "boundary_tie_count", "boundary_selected_tie_count",
+    "boundary_split_equal_score_group", "previous_selected_count",
+    "retained_count", "entry_count", "exit_count", "entries_json",
+    "exits_json", "retained_symbols_json", "one_way_turnover",
+    "symmetric_turnover", "turnover_undefined_reason",
+    "symmetric_turnover_undefined_reason", "selected_score_evidence_count",
+    "selected_score_evidence_sha256", "identity",
+)
+_POLICY_SELECTION_TURNOVER_SUMMARY_COLUMNS = (
+    "policy_name", "selection_budget", "scope_name", "scope_start_date",
+    "scope_end_date", "dates_evaluated",
+    "defined_one_way_turnover_date_count",
+    "defined_symmetric_turnover_date_count", "mean_actual_selection_size",
+    "median_actual_selection_size", "mean_one_way_turnover",
+    "median_one_way_turnover", "population_std_one_way_turnover",
+    "mean_symmetric_turnover", "median_symmetric_turnover",
+    "mean_retained_count", "total_entry_count", "boundary_tie_date_count",
+    "boundary_split_date_count", "included_daily_identity_count",
+    "included_daily_identities_sha256", "warnings", "identity",
+)
+_POLICY_SELECTION_OVERLAP_DAILY_COLUMNS = (
+    "session_date", "selection_budget", "reference_policy",
+    "challenger_policy", "reference_selected_count",
+    "challenger_selected_count", "intersection_count", "union_count",
+    "overlap_coefficient", "jaccard_similarity",
+    "unique_to_reference_json", "unique_to_challenger_json",
+    "shared_symbol_count", "mean_absolute_ordinal_displacement",
+    "maximum_absolute_ordinal_displacement", "exact_selected_set_equal",
+    "exact_ordered_list_equal", "ordinal_displacement_evidence_count",
+    "ordinal_displacement_evidence_sha256", "reference_selection_identity",
+    "challenger_selection_identity", "identity",
+)
+_POLICY_SELECTION_OVERLAP_SUMMARY_COLUMNS = (
+    "selection_budget", "scope_name", "scope_start_date", "scope_end_date",
+    "dates_evaluated", "defined_overlap_date_count",
+    "defined_jaccard_date_count", "defined_ordinal_displacement_date_count",
+    "mean_overlap_coefficient", "median_overlap_coefficient",
+    "population_std_overlap_coefficient", "minimum_overlap_coefficient",
+    "maximum_overlap_coefficient", "mean_jaccard_similarity",
+    "median_jaccard_similarity", "population_std_jaccard_similarity",
+    "minimum_jaccard_similarity", "maximum_jaccard_similarity",
+    "mean_ordinal_displacement", "median_ordinal_displacement",
+    "population_std_ordinal_displacement",
+    "exact_selected_set_equality_date_count",
+    "exact_selected_set_equality_rate",
+    "exact_ordered_list_equality_date_count",
+    "exact_ordered_list_equality_rate", "included_comparison_identity_count",
+    "included_comparison_identities_sha256", "warnings", "identity",
+)
 _REQUIRED_FILENAMES = (
     "experiment_manifest.json",
     "factor_summary.csv",
@@ -366,6 +422,10 @@ _REQUIRED_FILENAMES = (
     "composite_policy_by_date.csv",
     "composite_contrast_summary.csv",
     "composite_contrast_by_block.csv",
+    "policy_selection_by_date.csv",
+    "policy_selection_turnover_summary.csv",
+    "policy_selection_overlap_by_date.csv",
+    "policy_selection_overlap_summary.csv",
 )
 
 _LIMITATIONS = (
@@ -462,6 +522,15 @@ _COMPOSITE_ASSUMPTIONS = (
     "No optimization, winner selection, or production decision is performed.",
 )
 
+_POLICY_SELECTION_ASSUMPTIONS = (
+    "Selection diagnostics compare only ADX_ONLY and ADX_RSI_EQUAL_WEIGHT.",
+    "Both policies use the same same-date listwise-finite ADX and RSI population.",
+    "Fixed selection budgets are 5, 10, and 20; no budget or weight optimization occurs.",
+    "Selection order is score descending then symbol ascending, with boundary ties reported explicitly.",
+    "Turnover is selection-membership turnover and is not traded portfolio turnover.",
+    "Diagnostics are outcome-free and provide no alpha, PnL, liquidity, capacity, or execution conclusion.",
+)
+
 _ASSUMPTIONS += "\n## Factor-redundancy methodology\n\n" + "\n".join(
     f"- {item}" for item in _REDUNDANCY_ASSUMPTIONS
 ) + "\n"
@@ -472,6 +541,10 @@ _ASSUMPTIONS += "\n## Incremental factor-value methodology\n\n" + "\n".join(
 
 _ASSUMPTIONS += "\n## Composite-factor comparison methodology\n\n" + "\n".join(
     f"- {item}" for item in _COMPOSITE_ASSUMPTIONS
+) + "\n"
+
+_ASSUMPTIONS += "\n## Outcome-free policy-selection diagnostics\n\n" + "\n".join(
+    f"- {item}" for item in _POLICY_SELECTION_ASSUMPTIONS
 ) + "\n"
 
 
@@ -1118,6 +1191,232 @@ def _composite_artifact_rows(
         ),
         "composite_contrast_by_block.csv": (
             _COMPOSITE_CONTRAST_BLOCK_COLUMNS, contrast_block_rows,
+        ),
+    }
+
+
+def _policy_selection_artifact_rows(
+    selection: Any,
+) -> dict[str, tuple[tuple[str, ...], list[dict[str, Any]]]]:
+    spec = NEUTRAL_ADX_RSI_SELECTION_DIAGNOSTICS_V1
+    policy_order = {item.name: index for index, item in enumerate(spec.policies)}
+    budget_order = {item: index for index, item in enumerate(spec.selection_budgets)}
+    scope_names = ("whole_period", *(item.name for item in spec.blocks))
+    scope_order = {item: index for index, item in enumerate(scope_names)}
+
+    daily = sorted(
+        selection.daily_selections,
+        key=lambda item: (
+            item.signal_date,
+            policy_order[item.policy_name],
+            budget_order[item.requested_selection_count],
+        ),
+    )
+    daily_rows = [
+        {
+            "session_date": item.signal_date,
+            "policy_name": item.policy_name,
+            "selection_budget": item.requested_selection_count,
+            "eligible_cross_section_count": item.eligible_cross_section_count,
+            "requested_selection_count": item.requested_selection_count,
+            "actual_selected_count": item.actual_selected_count,
+            "selected_symbols_json": _compact_json_array(item.ordered_selected_symbols),
+            "boundary_score": item.boundary_score,
+            "boundary_tie_count": item.boundary_tie_count,
+            "boundary_selected_tie_count": item.selected_from_boundary_tie_count,
+            "boundary_split_equal_score_group": item.boundary_split_equal_score_group,
+            "previous_selected_count": item.previous_selected_count,
+            "retained_count": len(item.retained_symbols),
+            "entry_count": len(item.entries),
+            "exit_count": len(item.exits),
+            "entries_json": _compact_json_array(item.entries),
+            "exits_json": _compact_json_array(item.exits),
+            "retained_symbols_json": _compact_json_array(item.retained_symbols),
+            "one_way_turnover": item.one_way_turnover,
+            "symmetric_turnover": item.symmetric_turnover,
+            "turnover_undefined_reason": item.one_way_turnover_undefined_reason,
+            "symmetric_turnover_undefined_reason": (
+                item.symmetric_turnover_undefined_reason
+            ),
+            "selected_score_evidence_count": len(item.ordered_selected_score_evidence),
+            "selected_score_evidence_sha256": _identity_collection_sha256(
+                item.ordered_selected_score_evidence,
+            ),
+            "identity": item.identity,
+        }
+        for item in daily
+    ]
+
+    turnover = sorted(
+        selection.turnover_summaries,
+        key=lambda item: (
+            policy_order[item.policy_name],
+            budget_order[item.requested_selection_count],
+            scope_order[item.scope_name],
+        ),
+    )
+    turnover_rows = [
+        {
+            "policy_name": item.policy_name,
+            "selection_budget": item.requested_selection_count,
+            "scope_name": item.scope_name,
+            "scope_start_date": item.scope_start_date,
+            "scope_end_date": item.scope_end_date,
+            "dates_evaluated": item.dates_evaluated,
+            "defined_one_way_turnover_date_count": (
+                item.defined_one_way_turnover_date_count
+            ),
+            "defined_symmetric_turnover_date_count": (
+                item.defined_symmetric_turnover_date_count
+            ),
+            "mean_actual_selection_size": item.mean_actual_selection_size,
+            "median_actual_selection_size": item.median_actual_selection_size,
+            "mean_one_way_turnover": item.mean_one_way_turnover,
+            "median_one_way_turnover": item.median_one_way_turnover,
+            "population_std_one_way_turnover": item.population_std_one_way_turnover,
+            "mean_symmetric_turnover": item.mean_symmetric_turnover,
+            "median_symmetric_turnover": item.median_symmetric_turnover,
+            "mean_retained_count": item.mean_retained_count,
+            "total_entry_count": item.total_entry_count,
+            "boundary_tie_date_count": item.boundary_tie_date_count,
+            "boundary_split_date_count": item.boundary_split_date_count,
+            "included_daily_identity_count": len(item.included_daily_identities),
+            "included_daily_identities_sha256": _identity_collection_sha256(
+                item.included_daily_identities,
+            ),
+            "warnings": " | ".join(item.warnings),
+            "identity": item.identity,
+        }
+        for item in turnover
+    ]
+
+    selection_by_identity = {item.identity: item for item in selection.daily_selections}
+    comparisons = sorted(
+        selection.daily_policy_comparisons,
+        key=lambda item: (
+            item.signal_date,
+            budget_order[item.requested_selection_count],
+        ),
+    )
+    overlap_rows = []
+    for item in comparisons:
+        try:
+            reference = selection_by_identity[item.reference_selection_identity]
+            challenger = selection_by_identity[item.challenger_selection_identity]
+        except KeyError as exc:
+            raise ValueError(
+                "policy-selection comparison references are corrupted"
+            ) from exc
+        overlap_rows.append({
+            "session_date": item.signal_date,
+            "selection_budget": item.requested_selection_count,
+            "reference_policy": item.reference_policy_name,
+            "challenger_policy": item.challenger_policy_name,
+            "reference_selected_count": reference.actual_selected_count,
+            "challenger_selected_count": challenger.actual_selected_count,
+            "intersection_count": item.intersection_count,
+            "union_count": item.union_count,
+            "overlap_coefficient": item.overlap_coefficient,
+            "jaccard_similarity": item.jaccard_similarity,
+            "unique_to_reference_json": _compact_json_array(
+                item.symbols_unique_to_reference,
+            ),
+            "unique_to_challenger_json": _compact_json_array(
+                item.symbols_unique_to_challenger,
+            ),
+            "shared_symbol_count": len(item.shared_ordinal_displacements),
+            "mean_absolute_ordinal_displacement": (
+                item.mean_absolute_ordinal_displacement
+            ),
+            "maximum_absolute_ordinal_displacement": (
+                item.maximum_absolute_ordinal_displacement
+            ),
+            "exact_selected_set_equal": item.exact_selected_set_equality,
+            "exact_ordered_list_equal": item.exact_ordered_list_equality,
+            "ordinal_displacement_evidence_count": len(
+                item.shared_ordinal_displacements,
+            ),
+            "ordinal_displacement_evidence_sha256": _identity_collection_sha256(
+                item.shared_ordinal_displacements,
+            ),
+            "reference_selection_identity": item.reference_selection_identity,
+            "challenger_selection_identity": item.challenger_selection_identity,
+            "identity": item.identity,
+        })
+
+    overlap_summaries = sorted(
+        selection.overlap_summaries,
+        key=lambda item: (
+            budget_order[item.requested_selection_count],
+            scope_order[item.scope_name],
+        ),
+    )
+    overlap_summary_rows = [
+        {
+            "selection_budget": item.requested_selection_count,
+            "scope_name": item.scope_name,
+            "scope_start_date": item.scope_start_date,
+            "scope_end_date": item.scope_end_date,
+            "dates_evaluated": item.dates_evaluated,
+            "defined_overlap_date_count": item.defined_overlap_date_count,
+            "defined_jaccard_date_count": item.defined_jaccard_date_count,
+            "defined_ordinal_displacement_date_count": (
+                item.defined_ordinal_displacement_date_count
+            ),
+            "mean_overlap_coefficient": item.mean_overlap_coefficient,
+            "median_overlap_coefficient": item.median_overlap_coefficient,
+            "population_std_overlap_coefficient": (
+                item.population_std_overlap_coefficient
+            ),
+            "minimum_overlap_coefficient": item.minimum_overlap_coefficient,
+            "maximum_overlap_coefficient": item.maximum_overlap_coefficient,
+            "mean_jaccard_similarity": item.mean_jaccard_similarity,
+            "median_jaccard_similarity": item.median_jaccard_similarity,
+            "population_std_jaccard_similarity": (
+                item.population_std_jaccard_similarity
+            ),
+            "minimum_jaccard_similarity": item.minimum_jaccard_similarity,
+            "maximum_jaccard_similarity": item.maximum_jaccard_similarity,
+            "mean_ordinal_displacement": item.mean_ordinal_displacement,
+            "median_ordinal_displacement": item.median_ordinal_displacement,
+            "population_std_ordinal_displacement": (
+                item.population_std_ordinal_displacement
+            ),
+            "exact_selected_set_equality_date_count": (
+                item.exact_selected_set_equality_date_count
+            ),
+            "exact_selected_set_equality_rate": (
+                item.exact_selected_set_equality_rate
+            ),
+            "exact_ordered_list_equality_date_count": (
+                item.exact_ordered_list_equality_date_count
+            ),
+            "exact_ordered_list_equality_rate": (
+                item.exact_ordered_list_equality_rate
+            ),
+            "included_comparison_identity_count": len(
+                item.included_comparison_identities,
+            ),
+            "included_comparison_identities_sha256": _identity_collection_sha256(
+                item.included_comparison_identities,
+            ),
+            "warnings": " | ".join(item.warnings),
+            "identity": item.identity,
+        }
+        for item in overlap_summaries
+    ]
+    return {
+        "policy_selection_by_date.csv": (
+            _POLICY_SELECTION_DAILY_COLUMNS, daily_rows,
+        ),
+        "policy_selection_turnover_summary.csv": (
+            _POLICY_SELECTION_TURNOVER_SUMMARY_COLUMNS, turnover_rows,
+        ),
+        "policy_selection_overlap_by_date.csv": (
+            _POLICY_SELECTION_OVERLAP_DAILY_COLUMNS, overlap_rows,
+        ),
+        "policy_selection_overlap_summary.csv": (
+            _POLICY_SELECTION_OVERLAP_SUMMARY_COLUMNS, overlap_summary_rows,
         ),
     }
 
@@ -1958,6 +2257,424 @@ def _validate_composite_reconciliation(
         raise ValueError("selection, optimization, or production field entered composite artifacts")
 
 
+def _mean_or_none(values: tuple[float, ...]) -> float | None:
+    return None if not values else sum(values) / len(values)
+
+
+def _median_or_none(values: tuple[float, ...]) -> float | None:
+    return None if not values else float(median(values))
+
+
+def _population_std_or_none(values: tuple[float, ...]) -> float | None:
+    if not values:
+        return None
+    center = sum(values) / len(values)
+    return math.sqrt(sum((value - center) ** 2 for value in values) / len(values))
+
+
+def _same_optional_number(left: Any, right: Any) -> bool:
+    if left is None or right is None:
+        return left is None and right is None
+    return math.isclose(float(left), float(right), rel_tol=1e-12, abs_tol=1e-12)
+
+
+def _validate_policy_selection_reconciliation(
+    dataset: Any,
+    observation_index: Any,
+    selection: Any,
+    rows: Mapping[str, tuple[tuple[str, ...], list[dict[str, Any]]]],
+) -> None:
+    spec = NEUTRAL_ADX_RSI_SELECTION_DIAGNOSTICS_V1
+    policies = tuple(
+        (item.name, item.factor_weights, item.fingerprint) for item in spec.policies
+    )
+    expected_policies = (
+        (
+            "ADX_ONLY",
+            (("adx_14", 1.0, "HIGHER_IS_BETTER"),),
+            spec.policies[0].fingerprint,
+        ),
+        (
+            "ADX_RSI_EQUAL_WEIGHT",
+            (
+                ("adx_14", 0.5, "HIGHER_IS_BETTER"),
+                ("rsi_14", 0.5, "HIGHER_IS_BETTER"),
+            ),
+            spec.policies[1].fingerprint,
+        ),
+    )
+    if policies != expected_policies or spec.selection_budgets != (5, 10, 20):
+        raise ValueError("policy-selection frozen policy or budget contract changed")
+    if (
+        selection.source_dataset_identity != dataset.identity
+        or selection.source_dataset_content_identity != dataset.content_identity
+        or selection.source_observation_index_identity
+        != dataset.observation_index_identity
+        or selection.source_observation_content_identity
+        != dataset.observation_content_identity
+        or selection.source_feature_panel_identity != dataset.feature_panel_identity
+        or selection.source_feature_content_identity != dataset.feature_content_identity
+        or selection.source_snapshot_id != dataset.snapshot_id
+        or selection.source_universe_membership_identity
+        != dataset.universe_membership_identity
+        or not str(selection.source_bounded_content_identity).strip()
+    ):
+        raise ValueError("policy-selection source identity or bounded provenance mismatch")
+    if selection.specification_fingerprint != spec.fingerprint:
+        raise ValueError("policy-selection specification fingerprint mismatch")
+
+    signal_dates = tuple(item.session_date for item in observation_index.session_audit)
+    policy_names = tuple(item.name for item in spec.policies)
+    expected_daily_keys = tuple(
+        (signal_date, policy_name, budget)
+        for signal_date in signal_dates
+        for policy_name in policy_names
+        for budget in spec.selection_budgets
+    )
+    daily = tuple(selection.daily_selections)
+    actual_daily_keys = tuple(
+        (item.signal_date, item.policy_name, item.requested_selection_count)
+        for item in daily
+    )
+    if actual_daily_keys != expected_daily_keys or len(set(actual_daily_keys)) != len(daily):
+        raise ValueError("policy-selection daily dimensions, keys, or canonical ordering differ")
+    daily_by_key = {
+        (item.signal_date, item.policy_name, item.requested_selection_count): item
+        for item in daily
+    }
+    daily_by_identity = {item.identity: item for item in daily}
+    if len(daily_by_identity) != len(daily):
+        raise ValueError("policy-selection daily identities are not unique")
+
+    for date_index, signal_date in enumerate(signal_dates):
+        common_evidence = daily_by_key[(signal_date, policy_names[0], 5)].complete_eligible_factor_evidence
+        for policy_name in policy_names:
+            policy = next(item for item in spec.policies if item.name == policy_name)
+            for budget in spec.selection_budgets:
+                item = daily_by_key[(signal_date, policy_name, budget)]
+                if (
+                    item.source_dataset_identity != dataset.identity
+                    or item.source_bounded_content_identity
+                    != selection.source_bounded_content_identity
+                    or item.specification_fingerprint != spec.fingerprint
+                    or item.policy_fingerprint != policy.fingerprint
+                    or item.complete_eligible_factor_evidence != common_evidence
+                ):
+                    raise ValueError("policy-selection daily provenance or common population differs")
+                selected = item.ordered_selected_symbols
+                selected_scores = item.ordered_selected_score_evidence
+                if (
+                    item.eligible_cross_section_count != len(common_evidence)
+                    or item.actual_selected_count != len(selected)
+                    or item.actual_selected_count > budget
+                    or item.actual_selected_count > item.eligible_cross_section_count
+                    or tuple(value[0] for value in selected_scores) != selected
+                    or tuple(value[0] for value in item.complete_policy_score_ordering[: len(selected)])
+                    != selected
+                ):
+                    raise ValueError("policy-selection selected counts or score evidence differ")
+                boundary_score = selected_scores[-1][1] if selected_scores else None
+                boundary_group = tuple(
+                    value for value in item.complete_policy_score_ordering
+                    if boundary_score is not None and value[1] == boundary_score
+                )
+                selected_boundary = tuple(
+                    value for value in selected_scores
+                    if boundary_score is not None and value[1] == boundary_score
+                )
+                if (
+                    not _same_optional_number(item.boundary_score, boundary_score)
+                    or item.boundary_tie_count != len(boundary_group)
+                    or item.selected_from_boundary_tie_count != len(selected_boundary)
+                    or item.boundary_split_equal_score_group
+                    != (len(selected_boundary) < len(boundary_group))
+                    or item.insufficient_cross_section
+                    != (item.eligible_cross_section_count < budget)
+                ):
+                    raise ValueError("policy-selection boundary evidence does not reconcile")
+                previous = (
+                    None
+                    if date_index == 0
+                    else daily_by_key[(signal_dates[date_index - 1], policy_name, budget)]
+                )
+                if previous is None:
+                    if (
+                        item.previous_signal_date is not None
+                        or item.previous_selection_identity is not None
+                        or item.previous_selected_count is not None
+                        or item.one_way_turnover is not None
+                        or item.symmetric_turnover is not None
+                        or item.one_way_turnover_undefined_reason != "first_available_date"
+                        or item.symmetric_turnover_undefined_reason != "first_available_date"
+                    ):
+                        raise ValueError("policy-selection first-date turnover contract differs")
+                    continue
+                previous_symbols = previous.ordered_selected_symbols
+                previous_set, current_set = set(previous_symbols), set(selected)
+                entries = tuple(symbol for symbol in selected if symbol not in previous_set)
+                exits = tuple(symbol for symbol in previous_symbols if symbol not in current_set)
+                retained = tuple(symbol for symbol in selected if symbol in previous_set)
+                if (
+                    item.previous_signal_date != previous.signal_date
+                    or item.previous_selection_identity != previous.identity
+                    or item.previous_selected_count != len(previous_symbols)
+                    or item.entries != entries
+                    or item.exits != exits
+                    or item.retained_symbols != retained
+                    or item.overlap_with_previous_count != len(retained)
+                ):
+                    raise ValueError("policy-selection entry, exit, or retained evidence differs")
+                expected_one_way = (
+                    None if not previous_symbols else len(entries) / len(previous_symbols)
+                )
+                denominator = len(previous_symbols) + len(selected)
+                expected_symmetric = (
+                    None if denominator == 0 else (len(entries) + len(exits)) / denominator
+                )
+                if (
+                    not _same_optional_number(item.one_way_turnover, expected_one_way)
+                    or not _same_optional_number(item.symmetric_turnover, expected_symmetric)
+                ):
+                    raise ValueError("policy-selection turnover formula does not reconcile")
+
+    comparisons = tuple(selection.daily_policy_comparisons)
+    expected_comparison_keys = tuple(
+        (signal_date, budget)
+        for signal_date in signal_dates
+        for budget in spec.selection_budgets
+    )
+    actual_comparison_keys = tuple(
+        (item.signal_date, item.requested_selection_count) for item in comparisons
+    )
+    if (
+        actual_comparison_keys != expected_comparison_keys
+        or len(set(actual_comparison_keys)) != len(comparisons)
+    ):
+        raise ValueError("policy-selection overlap dimensions, keys, or ordering differ")
+    for item in comparisons:
+        reference = daily_by_key[(item.signal_date, policy_names[0], item.requested_selection_count)]
+        challenger = daily_by_key[(item.signal_date, policy_names[1], item.requested_selection_count)]
+        if (
+            item.reference_policy_name != policy_names[0]
+            or item.challenger_policy_name != policy_names[1]
+            or item.reference_selection_identity != reference.identity
+            or item.challenger_selection_identity != challenger.identity
+            or item.reference_selection_identity not in daily_by_identity
+            or item.challenger_selection_identity not in daily_by_identity
+            or reference.complete_eligible_factor_evidence
+            != challenger.complete_eligible_factor_evidence
+        ):
+            raise ValueError("policy-selection comparison references are corrupted")
+        left, right = reference.ordered_selected_symbols, challenger.ordered_selected_symbols
+        left_set, right_set = set(left), set(right)
+        intersection = len(left_set.intersection(right_set))
+        union = len(left_set.union(right_set))
+        minimum = min(len(left), len(right))
+        expected_overlap = None if minimum == 0 else intersection / minimum
+        expected_jaccard = None if union == 0 else intersection / union
+        left_positions = {symbol: index + 1 for index, symbol in enumerate(left)}
+        right_positions = {symbol: index + 1 for index, symbol in enumerate(right)}
+        expected_displacements = tuple(
+            (
+                symbol,
+                left_positions[symbol],
+                right_positions[symbol],
+                right_positions[symbol] - left_positions[symbol],
+                abs(right_positions[symbol] - left_positions[symbol]),
+            )
+            for symbol in left if symbol in right_set
+        )
+        absolute_displacements = tuple(
+            float(value[4]) for value in expected_displacements
+        )
+        if (
+            item.intersection_count != intersection
+            or item.union_count != union
+            or not _same_optional_number(item.overlap_coefficient, expected_overlap)
+            or not _same_optional_number(item.jaccard_similarity, expected_jaccard)
+            or item.symbols_unique_to_reference
+            != tuple(symbol for symbol in left if symbol not in right_set)
+            or item.symbols_unique_to_challenger
+            != tuple(symbol for symbol in right if symbol not in left_set)
+            or item.exact_selected_set_equality != (left_set == right_set)
+            or item.exact_ordered_list_equality != (left == right)
+            or item.shared_ordinal_displacements != expected_displacements
+            or not _same_optional_number(
+                item.mean_absolute_ordinal_displacement,
+                _mean_or_none(absolute_displacements),
+            )
+            or item.maximum_absolute_ordinal_displacement
+            != (
+                None if not absolute_displacements
+                else int(max(absolute_displacements))
+            )
+        ):
+            raise ValueError("policy-selection overlap formula does not reconcile")
+
+    scopes = (
+        ("whole_period", spec.blocks[0].start_date, spec.blocks[-1].end_date),
+        *((item.name, item.start_date, item.end_date) for item in spec.blocks),
+    )
+    expected_turnover_keys = tuple(
+        (policy_name, budget, scope[0])
+        for policy_name in policy_names
+        for budget in spec.selection_budgets
+        for scope in scopes
+    )
+    turnover = tuple(selection.turnover_summaries)
+    turnover_keys = tuple(
+        (item.policy_name, item.requested_selection_count, item.scope_name)
+        for item in turnover
+    )
+    if turnover_keys != expected_turnover_keys or len(turnover) != 30:
+        raise ValueError("policy-selection turnover summary coverage or ordering differs")
+    for item in turnover:
+        included = tuple(
+            value for value in daily
+            if value.policy_name == item.policy_name
+            and value.requested_selection_count == item.requested_selection_count
+            and item.scope_start_date <= value.signal_date <= item.scope_end_date
+        )
+        one_way = tuple(value.one_way_turnover for value in included if value.one_way_turnover is not None)
+        symmetric = tuple(value.symmetric_turnover for value in included if value.symmetric_turnover is not None)
+        sizes = tuple(float(value.actual_selected_count) for value in included)
+        retained = tuple(float(len(value.retained_symbols)) for value in included if value.previous_signal_date is not None)
+        expected_metrics = (
+            (item.mean_actual_selection_size, _mean_or_none(sizes)),
+            (item.median_actual_selection_size, _median_or_none(sizes)),
+            (item.mean_one_way_turnover, _mean_or_none(one_way)),
+            (item.median_one_way_turnover, _median_or_none(one_way)),
+            (item.population_std_one_way_turnover, _population_std_or_none(one_way)),
+            (item.mean_symmetric_turnover, _mean_or_none(symmetric)),
+            (item.median_symmetric_turnover, _median_or_none(symmetric)),
+            (item.mean_retained_count, _mean_or_none(retained)),
+        )
+        if (
+            item.included_daily_identities != tuple(value.identity for value in included)
+            or item.dates_evaluated != len(included)
+            or item.defined_one_way_turnover_date_count != len(one_way)
+            or item.defined_symmetric_turnover_date_count != len(symmetric)
+            or item.total_entry_count != sum(len(value.entries) for value in included)
+            or item.boundary_tie_date_count != sum(value.boundary_tie_count > 1 for value in included)
+            or item.boundary_split_date_count
+            != sum(value.boundary_split_equal_score_group for value in included)
+            or any(not _same_optional_number(actual, expected) for actual, expected in expected_metrics)
+        ):
+            raise ValueError("policy-selection turnover summary does not reconcile")
+
+    comparisons_by_scope = tuple(selection.overlap_summaries)
+    expected_overlap_keys = tuple(
+        (budget, scope[0])
+        for budget in spec.selection_budgets
+        for scope in scopes
+    )
+    overlap_keys = tuple(
+        (item.requested_selection_count, item.scope_name)
+        for item in comparisons_by_scope
+    )
+    if overlap_keys != expected_overlap_keys or len(comparisons_by_scope) != 15:
+        raise ValueError("policy-selection overlap summary coverage or ordering differs")
+    for item in comparisons_by_scope:
+        included = tuple(
+            value for value in comparisons
+            if value.requested_selection_count == item.requested_selection_count
+            and item.scope_start_date <= value.signal_date <= item.scope_end_date
+        )
+        overlaps = tuple(value.overlap_coefficient for value in included if value.overlap_coefficient is not None)
+        jaccards = tuple(value.jaccard_similarity for value in included if value.jaccard_similarity is not None)
+        displacements = tuple(
+            value.mean_absolute_ordinal_displacement
+            for value in included if value.mean_absolute_ordinal_displacement is not None
+        )
+        numeric = (
+            (item.mean_overlap_coefficient, _mean_or_none(overlaps)),
+            (item.median_overlap_coefficient, _median_or_none(overlaps)),
+            (item.population_std_overlap_coefficient, _population_std_or_none(overlaps)),
+            (item.minimum_overlap_coefficient, None if not overlaps else min(overlaps)),
+            (item.maximum_overlap_coefficient, None if not overlaps else max(overlaps)),
+            (item.mean_jaccard_similarity, _mean_or_none(jaccards)),
+            (item.median_jaccard_similarity, _median_or_none(jaccards)),
+            (item.population_std_jaccard_similarity, _population_std_or_none(jaccards)),
+            (item.minimum_jaccard_similarity, None if not jaccards else min(jaccards)),
+            (item.maximum_jaccard_similarity, None if not jaccards else max(jaccards)),
+            (item.mean_ordinal_displacement, _mean_or_none(displacements)),
+            (item.median_ordinal_displacement, _median_or_none(displacements)),
+            (item.population_std_ordinal_displacement, _population_std_or_none(displacements)),
+        )
+        set_equal = sum(value.exact_selected_set_equality for value in included)
+        order_equal = sum(value.exact_ordered_list_equality for value in included)
+        if (
+            item.included_comparison_identities != tuple(value.identity for value in included)
+            or item.dates_evaluated != len(included)
+            or item.defined_overlap_date_count != len(overlaps)
+            or item.defined_jaccard_date_count != len(jaccards)
+            or item.defined_ordinal_displacement_date_count != len(displacements)
+            or item.exact_selected_set_equality_date_count != set_equal
+            or item.exact_selected_set_equality_rate
+            != (None if not included else set_equal / len(included))
+            or item.exact_ordered_list_equality_date_count != order_equal
+            or item.exact_ordered_list_equality_rate
+            != (None if not included else order_equal / len(included))
+            or any(not _same_optional_number(actual, expected) for actual, expected in numeric)
+        ):
+            raise ValueError("policy-selection overlap summary does not reconcile")
+
+    expected_rows = _policy_selection_artifact_rows(selection)
+    for filename, expected in expected_rows.items():
+        if rows.get(filename) != expected:
+            raise ValueError(f"policy-selection artifact projection differs: {filename}")
+    projected_daily = expected_rows["policy_selection_by_date.csv"][1]
+    for row, item in zip(projected_daily, daily, strict=True):
+        if (
+            row["selected_score_evidence_count"]
+            != len(item.ordered_selected_score_evidence)
+            or row["selected_score_evidence_sha256"]
+            != _identity_collection_sha256(item.ordered_selected_score_evidence)
+            or json.loads(row["selected_symbols_json"])
+            != list(item.ordered_selected_symbols)
+            or json.loads(row["entries_json"]) != list(item.entries)
+            or json.loads(row["exits_json"]) != list(item.exits)
+            or json.loads(row["retained_symbols_json"])
+            != list(item.retained_symbols)
+        ):
+            raise ValueError("policy-selection compact daily evidence does not reconcile")
+    projected_turnover = expected_rows["policy_selection_turnover_summary.csv"][1]
+    for row, item in zip(projected_turnover, turnover, strict=True):
+        if (
+            row["included_daily_identity_count"]
+            != len(item.included_daily_identities)
+            or row["included_daily_identities_sha256"]
+            != _identity_collection_sha256(item.included_daily_identities)
+        ):
+            raise ValueError("policy-selection turnover compact provenance differs")
+    projected_overlap = expected_rows["policy_selection_overlap_by_date.csv"][1]
+    for row, item in zip(projected_overlap, comparisons, strict=True):
+        if (
+            row["ordinal_displacement_evidence_count"]
+            != len(item.shared_ordinal_displacements)
+            or row["ordinal_displacement_evidence_sha256"]
+            != _identity_collection_sha256(item.shared_ordinal_displacements)
+        ):
+            raise ValueError("policy-selection overlap compact evidence differs")
+    projected_overlap_summaries = expected_rows["policy_selection_overlap_summary.csv"][1]
+    for row, item in zip(projected_overlap_summaries, comparisons_by_scope, strict=True):
+        if (
+            row["included_comparison_identity_count"]
+            != len(item.included_comparison_identities)
+            or row["included_comparison_identities_sha256"]
+            != _identity_collection_sha256(item.included_comparison_identities)
+        ):
+            raise ValueError("policy-selection overlap compact provenance differs")
+    forbidden_tokens = (
+        "outcome", "forward_return", "rank_ic", "spread", "pnl", "trade",
+        "position", "winner", "recommend", "preferred_policy",
+        "policy_selection_decision", "production_policy", "optimized",
+    )
+    columns = set().union(*(expected_rows[name][0] for name in expected_rows))
+    if any(token in column.lower() for token in forbidden_tokens for column in columns):
+        raise ValueError("outcome, performance, or decision field entered policy-selection artifacts")
+
+
 def _validate_reconciliation(
     observation_index: Any,
     feature_panel: Any,
@@ -1968,6 +2685,7 @@ def _validate_reconciliation(
     redundancy: Any,
     incremental: Any,
     composite: Any,
+    selection: Any,
     rows: Mapping[str, tuple[tuple[str, ...], list[dict[str, Any]]]],
     *,
     start_date: str,
@@ -2068,6 +2786,12 @@ def _validate_reconciliation(
         end_date=end_date,
     )
     _validate_composite_reconciliation(dataset, composite, rows)
+    _validate_policy_selection_reconciliation(
+        dataset,
+        observation_index,
+        selection,
+        rows,
+    )
 
 
 def _validate_emitted(
@@ -2078,6 +2802,7 @@ def _validate_emitted(
     redundancy: Any,
     incremental: Any,
     composite: Any,
+    selection: Any,
 ) -> None:
     if tuple(sorted(path.name for path in directory.iterdir())) != tuple(sorted(_REQUIRED_FILENAMES)):
         raise ValueError("experiment artifact set is incomplete")
@@ -2461,6 +3186,139 @@ def _validate_emitted(
     if any(item not in assumptions for item in _COMPOSITE_ASSUMPTIONS):
         raise ValueError("composite-comparison assumptions documentation is incomplete")
 
+    selection_files = (
+        "policy_selection_by_date.csv",
+        "policy_selection_turnover_summary.csv",
+        "policy_selection_overlap_by_date.csv",
+        "policy_selection_overlap_summary.csv",
+    )
+    for filename in selection_files:
+        columns, expected_rows = rows[filename]
+        for actual, expected in zip(emitted[filename], expected_rows, strict=True):
+            serialized = {
+                column: str(_csv_value(expected.get(column))) for column in columns
+            }
+            if actual != serialized:
+                raise ValueError(f"policy-selection CSV projection mismatch: {filename}")
+    daily_rows = emitted["policy_selection_by_date.csv"]
+    overlap_rows = emitted["policy_selection_overlap_by_date.csv"]
+    for row in daily_rows:
+        if date.fromisoformat(row["session_date"]).isoformat() != row["session_date"]:
+            raise ValueError("policy-selection daily artifact has a non-canonical date")
+        for field in (
+            "selected_symbols_json", "entries_json", "exits_json",
+            "retained_symbols_json",
+        ):
+            values = json.loads(row[field])
+            if (
+                not isinstance(values, list)
+                or canonical_json(values).decode("utf-8") != row[field]
+            ):
+                raise ValueError("policy-selection symbol collection is not canonical JSON")
+    for row in overlap_rows:
+        if date.fromisoformat(row["session_date"]).isoformat() != row["session_date"]:
+            raise ValueError("policy-selection overlap artifact has a non-canonical date")
+        for field in ("unique_to_reference_json", "unique_to_challenger_json"):
+            values = json.loads(row[field])
+            if (
+                not isinstance(values, list)
+                or canonical_json(values).decode("utf-8") != row[field]
+            ):
+                raise ValueError("policy-selection overlap collection is not canonical JSON")
+    for filename in (
+        "policy_selection_turnover_summary.csv",
+        "policy_selection_overlap_summary.csv",
+    ):
+        for row in emitted[filename]:
+            for boundary in ("scope_start_date", "scope_end_date"):
+                if date.fromisoformat(row[boundary]).isoformat() != row[boundary]:
+                    raise ValueError("policy-selection summary has a non-canonical boundary")
+    if (
+        "ordered_selected_score_evidence" in _POLICY_SELECTION_DAILY_COLUMNS
+        or "shared_ordinal_displacements" in _POLICY_SELECTION_OVERLAP_DAILY_COLUMNS
+        or "included_daily_identities" in _POLICY_SELECTION_TURNOVER_SUMMARY_COLUMNS
+        or "included_comparison_identities" in _POLICY_SELECTION_OVERLAP_SUMMARY_COLUMNS
+    ):
+        raise ValueError("policy-selection artifacts contain unbounded identity evidence")
+    selection_manifest = manifest.get("policy_selection_diagnostics", {})
+    expected_set_counts = {
+        str(budget): sum(
+            item.exact_selected_set_equality
+            for item in selection.daily_policy_comparisons
+            if item.requested_selection_count == budget
+        )
+        for budget in NEUTRAL_ADX_RSI_SELECTION_DIAGNOSTICS_V1.selection_budgets
+    }
+    expected_order_counts = {
+        str(budget): sum(
+            item.exact_ordered_list_equality
+            for item in selection.daily_policy_comparisons
+            if item.requested_selection_count == budget
+        )
+        for budget in NEUTRAL_ADX_RSI_SELECTION_DIAGNOSTICS_V1.selection_budgets
+    }
+    expected_policy_manifest = [
+        {
+            "name": policy.name,
+            "fingerprint": policy.fingerprint,
+            "factor_weights": [
+                {"factor": factor, "weight": weight, "direction": direction}
+                for factor, weight, direction in policy.factor_weights
+            ],
+        }
+        for policy in NEUTRAL_ADX_RSI_SELECTION_DIAGNOSTICS_V1.policies
+    ]
+    expected_boundary_ties = sum(
+        item.boundary_tie_count > 1 for item in selection.daily_selections
+    )
+    expected_boundary_splits = sum(
+        item.boundary_split_equal_score_group for item in selection.daily_selections
+    )
+    expected_first_undefined = sum(
+        item.previous_signal_date is None
+        and item.one_way_turnover is None
+        and item.one_way_turnover_undefined_reason == "first_available_date"
+        for item in selection.daily_selections
+    )
+    if (
+        selection_manifest.get("result_identity") != selection.identity
+        or selection_manifest.get("specification_fingerprint")
+        != selection.specification_fingerprint
+        or selection_manifest.get("source_dataset_identity")
+        != selection.source_dataset_identity
+        or selection_manifest.get("source_dataset_content_identity")
+        != selection.source_dataset_content_identity
+        or selection_manifest.get("source_bounded_content_identity")
+        != selection.source_bounded_content_identity
+        or selection_manifest.get("policies") != expected_policy_manifest
+        or selection_manifest.get("selection_budgets") != [5, 10, 20]
+        or selection_manifest.get("daily_selection_row_count")
+        != len(selection.daily_selections)
+        or selection_manifest.get("turnover_summary_row_count")
+        != len(selection.turnover_summaries)
+        or selection_manifest.get("daily_overlap_row_count")
+        != len(selection.daily_policy_comparisons)
+        or selection_manifest.get("overlap_summary_row_count")
+        != len(selection.overlap_summaries)
+        or selection_manifest.get("boundary_tie_date_count")
+        != expected_boundary_ties
+        or selection_manifest.get("boundary_split_date_count")
+        != expected_boundary_splits
+        or selection_manifest.get("undefined_first_date_turnover_record_count")
+        != expected_first_undefined
+        or selection_manifest.get("exact_set_equality_counts_by_budget")
+        != expected_set_counts
+        or selection_manifest.get("exact_order_equality_counts_by_budget")
+        != expected_order_counts
+        or selection_manifest.get("limitations")
+        != _safe_json(selection.limitations_metadata)
+        or selection_manifest.get("artifacts") != list(selection_files)
+        or selection_manifest.get("completed") is not True
+    ):
+        raise ValueError("policy-selection manifest does not reconcile")
+    if any(item not in assumptions for item in _POLICY_SELECTION_ASSUMPTIONS):
+        raise ValueError("policy-selection assumptions documentation is incomplete")
+
 
 def _publish_atomic(temporary: Path, output: Path) -> None:
     if not output.exists():
@@ -2577,11 +3435,16 @@ def run_neutral_panel_factor_evaluation(
         dataset,
         NEUTRAL_ADX_RSI_COMPOSITE_COMPARISON_V1,
     )
+    selection = evaluate_panel_policy_selection_diagnostics(
+        dataset,
+        NEUTRAL_ADX_RSI_SELECTION_DIAGNOSTICS_V1,
+    )
     rows = _artifact_rows(evaluation, observation_index, feature_panel, outcome_panel)
     rows.update(_temporal_artifact_rows(temporal))
     rows.update(_redundancy_artifact_rows(redundancy))
     rows.update(_incremental_artifact_rows(incremental))
     rows.update(_composite_artifact_rows(composite))
+    rows.update(_policy_selection_artifact_rows(selection))
     _validate_reconciliation(
         observation_index,
         feature_panel,
@@ -2592,6 +3455,7 @@ def run_neutral_panel_factor_evaluation(
         redundancy,
         incremental,
         composite,
+        selection,
         rows,
         start_date=start,
         end_date=end,
@@ -2855,6 +3719,72 @@ def run_neutral_panel_factor_evaluation(
             "completed": True,
             "limitations": list(_COMPOSITE_LIMITATIONS),
         },
+        "policy_selection_diagnostics": {
+            "result_identity": selection.identity,
+            "specification_fingerprint": selection.specification_fingerprint,
+            "source_dataset_identity": selection.source_dataset_identity,
+            "source_dataset_content_identity": selection.source_dataset_content_identity,
+            "source_bounded_content_identity": selection.source_bounded_content_identity,
+            "policies": [
+                {
+                    "name": policy.name,
+                    "fingerprint": policy.fingerprint,
+                    "factor_weights": [
+                        {
+                            "factor": factor,
+                            "weight": weight,
+                            "direction": direction,
+                        }
+                        for factor, weight, direction in policy.factor_weights
+                    ],
+                }
+                for policy in NEUTRAL_ADX_RSI_SELECTION_DIAGNOSTICS_V1.policies
+            ],
+            "selection_budgets": list(
+                NEUTRAL_ADX_RSI_SELECTION_DIAGNOSTICS_V1.selection_budgets,
+            ),
+            "daily_selection_row_count": len(selection.daily_selections),
+            "turnover_summary_row_count": len(selection.turnover_summaries),
+            "daily_overlap_row_count": len(selection.daily_policy_comparisons),
+            "overlap_summary_row_count": len(selection.overlap_summaries),
+            "boundary_tie_date_count": sum(
+                item.boundary_tie_count > 1 for item in selection.daily_selections
+            ),
+            "boundary_split_date_count": sum(
+                item.boundary_split_equal_score_group
+                for item in selection.daily_selections
+            ),
+            "undefined_first_date_turnover_record_count": sum(
+                item.previous_signal_date is None
+                and item.one_way_turnover is None
+                and item.one_way_turnover_undefined_reason == "first_available_date"
+                for item in selection.daily_selections
+            ),
+            "exact_set_equality_counts_by_budget": {
+                str(budget): sum(
+                    item.exact_selected_set_equality
+                    for item in selection.daily_policy_comparisons
+                    if item.requested_selection_count == budget
+                )
+                for budget in NEUTRAL_ADX_RSI_SELECTION_DIAGNOSTICS_V1.selection_budgets
+            },
+            "exact_order_equality_counts_by_budget": {
+                str(budget): sum(
+                    item.exact_ordered_list_equality
+                    for item in selection.daily_policy_comparisons
+                    if item.requested_selection_count == budget
+                )
+                for budget in NEUTRAL_ADX_RSI_SELECTION_DIAGNOSTICS_V1.selection_budgets
+            },
+            "artifacts": [
+                "policy_selection_by_date.csv",
+                "policy_selection_turnover_summary.csv",
+                "policy_selection_overlap_by_date.csv",
+                "policy_selection_overlap_summary.csv",
+            ],
+            "limitations": _safe_json(selection.limitations_metadata),
+            "completed": True,
+        },
         "counts": {
             "observation_rows": observation_index.total_membership_row_count,
             "signal_dates": (
@@ -2882,6 +3812,7 @@ def run_neutral_panel_factor_evaluation(
         _write_json(temporary / "experiment_manifest.json", manifest)
         _validate_emitted(
             temporary, rows, evaluation, temporal, redundancy, incremental, composite,
+            selection,
         )
         if _file_sha256(database) != database_digest:
             raise RuntimeError("market database changed before publication")
@@ -2906,6 +3837,7 @@ def run_neutral_panel_factor_evaluation(
         "factor_redundancy": redundancy,
         "factor_incremental_analysis": incremental,
         "composite_comparison": composite,
+        "policy_selection_diagnostics": selection,
     }
 
 
