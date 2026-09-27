@@ -1,0 +1,34 @@
+{
+  "activation_market_session_boundary": "2026-09-17",
+  "benchmark": "VNINDEX",
+  "budget": 5,
+  "construction_semantics": "ordered ADX_ONLY selection; equal weight equals one divided by actual selected count; cash equals one minus gross weight",
+  "historical_research_boundary_source": "final end_date in the verified Phase 8 frozen temporal partition",
+  "immutability_rules": [
+    "protocol semantic fields are immutable after activation",
+    "formations, positions, maturity events, outcomes, and audit events are append-only",
+    "a semantic rule change requires a new protocol version and fingerprint"
+  ],
+  "formation_rule": "one immutable formation per newly completed VNINDEX session strictly after both historical and operational activation cutoffs",
+  "maturity_rule": "horizon h matures only at the exact h-th later completed VNINDEX session",
+  "no_backfill_invariant": "formations at or before the historical boundary or operational activation cutoff are rejected; missed sessions become audit gaps only",
+  "operational_activation_cutoff_semantics": "latest completed canonical VNINDEX session explicitly acknowledged at activation; formations must be strictly later",
+  "outcome_semantics": [
+    "stock_forward_return_pct=(stock_target_close/stock_formation_close-1)*100",
+    "benchmark_forward_return_pct=(benchmark_target_close/benchmark_formation_close-1)*100",
+    "excess_forward_return_pct_points=stock_forward_return_pct-benchmark_forward_return_pct",
+    "no nearest-date substitution"
+  ],
+  "protocol_fingerprint": "8c60839fa29fc04ee4b0346c7e299d5fb92d967da1cc56ce21e8fbe6cb23a374",
+  "protocol_version": "V1",
+  "selection_policy": "ADX_ONLY",
+  "selection_policy_identity": "23c015d20baebf4adec3e3d5e0ef0da7ff9c1df4cafceab2f13a423cefe5205d",
+  "source_phase8_manifest_identity": "7310de8238f85400a7a31506817bacf52f81b5cebcdc456fda49fb59a097a120",
+  "source_phase8_manifest_sha256": "7469a23d0cbaf049aa43c73bd90d33eb717f098ca4543ae7cff7a0cc303413f1",
+  "source_phase8_result_identity": "d433d139c27725421ab6a19fa28c62225040a816793bf63bfffee774b83f3ddc",
+  "tracked_horizons": [
+    5,
+    10
+  ],
+  "weighting_policy": "EQUAL_WEIGHT"
+}
