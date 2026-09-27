@@ -66,6 +66,16 @@ _EXPORT_MODULES = {
     "PanelPolicySelectionDiagnosticsResult": ".panel_policy_selection_diagnostics",
     "NEUTRAL_ADX_RSI_SELECTION_DIAGNOSTICS_V1": ".panel_policy_selection_diagnostics",
     "evaluate_panel_policy_selection_diagnostics": ".panel_policy_selection_diagnostics",
+    "ResearchDecision": ".research_decision_gate",
+    "EvidenceStatus": ".research_decision_gate",
+    "ResearchDecisionGateSpec": ".research_decision_gate",
+    "ResearchDecisionEvidenceInput": ".research_decision_gate",
+    "DecisionEvidence": ".research_decision_gate",
+    "CandidateResearchDecision": ".research_decision_gate",
+    "ResearchDecisionGateResult": ".research_decision_gate",
+    "NEUTRAL_RESEARCH_DECISION_GATE_V1": ".research_decision_gate",
+    "load_phase59b_decision_evidence": ".research_decision_gate",
+    "evaluate_research_decision_gate": ".research_decision_gate",
 }
 
 __all__ = tuple(_EXPORT_MODULES)
