@@ -26,6 +26,7 @@ from quantctl.research_status import (
     inspect_production_policy,
     inspect_research_frontier,
 )
+from quantctl.run_history import OperationHistoryStore, RunDetail, history_path
 
 
 @dataclass(frozen=True, slots=True)
@@ -37,6 +38,7 @@ class DashboardViewModel:
     forward: ForwardSystemSnapshot
     production: ProductionPolicySnapshot
     research: ResearchFrontierSnapshot
+    latest_run: RunDetail | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -68,6 +70,12 @@ class StateViewModel:
     forward: ForwardSystemSnapshot
 
 
+@dataclass(frozen=True, slots=True)
+class RunHistoryViewModel:
+    latest: RunDetail | None
+    recent: tuple[RunDetail, ...]
+
+
 def build_dashboard_model(
     *,
     root: Path = PROJECT_ROOT,
@@ -86,6 +94,7 @@ def build_dashboard_model(
         inspect_forward_system(root=root),
         inspect_production_policy(root=root, environ=environ),
         inspect_research_frontier(root=root),
+        OperationHistoryStore(history_path(root=root)).latest_run(),
     )
 
 
@@ -123,3 +132,10 @@ def build_state_model(
         ),
         inspect_forward_system(root=root),
     )
+
+
+def build_run_history_model(*, root: Path = PROJECT_ROOT, limit: int = 20) -> RunHistoryViewModel:
+    store = OperationHistoryStore(history_path(root=root))
+    summaries = store.list_runs(limit)
+    details = tuple(item for summary in summaries if (item := store.get_run(summary.run_id)) is not None)
+    return RunHistoryViewModel(store.latest_run(), details)

@@ -5,12 +5,22 @@ from datetime import datetime, timezone
 from enum import Enum
 from importlib.util import find_spec
 from pathlib import Path
+import os
 import subprocess
 import sys
+from time import perf_counter
 from types import MappingProxyType
 from typing import Any, Callable, Mapping
 
 from quantctl.registry import PROJECT_ROOT, inspect_system
+from quantctl.run_history import (
+    HISTORY_PATH_ENV,
+    RUN_ID_ENV,
+    OperationHistoryStore,
+    RunStatus,
+    history_path as resolve_history_path,
+    sanitize_diagnostic,
+)
 
 
 class OperationCapability(str, Enum):
@@ -46,6 +56,9 @@ class OperationResult:
     details: Mapping[str, Any]
     stdout: str = ""
     stderr: str = ""
+    run_id: str | None = None
+    duration_ms: int | None = None
+    status: str | None = None
 
 
 _OPERATION_SPECS = (
@@ -146,23 +159,52 @@ def execute_operation(
     *,
     root: Path = PROJECT_ROOT,
     process_runner: ProcessRunner = subprocess.run,
+    history_path: Path | None = None,
 ) -> OperationResult:
     spec = get_operation(name)
     started = _timestamp()
     if spec.name == "data-status":
         return _data_status(root=root, started=started)
+    store_path = resolve_history_path(root=root, path=history_path)
+    store = OperationHistoryStore(store_path)
+    run_id = store.begin_run(
+        spec.name,
+        (capability.value for capability in spec.capabilities),
+        started_at_utc=started,
+        metadata={"module_target": spec.module_target},
+    )
+    monotonic_started = perf_counter()
     if not operation_available(spec, root=root):
+        finished = _timestamp()
+        duration_ms = round((perf_counter() - monotonic_started) * 1000)
+        message = f"Canonical module is unavailable: {spec.module_target}"
+        store.finish_run(
+            run_id,
+            status=RunStatus.FAILED,
+            exit_code=127,
+            duration_ms=duration_ms,
+            finished_at_utc=finished,
+            error_type="ModuleNotFoundError",
+            error_message=message,
+            metadata={"module_target": spec.module_target},
+        )
         return OperationResult(
             spec.name,
             False,
             127,
-            f"Canonical module is unavailable: {spec.module_target}",
+            message,
             started,
-            _timestamp(),
+            finished,
             MappingProxyType({"module_target": spec.module_target}),
+            run_id=run_id,
+            duration_ms=duration_ms,
+            status=RunStatus.FAILED.value,
         )
 
     command = (sys.executable, "-m", str(spec.module_target))
+    child_environment = dict(os.environ)
+    child_environment[RUN_ID_ENV] = run_id
+    child_environment[HISTORY_PATH_ENV] = str(store_path)
     try:
         completed = process_runner(
             command,
@@ -172,27 +214,85 @@ def execute_operation(
             text=True,
             encoding="utf-8",
             errors="replace",
+            env=child_environment,
         )
+    except KeyboardInterrupt:
+        finished = _timestamp()
+        duration_ms = round((perf_counter() - monotonic_started) * 1000)
+        store.finish_run(
+            run_id,
+            status=RunStatus.CANCELLED,
+            exit_code=130,
+            duration_ms=duration_ms,
+            finished_at_utc=finished,
+            error_type="KeyboardInterrupt",
+            error_message="Operation cancelled by user.",
+            metadata={"module_target": spec.module_target},
+        )
+        raise
     except OSError as exc:
+        finished = _timestamp()
+        duration_ms = round((perf_counter() - monotonic_started) * 1000)
+        message = f"Failed to start canonical operation: {type(exc).__name__}: {exc}"
+        store.finish_run(
+            run_id,
+            status=RunStatus.FAILED,
+            exit_code=127,
+            duration_ms=duration_ms,
+            finished_at_utc=finished,
+            error_type=type(exc).__name__,
+            error_message=message,
+            metadata={"module_target": spec.module_target},
+        )
         return OperationResult(
             spec.name,
             False,
             127,
-            f"Failed to start canonical operation: {type(exc).__name__}: {exc}",
+            message,
             started,
-            _timestamp(),
+            finished,
             MappingProxyType({"module_target": spec.module_target}),
+            run_id=run_id,
+            duration_ms=duration_ms,
+            status=RunStatus.FAILED.value,
         )
 
     success = completed.returncode == 0
+    final_status = (
+        RunStatus.SUCCESS
+        if success
+        else (RunStatus.CANCELLED if completed.returncode == 130 else RunStatus.FAILED)
+    )
+    finished = _timestamp()
+    duration_ms = round((perf_counter() - monotonic_started) * 1000)
+    interim = store.get_run(run_id)
+    failed_step = next(
+        (item.step_name for item in (interim.steps if interim else ()) if item.status is RunStatus.FAILED),
+        None,
+    )
+    persisted_error = sanitize_diagnostic(completed.stderr) if not success else None
+    store.finish_run(
+        run_id,
+        status=final_status,
+        exit_code=int(completed.returncode),
+        duration_ms=duration_ms,
+        finished_at_utc=finished,
+        failed_step=failed_step,
+        error_type=None if success else ("KeyboardInterrupt" if final_status is RunStatus.CANCELLED else "SubprocessExit"),
+        error_message=persisted_error or (None if success else f"Operation exited with code {completed.returncode}."),
+        metadata={"module_target": spec.module_target},
+    )
     return OperationResult(
         spec.name,
         success,
         int(completed.returncode),
         f"Operation {spec.name} {'completed' if success else 'failed'} with exit code {completed.returncode}.",
         started,
-        _timestamp(),
+        finished,
         MappingProxyType({"module_target": spec.module_target}),
         completed.stdout or "",
         completed.stderr or "",
+        run_id,
+        duration_ms,
+        final_status.value,
     )

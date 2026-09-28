@@ -51,6 +51,13 @@ The one canonical daily entrypoint is:
 python -m scripts.run_daily
 ```
 
+Operational `update`, `scan`, and `daily` executions are recorded in the lazy
+local ledger `data/operation_history.db`. QuantCtl and Quant Manager read the
+same ledger through `python -m quantctl history`; read-only inspection never
+creates it. Daily step detail comes from the existing `DailyPipelineResult`
+stage boundaries. Automatic history retention is intentionally deferred while
+the sequential VPS workload remains small.
+
 `main.py` is a compatibility alias for the same command. The daily stage order
 is:
 

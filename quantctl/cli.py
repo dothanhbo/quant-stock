@@ -4,7 +4,7 @@ import argparse
 from collections.abc import Callable, Sequence
 from functools import partial
 
-from quantctl.commands import doctor, operations, research, state, status, version
+from quantctl.commands import doctor, history, operations, research, state, status, version
 from quantctl.registry import CommandSafety
 
 
@@ -24,6 +24,12 @@ def build_parser() -> argparse.ArgumentParser:
 
     doctor_parser = commands.add_parser("doctor", help="run read-only diagnostics")
     doctor_parser.set_defaults(handler=doctor.run)
+
+    history_parser = commands.add_parser("history", help="inspect operational run history")
+    history_parser.add_argument("--limit", type=int, default=20)
+    history_commands = history_parser.add_subparsers(dest="history_command")
+    history_show = history_commands.add_parser("show", help="show one operational run")
+    history_show.add_argument("run_id")
 
     research_parser = commands.add_parser("research", help="inspect current Quant Lab research")
     research_commands = research_parser.add_subparsers(dest="research_command", required=True)
@@ -59,5 +65,9 @@ def build_parser() -> argparse.ArgumentParser:
 
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
+    if arguments.command == "history":
+        if arguments.history_command == "show":
+            return history.run_show(arguments.run_id)
+        return history.run_list(limit=arguments.limit)
     handler: Handler = arguments.handler
     return handler()

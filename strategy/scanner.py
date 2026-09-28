@@ -632,4 +632,6 @@ def run_scan(
 
 
 if __name__ == "__main__":
-    run_scan()
+    from quantctl.run_history import run_tracked_entrypoint
+
+    raise SystemExit(run_tracked_entrypoint("scan", run_scan))

@@ -537,4 +537,6 @@ def main() -> None:
 
 
 if __name__ == "__main__":
-    main()
+    from quantctl.run_history import run_tracked_entrypoint
+
+    raise SystemExit(run_tracked_entrypoint("update", main))

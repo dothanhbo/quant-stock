@@ -222,6 +222,10 @@ def main() -> int:
         )
         return 130
 
+    from quantctl.run_history import record_daily_pipeline_steps
+
+    record_daily_pipeline_steps(result)
+
     return (
         0
         if result.success
@@ -230,6 +234,6 @@ def main() -> int:
 
 
 if __name__ == "__main__":
-    sys.exit(
-        main()
-    )
+    from quantctl.run_history import run_tracked_entrypoint
+
+    sys.exit(run_tracked_entrypoint("daily", main))

@@ -20,6 +20,14 @@ def _display_result(result: OperationResult) -> None:
         st.code(result.stdout, language=None)
     if result.stderr:
         st.code(result.stderr, language=None)
+    if result.run_id:
+        st.caption(
+            f"Run ID: {result.run_id} · Status: {result.status or 'UNKNOWN'} · "
+            f"Duration: {result.duration_ms / 1000:.1f}s"
+            if result.duration_ms is not None
+            else f"Run ID: {result.run_id} · Status: {result.status or 'UNKNOWN'}"
+        )
+        st.info("Open Run History from the sidebar for the durable audit record.")
 
 
 def render(model: OperationsViewModel) -> None:

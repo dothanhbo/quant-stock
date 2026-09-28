@@ -64,6 +64,25 @@ def render(model: DashboardViewModel) -> None:
     st.caption(f"Inactive paper state: {'PRESENT' if inactive_state else 'NONE'}")
     st.caption("Counts reflect persisted state, not strategy health or current market valuation.")
 
+    st.subheader("Last Run")
+    latest = model.latest_run
+    if latest is None:
+        st.caption("No operational runs recorded.")
+    else:
+        run = latest.summary
+        run_columns = st.columns(4)
+        run_columns[0].metric("Operation", run.operation.upper())
+        run_columns[1].metric("Status", run.status.value)
+        run_columns[2].metric("Started", run.started_at_utc)
+        run_columns[3].metric(
+            "Duration",
+            "UNKNOWN" if run.duration_ms is None else f"{run.duration_ms / 1000:.1f}s",
+        )
+        st.caption(
+            f"Run ID: {run.run_id}"
+            + (f" · Failed step: {run.failed_step}" if run.failed_step else "")
+        )
+
     st.subheader("Research")
     research_columns = st.columns(4)
     research_columns[0].metric("Framework", model.research.framework)

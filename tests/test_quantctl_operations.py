@@ -107,6 +107,7 @@ def test_cli_routes_each_m2_command_once(
 def test_wrappers_invoke_each_canonical_module_exactly_once(
     operation: str,
     module: str,
+    tmp_path: Path,
 ) -> None:
     calls: list[tuple[tuple[str, ...], dict[str, object]]] = []
 
@@ -114,7 +115,12 @@ def test_wrappers_invoke_each_canonical_module_exactly_once(
         calls.append((command, kwargs))
         return subprocess.CompletedProcess(command, 0, "canonical output", "")
 
-    result = execute_operation(operation, root=PROJECT_ROOT, process_runner=fake_runner)
+    result = execute_operation(
+        operation,
+        root=PROJECT_ROOT,
+        process_runner=fake_runner,
+        history_path=tmp_path / "operation_history.db",
+    )
 
     assert result.success
     assert len(calls) == 1
@@ -122,11 +128,16 @@ def test_wrappers_invoke_each_canonical_module_exactly_once(
     assert calls[0][1]["cwd"] == PROJECT_ROOT
 
 
-def test_wrapper_failure_propagates_clearly() -> None:
+def test_wrapper_failure_propagates_clearly(tmp_path: Path) -> None:
     def failed(command: tuple[str, ...], **kwargs: object) -> subprocess.CompletedProcess[str]:
         return subprocess.CompletedProcess(command, 7, "", "canonical failure")
 
-    result = execute_operation("update", root=PROJECT_ROOT, process_runner=failed)
+    result = execute_operation(
+        "update",
+        root=PROJECT_ROOT,
+        process_runner=failed,
+        history_path=tmp_path / "operation_history.db",
+    )
     assert not result.success
     assert result.exit_code == 7
     assert result.stderr == "canonical failure"
