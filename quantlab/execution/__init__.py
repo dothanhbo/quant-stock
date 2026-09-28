@@ -19,8 +19,26 @@ from .foundation import (
     TheoreticalOrderIntent,
     VolumeParticipationDiagnostic,
     build_execution_foundation_result,
+    descriptive_participation_pct,
     describe_volume_participation,
     translate_target_portfolio,
+)
+from .timing_capacity import (
+    CAPITAL_SEMANTICS,
+    CAUSAL_EXECUTION_TIMING_CAPACITY_V1,
+    NORMALIZED_PORTFOLIO_EQUITY,
+    PARTICIPATION_INTERPRETATION,
+    CapacityEvidenceState,
+    DailyExecutionMarketEvidence,
+    ExecutionTimingCapacityResult,
+    ExecutionTimingCapacitySpec,
+    ExecutionTimingObservation,
+    ExecutionTimingSummary,
+    FrozenExecutionTargetPortfolio,
+    FrozenExecutionTargetPosition,
+    TimingEvidenceState,
+    adverse_direction_gap,
+    evaluate_execution_timing_capacity,
 )
 
 __all__ = (
@@ -29,5 +47,10 @@ __all__ = (
     "ExecutionFrictionComponent", "ExecutionFrictionSpec", "ExecutionSpec", "FrictionProvenance",
     "OrderIntentState", "OrderSide", "ParticipationState", "TargetToOrderResult", "TheoreticalOrderIntent",
     "VolumeParticipationDiagnostic", "build_execution_foundation_result", "describe_volume_participation",
-    "translate_target_portfolio",
+    "descriptive_participation_pct", "translate_target_portfolio",
+    "CAPITAL_SEMANTICS", "CAUSAL_EXECUTION_TIMING_CAPACITY_V1", "NORMALIZED_PORTFOLIO_EQUITY",
+    "PARTICIPATION_INTERPRETATION", "CapacityEvidenceState", "DailyExecutionMarketEvidence",
+    "ExecutionTimingCapacityResult", "ExecutionTimingCapacitySpec", "ExecutionTimingObservation",
+    "ExecutionTimingSummary", "FrozenExecutionTargetPortfolio", "FrozenExecutionTargetPosition",
+    "TimingEvidenceState", "adverse_direction_gap", "evaluate_execution_timing_capacity",
 )

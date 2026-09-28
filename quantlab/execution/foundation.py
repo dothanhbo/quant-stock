@@ -313,10 +313,20 @@ def describe_volume_participation(
         state = ParticipationState.VOLUME_UNAVAILABLE; shares = abs(intent.theoretical_share_delta); volume = participation = None
     else:
         state = ParticipationState.AVAILABLE_DESCRIPTIVE_ONLY; shares = abs(intent.theoretical_share_delta)
-        volume = float(daily_volume); participation = shares / volume * 100.0
+        volume = float(daily_volume); participation = descriptive_participation_pct(shares, volume)
     interpretation = "DESCRIPTIVE_PARTICIPATION_NOT_FILL_PROBABILITY_OR_MARKET_IMPACT"
     payload = {"intent": intent.identity, "state": state.value, "shares": shares, "volume": volume, "participation": participation, "volume_date": volume_date, "interpretation": interpretation}
     return VolumeParticipationDiagnostic(intent.symbol, state, shares, volume, participation, volume_date, interpretation, _hash(payload))
+
+
+def descriptive_participation_pct(order_shares: float, daily_volume: float) -> float:
+    """Return shares/daily-volume percentage without implying a fill model."""
+    shares, volume = float(order_shares), float(daily_volume)
+    if not math.isfinite(shares) or shares < 0:
+        raise ValueError("order_shares must be finite and nonnegative")
+    if not math.isfinite(volume) or volume <= 0:
+        raise ValueError("daily_volume must be finite and positive")
+    return shares / volume * 100.0
 
 
 @dataclass(frozen=True, slots=True)
