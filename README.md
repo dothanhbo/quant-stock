@@ -58,6 +58,30 @@ creates it. Daily step detail comes from the existing `DailyPipelineResult`
 stage boundaries. Automatic history retention is intentionally deferred while
 the sequential VPS workload remains small.
 
+QuantCtl is the canonical management surface around the same operational
+modules. Its read-only commands include:
+
+```bash
+python -m quantctl status
+python -m quantctl doctor
+python -m quantctl data status
+python -m quantctl paper status
+python -m quantctl forward status
+python -m quantctl research list
+python -m quantctl research status
+python -m quantctl history
+```
+
+The mutating `python -m quantctl update`, `scan`, and `daily` commands launch
+the existing canonical modules in subprocesses; they do not duplicate updater,
+scanner, or daily-pipeline logic. Quant Manager is the Streamlit control UI for
+the same inspection, operation, state, research-frontier, and run-history
+services:
+
+```bash
+python -m streamlit run manager/app.py
+```
+
 `main.py` is a compatibility alias for the same command. The daily stage order
 is:
 
@@ -134,11 +158,12 @@ Important active variables include:
 | Area | Variables |
 |---|---|
 | Market | `MARKET_DATABASE_PATH` |
+| Operations | `QUANT_OPERATION_HISTORY_PATH` |
 | Paper selection/state | `PAPER_STRATEGY_VERSION`, `PAPER_TRADING_ENABLED`, `PAPER_DATABASE_PATH`, `PAPER_V2_DATABASE_PATH`, `PAPER_V3_DATABASE_PATH` |
 | Frozen execution policy | `TRADING_ENTRY_MODEL`, `TRADING_EXIT_MODEL`, `TRADING_EXECUTION_TIMING`, `TRADING_STOP_ATR_MULTIPLIER`, `TRADING_TARGET_ATR_MULTIPLIER`, `TRADING_TRAILING_ATR_MULTIPLIER`, `TRADING_MAX_HOLDING_DAYS` |
 | Paper sizing/risk/costs | `PAPER_INITIAL_CASH`, `PAPER_POSITION_SIZER`, `PAPER_RISK_PER_TRADE_PCT`, `PAPER_FIXED_FRACTION_PCT`, `PAPER_ATR_STOP_MULTIPLIER`, `PAPER_ATR_TARGET_MULTIPLIER`, `PAPER_MAX_ORDERS_PER_SCAN`, `PAPER_LOT_SIZE`, `PAPER_COMMISSION_RATE`, `PAPER_SLIPPAGE_BPS`, `PAPER_SELL_TAX_RATE`, `PAPER_MAX_POSITION_PCT`, `PAPER_MAX_EXPOSURE_PCT`, `PAPER_MAX_OPEN_POSITIONS`, `PAPER_MAX_DAILY_LOSS_PCT`, `PAPER_MIN_CASH_BUFFER_PCT`, `PAPER_MAX_ORDER_ADTV20_PCT` |
 | Telegram | `TELEGRAM_TOKEN`, `CHAT_ID` |
-| Optional AI explanation | `AI_ANALYSIS_ENABLED`, `GEMINI_API_KEY`, `GEMINI_MODEL`, `AI_ANALYSIS_TIMEOUT_SECONDS`, `AI_ANALYSIS_MAX_OUTPUT_TOKENS` |
+| Optional AI explanation | `AI_ANALYSIS_ENABLED`, `GEMINI_API_KEY`, `GEMINI_MODEL`, `GEMINI_API_BASE_URL`, `AI_ANALYSIS_TIMEOUT_SECONDS`, `AI_ANALYSIS_MAX_OUTPUT_TOKENS` |
 
 V2/V3 wrappers deliberately freeze their entry/exit values before importing
 scanner or lifecycle singletons. Do not use environment overrides to relabel a
@@ -177,6 +202,9 @@ python -m services.telegram_bot.app
 
 # Paper dashboard
 python -m streamlit run dashboard/app.py
+
+# Read-only management/control dashboard
+python -m streamlit run manager/app.py
 
 # Persist one monitoring snapshot under research_results/
 python -m research.run_quantlab_monitoring_snapshot

@@ -5,8 +5,12 @@ from datetime import datetime, timedelta
 import time
 
 import pandas as pd
+from dotenv import load_dotenv
 from vnstock.api.quote import Quote
 from pathlib import Path
+
+load_dotenv()
+
 from core.database import (
     cleanup_price_duplicates,
     get_latest_price_date,

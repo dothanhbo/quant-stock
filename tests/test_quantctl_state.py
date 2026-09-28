@@ -157,7 +157,7 @@ def test_missing_databases_are_graceful_and_not_created(tmp_path: Path) -> None:
 
 
 def test_paper_stores_are_distinct_and_open_semantics_match_portfolio(tmp_path: Path) -> None:
-    snapshot = inspect_paper_system(root=_state_root(tmp_path))
+    snapshot = inspect_paper_system(root=_state_root(tmp_path), environ={})
     stores = {store.store_id: store for store in snapshot.stores}
     generic = stores["generic-paper"]
     q70 = stores["q70-frozen"]

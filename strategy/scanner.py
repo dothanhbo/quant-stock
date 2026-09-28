@@ -7,6 +7,8 @@ import pandas as pd
 from sqlalchemy import text
 from dotenv import load_dotenv
 
+load_dotenv()
+
 from config.paper_store import apply_active_paper_store_environment
 from config.strategy_loader import COMMON_CONFIG
 from config.trading_policy import TradingPolicy
@@ -39,8 +41,6 @@ TOP_RESULTS = int(COMMON_CONFIG["top_results"])
 TOP_WATCHLIST = int(COMMON_CONFIG["top_watchlist"])
 RS_PERIOD = int(COMMON_CONFIG.get("rs_period", 20))
 from strategy.base_strategy import BaseStrategy
-
-load_dotenv()
 
 TRADING_POLICY = TradingPolicy.from_env()
 strategy = TRADING_POLICY.build_entry_model()

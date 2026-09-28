@@ -1357,7 +1357,7 @@ def main() -> None:
 
     market_db = st.sidebar.text_input(
         "Market DB",
-        "data/market.db",
+        str(DashboardPaths().market_db),
     )
 
     paper_db = st.sidebar.text_input(

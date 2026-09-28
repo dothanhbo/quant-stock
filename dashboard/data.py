@@ -9,11 +9,12 @@ from typing import Any
 import pandas as pd
 
 from config.paper_store import resolve_active_paper_store
+from core.paths import resolve_market_database_path
 
 
 @dataclass(frozen=True, slots=True)
 class DashboardPaths:
-    market_db: Path = Path("data/market.db")
+    market_db: Path = field(default_factory=resolve_market_database_path)
     paper_db: Path = field(default_factory=lambda: resolve_active_paper_store().database_path)
 
 

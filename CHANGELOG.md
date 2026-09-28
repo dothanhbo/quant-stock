@@ -113,3 +113,24 @@
 \- Lifecycle executions missing from paper reports
 
 \- Paper state recovery after restart
+
+**## v1.0.1 Research Consolidation**
+
+\- Separated current Quant Lab runners from historical research provenance
+
+\- Added canonical research retention, Forward validation, monitoring, risk,
+and execution-evidence contracts
+
+\- Consolidated current production, research, state, and generated-evidence
+boundaries
+
+**## QuantCtl Management Foundation**
+
+\- Added read-only repository, data, paper, Forward, and research inspection
+
+\- Added canonical `update`, `scan`, and `daily` operation routing without
+duplicating production logic
+
+\- Added Quant Manager views backed by shared QuantCtl services
+
+\- Added a lazy local operation-history ledger for audited operational runs

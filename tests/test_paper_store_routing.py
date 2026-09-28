@@ -135,7 +135,17 @@ def test_active_role_comes_from_strategy_not_positions_or_version_number(tmp_pat
     assert stores["v3-breadth-40-60"].role is PaperStoreRole.INACTIVE
 
 
-def test_cli_places_one_active_store_before_other_stores(tmp_path: Path) -> None:
+def test_cli_places_one_active_store_before_other_stores(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    for name in (
+        "PAPER_STRATEGY_VERSION",
+        "PAPER_DATABASE_PATH",
+        "PAPER_V2_DATABASE_PATH",
+        "PAPER_V3_DATABASE_PATH",
+    ):
+        monkeypatch.delenv(name, raising=False)
     root = _paper_root(tmp_path)
     output = render_paper_status(root=root)
 

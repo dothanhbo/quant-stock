@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import os
+import subprocess
+import sys
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -14,6 +16,44 @@ from scripts import (
     run_paper_v2_lifecycle,
     run_paper_v3_lifecycle,
 )
+
+
+def test_canonical_update_and_scan_load_dotenv_before_database_resolution(
+    tmp_path: Path,
+) -> None:
+    configured = tmp_path / "configured-market.db"
+    (tmp_path / ".env").write_text(
+        "MARKET_DATABASE_PATH=" + configured.as_posix() + "\n"
+        "TELEGRAM_TOKEN=test-token\n"
+        "CHAT_ID=test-chat\n",
+        encoding="utf-8",
+    )
+    environment = dict(os.environ)
+    environment.pop("MARKET_DATABASE_PATH", None)
+    environment["PYTHONPATH"] = str(PROJECT_ROOT)
+    environment["PYTHONDONTWRITEBYTECODE"] = "1"
+
+    for module_name in ("scripts.update_data", "strategy.scanner"):
+        completed = subprocess.run(
+            [
+                sys.executable,
+                "-c",
+                f"import {module_name}; "
+                "from core.database import DATABASE_PATH; "
+                "print(DATABASE_PATH)",
+            ],
+            cwd=tmp_path,
+            env=environment,
+            capture_output=True,
+            text=True,
+            check=False,
+        )
+
+        assert completed.returncode == 0, completed.stderr
+        assert completed.stdout.strip().splitlines()[-1] == str(
+            configured.resolve()
+        )
+        assert not configured.exists()
 
 
 def test_default_market_path_is_project_anchored_outside_project_cwd(
