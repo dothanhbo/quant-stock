@@ -1,4 +1,4 @@
-from research.run_ablation_matrix import build_cases
+from research.archive.parameter_search.run_ablation_matrix import build_cases
 
 
 def test_ablation_matrix_has_unique_eight_cases() -> None:

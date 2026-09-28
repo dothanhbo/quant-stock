@@ -12,7 +12,7 @@ import pandas as pd
 import numpy as np
 import pytest
 
-import research.run_frozen_q70_volume_priority_wfo as runner
+import research.archive.q70.run_frozen_q70_volume_priority_wfo as runner
 from backtesting.frozen_q70_evaluator import FrozenQ70Decision
 from backtesting.portfolio_simulator import CandidatePriorityEvidence
 from backtesting.walk_forward import WalkForwardFold
@@ -940,7 +940,7 @@ def test_fresh_process_import_does_not_call_network_or_create_output(tmp_path: P
     missing = tmp_path / "must-not-exist"
     code = (
         "import pathlib,sys; "
-        "import research.run_frozen_q70_volume_priority_wfo; "
+        "import research.archive.q70.run_frozen_q70_volume_priority_wfo; "
         f"assert not pathlib.Path({str(missing)!r}).exists(); "
         "assert 'vnstock' not in sys.modules"
     )

@@ -1,6 +1,6 @@
 import pandas as pd
 
-from research.run_bull_entry_regime_audit import aggregate, labeled_bucket
+from research.archive.entry_exit.run_bull_entry_regime_audit import aggregate, labeled_bucket
 
 
 def test_labeled_bucket_uses_fixed_interpretable_ranges():

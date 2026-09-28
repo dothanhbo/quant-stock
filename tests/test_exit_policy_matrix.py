@@ -1,6 +1,6 @@
 from types import SimpleNamespace
 
-from research.run_exit_policy_matrix import (
+from research.archive.entry_exit.run_exit_policy_matrix import (
     DelayedTrailingATRExitModel,
     build_cases,
     build_exit_model,

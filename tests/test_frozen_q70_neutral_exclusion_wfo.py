@@ -6,7 +6,7 @@ from types import SimpleNamespace
 import pandas as pd
 import pytest
 
-import research.run_frozen_q70_neutral_exclusion_wfo as runner
+import research.archive.q70.run_frozen_q70_neutral_exclusion_wfo as runner
 from core.database_coverage import CoverageUniverseIndex
 
 

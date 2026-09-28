@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from research.audit_market_rs_q70_double_count import _audit
+from research.archive.q70.audit_market_rs_q70_double_count import _audit
 
 
 def test_market_rs_moves_base_score_and_q70():

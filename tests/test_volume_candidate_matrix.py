@@ -1,4 +1,4 @@
-from research.run_volume_candidate_matrix import (
+from research.archive.diagnostics.run_volume_candidate_matrix import (
     build_cases,
     build_entry_model,
     research_gates,

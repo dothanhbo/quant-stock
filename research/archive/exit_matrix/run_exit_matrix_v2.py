@@ -125,7 +125,7 @@ def try_existing_matrix(root: Path, list_only: bool):
 
     # Run --help first. This is safe and lets us determine the real CLI.
     proc = subprocess.run(
-        [sys.executable, "-m", "research.run_exit_policy_matrix", "--help"],
+        [sys.executable, "-m", "research.archive.entry_exit.run_exit_policy_matrix", "--help"],
         cwd=root,
         capture_output=True,
         text=True,

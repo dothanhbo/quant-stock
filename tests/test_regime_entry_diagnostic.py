@@ -1,4 +1,4 @@
-from research.run_regime_entry_diagnostic import build_cases, build_policy
+from research.archive.entry_exit.run_regime_entry_diagnostic import build_cases, build_policy
 
 
 def test_regime_diagnostic_has_current_and_predeclared_bull_bracket():

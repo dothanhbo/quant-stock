@@ -1,12 +1,12 @@
 import pandas as pd
 import pytest
 
-from research.run_monthly_momentum_baseline import (
+from research.archive.portfolio.run_monthly_momentum_baseline import (
     build_yearly_returns,
     exploratory_gates,
 )
-from research.run_momentum_v2_comparison import comparison_yearly_returns
-from research.run_momentum_component_ablation import (
+from research.archive.portfolio.run_momentum_v2_comparison import comparison_yearly_returns
+from research.archive.parameter_search.run_momentum_component_ablation import (
     build_ablation_configs,
     build_breadth_hysteresis_configs,
     build_breadth_overlay_configs,

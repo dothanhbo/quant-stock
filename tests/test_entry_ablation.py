@@ -3,7 +3,7 @@ from __future__ import annotations
 import pandas as pd
 import pytest
 
-from research.run_entry_ablation import build_cases, compound_return
+from research.archive.entry_exit.run_entry_ablation import build_cases, compound_return
 from strategy.donchian_breakout_entry import DonchianBreakoutEntryModel
 from strategy.hybrid_trend_donchian_entry import (
     HybridTrendDonchianEntryModel,

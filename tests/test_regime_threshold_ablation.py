@@ -2,7 +2,7 @@ from __future__ import annotations
 
 import pytest
 
-from research.run_regime_threshold_ablation import (
+from research.archive.regime.run_regime_threshold_ablation import (
     build_cases,
     build_entry_model,
 )

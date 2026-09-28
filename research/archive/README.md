@@ -1,29 +1,33 @@
 # Historical Research Archive
 
-This directory preserves historical source code for provenance and experiment
-archaeology. Its contents are not part of the current active research API or
-runner surface. Some archived runners may no longer execute against the current
-engine or module APIs.
+This tree preserves historical experiment source for reproducibility and
+provenance. It is not the active research API, must not be imported by
+production, and is not a supported operational entrypoint surface.
 
-Archival does not mean that an experiment was invalid. Archived implementations
-must not be silently modernized: changing their behavior would destroy the
-historical provenance they preserve.
+Current supported Quant Lab runners remain in the `research/` root as
+`run_quantlab_*.py`. Historical files may depend on old artifact layouts,
+configuration, provider behavior, or APIs and are not guaranteed to execute
+independently against the current engine. Tests that still import archived
+modules protect frozen semantics or compatibility; they do not make those
+modules current entrypoints.
 
-## Archived families
+The archive is grouped by research question:
 
-- **Exit matrix:** `run_exit_matrix_v2.py` is a historical discovery and
-  delegation helper. Active v3 and causal v4 remain outside this archive because
-  they address different research questions.
-- **State-quality candidate:** archived v3 predates the current candidate API.
-  Active v4 contains the API-compatible implementation.
-- **State-quality engine:** the archived unsuffixed runner preserves legacy
-  trailing wiring and its earlier output schema. Active v2 remains visible.
-- **State-quality exposure:** the archived unsuffixed and v2 runners consume an
-  obsolete market-health schema. Active v3 consumes canonical point-in-time
-  health fields.
-- **Legacy backtesting:** `optimize_exit_fast.py` is an approximate replay
-  utility and is not behaviorally equivalent to full-engine `optimize_exit.py`.
-  The multi-symbol producer and its two CSV consumers are preserved together as
-  one historical workflow based on `backtest_results_multi/all_trades.csv`; it
-  may not run against the current engine.
-- **Allocation demos:** these are console demonstrations, not pytest tests.
+- `q70/`: frozen-Q70 and Q70 attribution/robustness experiments;
+- `state_quality/`: state-quality candidate, exposure, and portfolio studies;
+- `entry_exit/`: entry/exit matrices, ablations, and legacy exit optimization;
+- `sector_rs/`: sector-relative-strength and rotation studies;
+- `exhaustion/`: exhaustion robustness and sensitivity experiments;
+- `regime/`: regime and historical market-state experiments;
+- `benchmarks/`: legacy benchmark matrices and model comparisons;
+- `diagnostics/`: one-off diagnostics, reports, parity, and trade attribution;
+- `portfolio/`: legacy portfolio, ranking, momentum, Monte Carlo, and risk work;
+- `parameter_search/`: grids, ablations, parameter spaces, and stability work;
+- `legacy_wfo/`: pre-QuantLab walk-forward implementations;
+- `legacy_backtesting/`, `exit_matrix/`, and `allocation_demos/`: earlier
+  explicitly archived families;
+- `misc/`: provenance that does not fit another stable family.
+
+Git history and the `v1.0.0` tag preserve the exact pre-pruning layout. Do not
+silently modernize archived behavior or relabel archived results as current
+Quant Lab evidence.

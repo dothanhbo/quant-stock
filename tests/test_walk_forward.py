@@ -1,4 +1,4 @@
-from research.walk_forward import (
+from research.archive.legacy_wfo.walk_forward import (
     WalkForwardConfig,
     build_walk_forward_windows,
     summarize_walk_forward,

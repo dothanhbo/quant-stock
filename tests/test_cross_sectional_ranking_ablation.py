@@ -1,4 +1,4 @@
-from research.run_cross_sectional_ranking_ablation import (
+from research.archive.parameter_search.run_cross_sectional_ranking_ablation import (
     build_cases,
     build_entry_model,
     research_gates,

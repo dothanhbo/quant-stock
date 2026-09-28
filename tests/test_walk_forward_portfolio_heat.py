@@ -1,6 +1,6 @@
 import pandas as pd
 
-from research.walk_forward_portfolio_heat import (
+from research.archive.legacy_wfo.walk_forward_portfolio_heat import (
     heat_label,
     parse_heat_levels,
     summarize_by_heat,

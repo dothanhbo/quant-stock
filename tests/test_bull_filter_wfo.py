@@ -1,6 +1,6 @@
 import pandas as pd
 
-from research.run_bull_filter_wfo import BullFilterCase, allow_entry
+from research.archive.regime.run_bull_filter_wfo import BullFilterCase, allow_entry
 
 
 def _row(**values):

@@ -1,6 +1,6 @@
 import pytest
 
-from research.run_nested_score_wfo import (
+from research.archive.legacy_wfo.run_nested_score_wfo import (
     build_entry_model,
     research_gates,
     select_best_score,

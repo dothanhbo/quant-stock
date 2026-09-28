@@ -2,7 +2,7 @@ from types import SimpleNamespace
 
 import pytest
 
-from research.run_structural_entry_exit_matrix import (
+from research.archive.entry_exit.run_structural_entry_exit_matrix import (
     BreakEvenOverlayExitModel,
     build_cases,
     build_entry_model,

@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from research.run_research_integrity_baseline import (
+from research.archive.misc.run_research_integrity_baseline import (
     build_attribution,
     calculate_cagr_pct,
     calculate_price_drawdown_pct,

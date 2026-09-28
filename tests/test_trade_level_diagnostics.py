@@ -1,7 +1,7 @@
 import pandas as pd
 import pytest
 
-from research.run_trade_level_diagnostics import (
+from research.archive.diagnostics.run_trade_level_diagnostics import (
     aggregate_dimension,
     calculate_excursions,
     classify_trade_path,

@@ -5,7 +5,7 @@ The query bot is read-only. It reuses `strategy.scanner.evaluate_symbol()` and t
 ## Run locally
 
 ```powershell
-py -m services.telegram_bot.app
+python -m services.telegram_bot.app
 ```
 
 Accepted messages from the configured `CHAT_ID`:
