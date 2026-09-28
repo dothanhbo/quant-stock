@@ -54,6 +54,19 @@ from .research_synthesis import (
     evaluate_portfolio_research_synthesis,
     load_portfolio_research_synthesis_input,
 )
+from .risk import (
+    NEUTRAL_PORTFOLIO_RISK_V1,
+    SECTOR_EVIDENCE_UNAVAILABLE,
+    FrozenRiskPortfolio,
+    FrozenRiskPosition,
+    PortfolioRiskComponentContribution,
+    PortfolioRiskObservation,
+    PortfolioRiskResult,
+    PortfolioRiskSpec,
+    PortfolioRiskSummary,
+    RiskEvidenceState,
+    evaluate_portfolio_risk,
+)
 
 __all__ = (
     "DailyConstructedPortfolio",
@@ -104,4 +117,15 @@ __all__ = (
     "ScenarioResearchFlag",
     "evaluate_portfolio_research_synthesis",
     "load_portfolio_research_synthesis_input",
+    "NEUTRAL_PORTFOLIO_RISK_V1",
+    "SECTOR_EVIDENCE_UNAVAILABLE",
+    "FrozenRiskPortfolio",
+    "FrozenRiskPosition",
+    "PortfolioRiskComponentContribution",
+    "PortfolioRiskObservation",
+    "PortfolioRiskResult",
+    "PortfolioRiskSpec",
+    "PortfolioRiskSummary",
+    "RiskEvidenceState",
+    "evaluate_portfolio_risk",
 )
