@@ -45,7 +45,15 @@ TRADING_POLICY = TradingPolicy.from_env()
 strategy = TRADING_POLICY.build_entry_model()
 
 telegram_client = TelegramClient.from_env()
-paper_signal_executor = PaperSignalExecutor.from_env()
+paper_signal_executor: PaperSignalExecutor | None = None
+
+
+def initialize_scanner_runtime() -> PaperSignalExecutor:
+    """Initialize persistent paper state only when the scanner actually runs."""
+    global paper_signal_executor
+    if paper_signal_executor is None:
+        paper_signal_executor = PaperSignalExecutor.from_env()
+    return paper_signal_executor
 
 def get_all_symbols() -> list[str]:
     query = text("SELECT DISTINCT symbol FROM prices ORDER BY symbol ASC")
@@ -458,6 +466,7 @@ def run_scan(
     result_processor=None,
 ) -> tuple[list[dict], dict]:
     """Run the production scan, persist passed signals and notify Telegram."""
+    executor = initialize_scanner_runtime()
     market_config = get_market_regime()
     print("\n" + "=" * 65)
     print("📊 MARKET REGIME")
@@ -521,7 +530,7 @@ def run_scan(
     print(f"Lỗi lưu: {save_failed_count}")
 
     paper_result = (
-        paper_signal_executor.queue_signals(
+        executor.queue_signals(
             results,
             report_date=(
                 scan_stats["reference_date"]

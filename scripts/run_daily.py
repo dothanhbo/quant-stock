@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import argparse
+from functools import lru_cache
 import json
 import sys
 
@@ -46,29 +47,52 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def update_market_data(
-) -> tuple[int, list[str]]:
+@lru_cache(maxsize=1)
+def resolve_required_market_symbols() -> tuple[str, ...]:
+    """Resolve the current production VN100+VNINDEX universe once per run."""
+    from core.universe import get_all_symbols
+
+    symbols = tuple(
+        dict.fromkeys(
+            symbol.strip().upper()
+            for symbol in get_all_symbols()
+            if symbol.strip()
+        )
+    )
+    if len(symbols) < 100 or "VNINDEX" not in symbols:
+        raise RuntimeError(
+            "Universe không hợp lệ cho integrity gate: "
+            f"{len(symbols)} mã, VNINDEX={'có' if 'VNINDEX' in symbols else 'thiếu'}."
+        )
+    return symbols
+
+
+def bootstrap_market_database() -> None:
+    """Create required market tables only at the explicit daily runtime boundary."""
+    from core.database import initialize_market_database
+
+    initialize_market_database()
+
+
+def update_market_data() -> tuple[int, list[str]]:
     # Lazy imports keep startup clean and avoid configuring
     # vnstock/Telegram until the relevant stage begins.
-    from core.universe import (
-        get_all_symbols,
-    )
     from scripts.update_data import (
         update_all_symbols,
     )
 
-    symbols = list(
-        get_all_symbols()
-    )
-
-    if len(symbols) < 100:
-        raise RuntimeError(
-            "Universe không hợp lệ: "
-            f"chỉ có {len(symbols)} mã."
-        )
+    symbols = list(resolve_required_market_symbols())
 
     return update_all_symbols(
         symbols
+    )
+
+
+def validate_market_data():
+    from core.market_data_integrity import check_market_data_integrity
+
+    return check_market_data_integrity(
+        required_symbols=resolve_required_market_symbols(),
     )
 
 
@@ -134,6 +158,8 @@ def run_strategy_scanner(
 def main() -> int:
     load_dotenv()
     args = build_parser().parse_args()
+    resolve_required_market_symbols.cache_clear()
+    bootstrap_market_database()
 
     if args.skip_lifecycle and _use_v3():
         from scripts.run_paper_v3_lifecycle import configure_v3_environment
@@ -168,6 +194,7 @@ def main() -> int:
         run_scanner=(
             scanner_stage
         ),
+        validate_market_data=validate_market_data,
         run_forward_validation=(
             run_forward_validation_daily
         ),

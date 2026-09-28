@@ -18,6 +18,8 @@ from types import SimpleNamespace
 import pytest
 
 from config.strategy_config import V3_BREADTH_PAPER
+from core.market_data_integrity import MarketDataIntegrityResult, MarketDataIntegrityState
+from core.paths import DEFAULT_MARKET_DATABASE_PATH
 from scripts import run_daily, run_paper_lifecycle, run_paper_v3_lifecycle
 
 
@@ -44,7 +46,9 @@ def _import_scanner_with_safe_telegram(monkeypatch: pytest.MonkeyPatch):
     module_name = "strategy.scanner"
     previous = sys.modules.pop(module_name, None)
     try:
-        return importlib.import_module(module_name)
+        scanner = importlib.import_module(module_name)
+        scanner.initialize_scanner_runtime()
+        return scanner
     finally:
         # Do not leave a test-configured scanner singleton installed for other
         # tests in this process.
@@ -64,6 +68,16 @@ def _configure_isolated_v3_environment(
     return v3_database
 
 
+def _pass_integrity() -> MarketDataIntegrityResult:
+    return MarketDataIntegrityResult(
+        state=MarketDataIntegrityState.PASS,
+        required_session=date.today().isoformat(),
+        required_symbols=("AAA", "VNINDEX"),
+        reasons=("test fixture",),
+        database_path=DEFAULT_MARKET_DATABASE_PATH,
+    )
+
+
 def test_full_v3_daily_order_instantiates_intended_scanner_policy_and_executor(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -72,6 +86,8 @@ def test_full_v3_daily_order_instantiates_intended_scanner_policy_and_executor(
     v3_database = _configure_isolated_v3_environment(monkeypatch, tmp_path)
     monkeypatch.setenv("PAPER_STRATEGY_VERSION", "V3_BREADTH_40_60")
     monkeypatch.setattr(run_daily, "update_market_data", lambda: (101, []))
+    monkeypatch.setattr(run_daily, "bootstrap_market_database", lambda: None)
+    monkeypatch.setattr(run_daily, "validate_market_data", _pass_integrity)
     monkeypatch.setattr(run_daily, "run_forward_validation_daily", lambda: None)
     monkeypatch.setattr(
         run_daily,
@@ -193,6 +209,8 @@ def test_v3_skip_lifecycle_still_resolves_frozen_scanner_configuration(
     monkeypatch.setenv("PAPER_DATABASE_PATH", str(tmp_path / "generic-paper.db"))
     monkeypatch.setenv("TRADING_ENTRY_MODEL", "hybrid")
     monkeypatch.setattr(run_daily, "update_market_data", lambda: (101, []))
+    monkeypatch.setattr(run_daily, "bootstrap_market_database", lambda: None)
+    monkeypatch.setattr(run_daily, "validate_market_data", _pass_integrity)
     monkeypatch.setattr(run_daily, "get_market_date", lambda: date.today().isoformat())
 
     captured: dict[str, object] = {}

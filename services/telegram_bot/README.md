@@ -53,7 +53,32 @@ Guardrails:
 
 ## Server deployment
 
-For now, run daily pipeline and Telegram bot as separate processes on the same server, sharing the committed `market.db`. Do not run two `getUpdates` consumers with the same Telegram token simultaneously.
+The VPS is the canonical production runtime and owns the persistent market
+database. GitHub Actions is not the production scheduler and must not run the
+daily trading pipeline or persist market state.
+
+Run the daily pipeline from the repository root on the VPS:
+
+```text
+python -m scripts.run_daily
+```
+
+The canonical market database defaults to `data/market.db`. A non-empty
+`MARKET_DATABASE_PATH` is the supported override; relative overrides are
+resolved from the repository root. The daily command validates the current
+VN100+VNINDEX data after update and before Forward, paper lifecycle, or scanner
+state changes. Unsafe data fails closed. A valid prior session on a closed
+market day is reported as not applicable and downstream stateful stages are
+skipped.
+
+`--skip-update` skips provider price downloads only. It still resolves the
+required production universe and validates the existing canonical database
+before any paper or scanner stage. Database backup, retention, and filesystem
+persistence belong to the VPS runtime.
+
+Run the daily pipeline and Telegram query bot as separate VPS processes using
+the same canonical database. Do not run two `getUpdates` consumers with the
+same Telegram token simultaneously.
 
 AI analyst is intentionally independent from Quant status. It may be more bullish or more bearish, but never changes execution.
 

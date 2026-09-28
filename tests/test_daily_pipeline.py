@@ -3,7 +3,19 @@ from datetime import date
 from app.daily_pipeline import (
     DailyPipeline,
 )
+from core.market_data_integrity import MarketDataIntegrityResult, MarketDataIntegrityState
+from core.paths import DEFAULT_MARKET_DATABASE_PATH
 from scripts import run_daily
+
+
+def _pass_integrity() -> MarketDataIntegrityResult:
+    return MarketDataIntegrityResult(
+        state=MarketDataIntegrityState.PASS,
+        required_session=date.today().isoformat(),
+        required_symbols=("AAA", "VNINDEX"),
+        reasons=("test fixture",),
+        database_path=DEFAULT_MARKET_DATABASE_PATH,
+    )
 
 
 def test_pipeline_runs_in_correct_order() -> None:
@@ -173,6 +185,8 @@ def test_run_daily_passes_pending_result_to_scanner(
         "update_market_data",
         lambda: (101, []),
     )
+    monkeypatch.setattr(run_daily, "bootstrap_market_database", lambda: None)
+    monkeypatch.setattr(run_daily, "validate_market_data", _pass_integrity)
     monkeypatch.setattr(
         run_daily,
         "run_forward_validation_daily",
@@ -260,7 +274,7 @@ def test_pipeline_runs_when_market_has_today_session() -> None:
     assert calls == ["update", "lifecycle", "scan"]
 
 
-def test_pipeline_skip_update_preserves_manual_partial_run() -> None:
+def test_pipeline_skip_update_still_runs_integrity_before_manual_partial_run() -> None:
     calls: list[str] = []
 
     def update():
@@ -273,16 +287,21 @@ def test_pipeline_skip_update_preserves_manual_partial_run() -> None:
     def scan():
         calls.append("scan")
 
+    def integrity():
+        calls.append("integrity")
+        return _pass_integrity()
+
     result = DailyPipeline(
         update_market_data=update,
         run_lifecycle=lifecycle,
         run_scanner=scan,
+        validate_market_data=integrity,
         get_market_date=lambda: "2026-08-31",
         get_today=lambda: date(2026, 9, 2),
     ).run(skip_update=True)
 
     assert result.success
-    assert calls == ["lifecycle", "scan"]
+    assert calls == ["integrity", "lifecycle", "scan"]
 
 
 def test_run_daily_uses_v3_when_configured(monkeypatch):
@@ -290,6 +309,8 @@ def test_run_daily_uses_v3_when_configured(monkeypatch):
 
     monkeypatch.setenv("PAPER_STRATEGY_VERSION", "V3_BREADTH_40_60")
     monkeypatch.setattr(run_daily, "update_market_data", lambda: (101, []))
+    monkeypatch.setattr(run_daily, "bootstrap_market_database", lambda: None)
+    monkeypatch.setattr(run_daily, "validate_market_data", _pass_integrity)
     monkeypatch.setattr(run_daily, "run_forward_validation_daily", lambda: None)
     monkeypatch.setattr(
         run_daily,

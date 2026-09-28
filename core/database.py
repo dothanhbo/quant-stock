@@ -9,11 +9,6 @@ from core.paths import resolve_market_database_path
 
 DATABASE_PATH = resolve_market_database_path()
 
-DATABASE_PATH.parent.mkdir(
-    parents=True,
-    exist_ok=True,
-)
-
 DATABASE_URL = (
     f"sqlite:///{DATABASE_PATH.as_posix()}"
 )
@@ -199,6 +194,11 @@ def get_reference_market_date(
 # ==========================
 
 def init_database():
+
+    DATABASE_PATH.parent.mkdir(
+        parents=True,
+        exist_ok=True,
+    )
 
     query = """
     CREATE TABLE IF NOT EXISTS prices (
@@ -425,6 +425,12 @@ def create_signal_table():
         )
         """))
 
+
+def initialize_market_database() -> None:
+    """Explicitly create the canonical market schema at a runtime boundary."""
+    init_database()
+    create_signal_table()
+
 def get_latest_price_date(symbol):
     """
     Trả về ngày dữ liệu mới nhất của một mã trong SQLite.
@@ -459,10 +465,3 @@ def get_latest_price_date(symbol):
             latest_time,
             errors="coerce"
         )
-
-# ==========================
-# INIT WHEN IMPORT
-# ==========================
-
-init_database()
-create_signal_table()

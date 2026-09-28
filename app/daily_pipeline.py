@@ -5,6 +5,11 @@ from datetime import date, datetime
 from time import perf_counter
 from typing import Callable
 
+from core.market_data_integrity import (
+    MarketDataIntegrityResult,
+    MarketDataIntegrityState,
+)
+
 
 @dataclass(frozen=True, slots=True)
 class PipelineStageResult:
@@ -71,6 +76,7 @@ class DailyPipeline:
             [],
             object,
         ],
+        validate_market_data: Callable[[], MarketDataIntegrityResult] | None = None,
         run_forward_validation: Callable[[], object] | None = None,
         get_market_date: Callable[[], str | None] | None = None,
         get_today: Callable[[], date] = date.today,
@@ -80,6 +86,7 @@ class DailyPipeline:
         )
         self.run_lifecycle = run_lifecycle
         self.run_scanner = run_scanner
+        self.validate_market_data = validate_market_data
         self.run_forward_validation = run_forward_validation
         self.get_market_date = get_market_date
         self.get_today = get_today
@@ -107,7 +114,7 @@ class DailyPipeline:
             "=" * 68
         )
         print(
-            "Thứ tự: Update Data → Forward Validation → "
+            "Thứ tự: Update Data → Integrity Gate → Forward Validation → "
             "Paper Lifecycle → Scanner"
         )
 
@@ -138,6 +145,25 @@ class DailyPipeline:
                     warning="Đã bỏ qua theo yêu cầu.",
                 )
             )
+
+        if self.validate_market_data is not None:
+            if not skip_update and data_stage.warning:
+                integrity_stage = PipelineStageResult(
+                    name="Market Data Integrity",
+                    success=False,
+                    duration_seconds=0.0,
+                    error=(
+                        "Market-data update was incomplete; refusing all "
+                        "stateful downstream operations: " + data_stage.warning
+                    ),
+                )
+            else:
+                integrity_stage = self._run_integrity_stage()
+            result.stages.append(integrity_stage)
+            if not integrity_stage.success or integrity_stage.warning:
+                result.finished_at = datetime.now()
+                self._print_summary(result)
+                return result
 
         if self.run_forward_validation is not None:
             if skip_update:
@@ -178,11 +204,11 @@ class DailyPipeline:
                     self._print_summary(result)
                     return result
 
-        # Sau khi update, chỉ chạy lifecycle/scanner khi market DB đã có
-        # phiên của ngày hiện tại. Nhờ vậy weekend/ngày lễ/nghỉ bù được
-        # phát hiện từ dữ liệu thực tế thay vì hard-code calendar.
-        # Các lệnh --skip-update giữ nguyên hành vi vận hành thủ công cũ.
+        # Backward-compatible fallback for callers that have not supplied the
+        # canonical integrity gate. scripts.run_daily always supplies it.
         if (
+            self.validate_market_data is None
+            and
             not skip_update
             and self.get_market_date is not None
         ):
@@ -252,6 +278,40 @@ class DailyPipeline:
             result
         )
         return result
+
+    def _run_integrity_stage(self) -> PipelineStageResult:
+        started = perf_counter()
+        try:
+            integrity = self.validate_market_data()
+            elapsed = perf_counter() - started
+            if integrity.state is MarketDataIntegrityState.PASS:
+                return PipelineStageResult(
+                    name="Market Data Integrity",
+                    success=True,
+                    duration_seconds=elapsed,
+                )
+            if integrity.state is MarketDataIntegrityState.NOT_APPLICABLE:
+                return PipelineStageResult(
+                    name="Market Data Integrity",
+                    success=True,
+                    duration_seconds=elapsed,
+                    warning=integrity.message,
+                )
+            return PipelineStageResult(
+                name="Market Data Integrity",
+                success=False,
+                duration_seconds=elapsed,
+                error=integrity.message,
+            )
+        except KeyboardInterrupt:
+            raise
+        except Exception as error:
+            return PipelineStageResult(
+                name="Market Data Integrity",
+                success=False,
+                duration_seconds=perf_counter() - started,
+                error=f"{type(error).__name__}: {error}",
+            )
 
 
     def _check_current_market_session(self) -> PipelineStageResult:
