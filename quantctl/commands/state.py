@@ -3,6 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 
 from quantctl.registry import PROJECT_ROOT
+from quantctl.research_status import inspect_production_policy
 from quantctl.state import (
     ForwardSystemSnapshot,
     PaperStoreSnapshot,
@@ -53,7 +54,15 @@ def _paper_store_lines(store: PaperStoreSnapshot, *, include_role: bool) -> list
 
 def render_paper_status(*, root: Path = PROJECT_ROOT) -> str:
     snapshot = inspect_paper_system(root=root)
-    lines = ["PAPER TRADING STATUS", "", "Active Store"]
+    production = inspect_production_policy(root=root)
+    lines = [
+        "PAPER TRADING STATUS", "",
+        "Deployed Paper Policy",
+        f"  {production.deployed_strategy_identity}",
+        f"  Role: {production.role}",
+        "",
+        "Active Store",
+    ]
     active = snapshot.active_store
     if active is None:
         lines.append("  UNKNOWN")

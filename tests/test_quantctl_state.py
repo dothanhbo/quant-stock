@@ -298,7 +298,7 @@ def test_dashboard_renders_compact_state_counts(monkeypatch: pytest.MonkeyPatch,
     dashboard_page.render(model)
 
     assert ("Paper active store", "Frozen Q70 Paper Store") in fake.metrics
-    assert ("Paper strategy", "Q70_FROZEN") in fake.metrics
+    assert ("Deployed paper policy", "Q70_FROZEN") in fake.metrics
     assert ("Paper state", "0 open · 1 pending") in fake.metrics
     assert ("Forward", "1 active") in fake.metrics
 

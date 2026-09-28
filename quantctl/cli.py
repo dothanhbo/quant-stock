@@ -29,6 +29,8 @@ def build_parser() -> argparse.ArgumentParser:
     research_commands = research_parser.add_subparsers(dest="research_command", required=True)
     research_list = research_commands.add_parser("list", help="list active Quant Lab runners")
     research_list.set_defaults(handler=research.run_list)
+    research_status = research_commands.add_parser("status", help="show canonical research decisions")
+    research_status.set_defaults(handler=research.run_status)
 
     data_parser = commands.add_parser("data", help="inspect market data")
     data_commands = data_parser.add_subparsers(dest="data_command", required=True)

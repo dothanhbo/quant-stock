@@ -20,6 +20,12 @@ from quantctl.state import (
     inspect_forward_system,
     inspect_paper_system,
 )
+from quantctl.research_status import (
+    ProductionPolicySnapshot,
+    ResearchFrontierSnapshot,
+    inspect_production_policy,
+    inspect_research_frontier,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -29,11 +35,14 @@ class DashboardViewModel:
     snapshot: SystemSnapshot
     paper: PaperSystemSnapshot
     forward: ForwardSystemSnapshot
+    production: ProductionPolicySnapshot
+    research: ResearchFrontierSnapshot
 
 
 @dataclass(frozen=True, slots=True)
 class ResearchViewModel:
     runners: tuple[RunnerInfo, ...]
+    frontier: ResearchFrontierSnapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -75,11 +84,13 @@ def build_dashboard_model(
             environ=None if environ is None else dict(environ),
         ),
         inspect_forward_system(root=root),
+        inspect_production_policy(root=root, environ=environ),
+        inspect_research_frontier(root=root),
     )
 
 
 def build_research_model(*, root: Path = PROJECT_ROOT) -> ResearchViewModel:
-    return ResearchViewModel(discover_active_runners(root=root))
+    return ResearchViewModel(discover_active_runners(root=root), inspect_research_frontier(root=root))
 
 
 def build_system_model(

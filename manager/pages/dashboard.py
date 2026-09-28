@@ -28,16 +28,16 @@ def render(model: DashboardViewModel) -> None:
     market_columns[2].metric("Sessions", snapshot.market.session_count if snapshot.market.session_count is not None else "UNKNOWN")
     market_columns[3].metric("Symbols", snapshot.market.symbol_count if snapshot.market.symbol_count is not None else "UNKNOWN")
 
-    st.subheader("Persistent State")
+    st.subheader("Production")
     state_columns = st.columns(4)
     active = model.paper.active_store
     if active is None:
         state_columns[0].metric("Paper active store", "UNKNOWN")
-        state_columns[1].metric("Paper strategy", "UNKNOWN")
+        state_columns[1].metric("Deployed paper policy", model.production.deployed_strategy_identity)
         state_columns[2].metric("Paper state", "UNKNOWN")
     else:
         state_columns[0].metric("Paper active store", active.display_name)
-        state_columns[1].metric("Paper strategy", active.strategy_identity)
+        state_columns[1].metric("Deployed paper policy", model.production.deployed_strategy_identity)
         if not active.exists:
             paper_state = "MISSING"
         elif not active.readable or active.open_position_count is None:
@@ -56,6 +56,7 @@ def render(model: DashboardViewModel) -> None:
     else:
         forward_value = f"{forward.active_protocol_count} active"
     state_columns[3].metric("Forward", forward_value)
+    st.caption(f"Production role: {model.production.role} · Research status is reported separately below.")
     inactive_state = any(
         (store.open_position_count or 0) > 0 or (store.pending_signal_count or 0) > 0
         for store in model.paper.other_stores
@@ -64,10 +65,23 @@ def render(model: DashboardViewModel) -> None:
     st.caption("Counts reflect persisted state, not strategy health or current market valuation.")
 
     st.subheader("Research")
-    research_columns = st.columns(2)
-    research_columns[0].metric("Active runners", len(snapshot.runners))
-    research_columns[1].metric("Archive isolation", "OK" if snapshot.archive_isolated else "UNKNOWN")
-    st.caption("Open Research from the sidebar to inspect the active runner catalog.")
+    research_columns = st.columns(4)
+    research_columns[0].metric("Framework", model.research.framework)
+    research_columns[1].metric("Current stage", model.research.latest_stage)
+    advanced = next(
+        (item for item in model.research.factor_decisions if item.decision.value == "ADVANCE"),
+        None,
+    )
+    research_columns[2].metric(
+        "Latest factor decision",
+        f"{advanced.name}: ADVANCE" if advanced else "UNAVAILABLE",
+    )
+    replacement = model.research.production_replacement.decision.value
+    research_columns[3].metric("Production replacement", replacement)
+    st.caption(
+        f"Active runners: {len(snapshot.runners)} · Archive isolation: "
+        f"{'OK' if snapshot.archive_isolated else 'UNKNOWN'} · Open Research for artifact-backed detail."
+    )
 
     st.subheader("Telegram")
     st.metric("Module/config surface", "AVAILABLE" if snapshot.telegram_module_available else "MISSING")
