@@ -2,8 +2,9 @@ from __future__ import annotations
 
 import argparse
 from collections.abc import Callable, Sequence
+from functools import partial
 
-from quantctl.commands import doctor, research, status, version
+from quantctl.commands import doctor, operations, research, status, version
 from quantctl.registry import CommandSafety
 
 
@@ -28,12 +29,23 @@ def build_parser() -> argparse.ArgumentParser:
     research_commands = research_parser.add_subparsers(dest="research_command", required=True)
     research_list = research_commands.add_parser("list", help="list active Quant Lab runners")
     research_list.set_defaults(handler=research.run_list)
+
+    data_parser = commands.add_parser("data", help="inspect market data")
+    data_commands = data_parser.add_subparsers(dest="data_command", required=True)
+    data_status = data_commands.add_parser("status", help="show read-only market-data facts")
+    data_status.set_defaults(handler=operations.run_data_status)
+
+    for name, help_text in (
+        ("update", "run the canonical market-data updater"),
+        ("scan", "run the canonical scanner"),
+        ("daily", "run the canonical daily pipeline"),
+    ):
+        operation_parser = commands.add_parser(name, help=help_text)
+        operation_parser.set_defaults(handler=partial(operations.run_named, name))
     return parser
 
 
 def main(argv: Sequence[str] | None = None) -> int:
     arguments = build_parser().parse_args(argv)
-    if arguments.safety is not CommandSafety.READ_ONLY:
-        raise RuntimeError("quantctl M1 supports READ_ONLY commands only")
     handler: Handler = arguments.handler
     return handler()

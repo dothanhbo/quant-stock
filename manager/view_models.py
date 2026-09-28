@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Mapping
 
 from quantctl.commands.doctor import Check, collect_checks, overall_status
+from quantctl.operations import OperationSpec, list_operations, operation_available
 from quantctl.registry import (
     PROJECT_ROOT,
     QUANTCTL_VERSION,
@@ -33,6 +34,17 @@ class SystemViewModel:
     overall_status: str
 
 
+@dataclass(frozen=True, slots=True)
+class OperationViewModel:
+    spec: OperationSpec
+    available: bool
+
+
+@dataclass(frozen=True, slots=True)
+class OperationsViewModel:
+    operations: tuple[OperationViewModel, ...]
+
+
 def build_dashboard_model(
     *,
     root: Path = PROJECT_ROOT,
@@ -54,3 +66,12 @@ def build_system_model(
 ) -> SystemViewModel:
     checks = collect_checks(root=root, environ=environ)
     return SystemViewModel(checks, overall_status(checks))
+
+
+def build_operations_model(*, root: Path = PROJECT_ROOT) -> OperationsViewModel:
+    return OperationsViewModel(
+        tuple(
+            OperationViewModel(spec, operation_available(spec, root=root))
+            for spec in list_operations()
+        )
+    )
