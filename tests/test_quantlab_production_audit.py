@@ -123,9 +123,11 @@ def test_secret_values_are_never_read_or_serialized(tmp_path: Path, monkeypatch:
 
 def test_fresh_process_import_has_no_database_network_or_operational_imports() -> None:
     code = (
-        "import sys; import quantlab.operations; "
-        "forbidden={'sqlite3','requests','vnstock','sqlalchemy','strategy.scanner','core.database'}; "
-        "print(','.join(sorted(forbidden & set(sys.modules))))"
+        "import sqlite3,sys; calls=[]; original=sqlite3.connect; "
+        "sqlite3.connect=lambda *args,**kwargs: (calls.append(args),original(*args,**kwargs))[1]; "
+        "import quantlab.operations; "
+        "forbidden={'requests','vnstock','sqlalchemy','strategy.scanner','core.database'}; "
+        "print('connections='+str(len(calls))+';modules='+','.join(sorted(forbidden & set(sys.modules))))"
     )
     completed = subprocess.run(
         [sys.executable, "-c", code],
@@ -135,7 +137,7 @@ def test_fresh_process_import_has_no_database_network_or_operational_imports() -
         text=True,
         env={key: value for key, value in os.environ.items() if key not in {"PYTHONPATH"}},
     )
-    assert completed.stdout.strip() == ""
+    assert completed.stdout.strip() == "connections=0;modules="
 
 
 def test_artifact_schemas_hashes_and_existing_output_protection(tmp_path: Path) -> None:

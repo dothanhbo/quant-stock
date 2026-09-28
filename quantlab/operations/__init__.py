@@ -24,6 +24,17 @@ from .paper_reconciliation import (
     ReconciliationCapability,
     audit_paper_database,
 )
+from .production_gap_gate import (
+    BundleDecision,
+    Decision,
+    LifecycleState,
+    ProductionGap,
+    ProductionHardeningGateResult,
+    Readiness,
+    Severity,
+    build_production_hardening_gate,
+    write_production_hardening_gate_artifacts,
+)
 
 __all__ = (
     "AuditSeverity", "ConfigContract", "FailureScenario", "ImportSafety",
@@ -33,4 +44,7 @@ __all__ = (
     "FindingSeverity", "FindingState", "PaperConsistencyCheck",
     "PaperReconciliationAuditResult", "PaperVersion", "ReconciliationCapability",
     "audit_paper_database",
+    "BundleDecision", "Decision", "LifecycleState", "ProductionGap",
+    "ProductionHardeningGateResult", "Readiness", "Severity",
+    "build_production_hardening_gate", "write_production_hardening_gate_artifacts",
 )
