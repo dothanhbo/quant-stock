@@ -93,6 +93,20 @@ from .risk_policy_outcome import (
     RiskPolicyOutcomeSummary,
     evaluate_risk_policy_outcomes,
 )
+from .risk_policy_decision import (
+    DECISION_GATE_TIMING,
+    FORWARD_PROTOCOL_V1,
+    NEUTRAL_RISK_POLICY_DECISION_GATE_V1,
+    DecisionEvidenceStatus,
+    PolicyDecisionFacts,
+    RiskPolicyDecision,
+    RiskPolicyDecisionEvidence,
+    RiskPolicyDecisionInput,
+    RiskPolicyDecisionResult,
+    RiskPolicyDecisionSpec,
+    RiskPolicyGovernanceDecision,
+    evaluate_risk_policy_decision_gate,
+)
 
 __all__ = (
     "DailyConstructedPortfolio",
@@ -176,4 +190,16 @@ __all__ = (
     "RiskPolicyOutcomeSpec",
     "RiskPolicyOutcomeSummary",
     "evaluate_risk_policy_outcomes",
+    "DECISION_GATE_TIMING",
+    "FORWARD_PROTOCOL_V1",
+    "NEUTRAL_RISK_POLICY_DECISION_GATE_V1",
+    "DecisionEvidenceStatus",
+    "PolicyDecisionFacts",
+    "RiskPolicyDecision",
+    "RiskPolicyDecisionEvidence",
+    "RiskPolicyDecisionInput",
+    "RiskPolicyDecisionResult",
+    "RiskPolicyDecisionSpec",
+    "RiskPolicyGovernanceDecision",
+    "evaluate_risk_policy_decision_gate",
 )
