@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass, field
 from datetime import datetime, timezone
+from typing import Any
 from enum import Enum
 from uuid import uuid4
 
@@ -51,6 +52,7 @@ class Order:
         default_factory=utc_now
     )
     source_intent_id: str | None = None
+    execution_context: dict[str, Any] | None = None
 
     def __post_init__(self) -> None:
         self.symbol = self.symbol.strip().upper()

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from datetime import date
 
 from execution.broker_interface import (
     BrokerInterface,
@@ -25,6 +26,7 @@ from execution.lifecycle_models import (
     ClosedPaperTrade,
     PositionLifecycleState,
 )
+from execution.exit_models import ExitReason
 
 
 class PaperBroker(BrokerInterface):
@@ -124,6 +126,7 @@ class PaperBroker(BrokerInterface):
     ) -> Fill | None:
         source_intent_id = order.source_intent_id
         atomic_intent_execution = source_intent_id is not None
+        exit_reservation_created = False
         if atomic_intent_execution and self._store is None:
             raise RuntimeError("source-linked execution requires persistent paper storage")
         if source_intent_id is not None:
@@ -136,9 +139,28 @@ class PaperBroker(BrokerInterface):
                     self._duplicate_execution_intents.add(source_intent_id)
                     self._execution_dispositions[source_intent_id] = "ALREADY_EXECUTED"
                     return existing["fill"]
-                if existing["status"] in {OrderStatus.REJECTED.value, OrderStatus.CANCELLED.value}:
+                if (
+                    existing["status"] in {OrderStatus.REJECTED.value, OrderStatus.CANCELLED.value}
+                    and not source_intent_id.startswith("paper_exit:")
+                ):
                     return None
                 order.client_order_id = existing["client_order_id"]
+                if source_intent_id.startswith("paper_exit:"):
+                    order.reference_price = float(existing["reference_price"])
+                    order.quantity = int(existing["quantity"])
+                    order.execution_context = existing.get("execution_context")
+
+        if atomic_intent_execution and source_intent_id.startswith("paper_exit:"):
+            reservation = self._store.save_exit_intent(order)
+            if reservation["status"] == OrderStatus.FILLED.value:
+                completed = self._store.lookup_execution_intent(source_intent_id)
+                if completed is None or completed["fill"] is None:
+                    raise RuntimeError("filled exit intent has no persisted fill")
+                self._restore_persisted_state()
+                self._duplicate_execution_intents.add(source_intent_id)
+                self._execution_dispositions[source_intent_id] = "ALREADY_EXECUTED"
+                return completed["fill"]
+            exit_reservation_created = bool(reservation["created"])
 
         self._orders[
             order.client_order_id
@@ -263,8 +285,13 @@ class PaperBroker(BrokerInterface):
 
         if atomic_intent_execution:
             try:
+                lifecycle_state = self._entry_lifecycle_from_order(order, fill) if order.execution_context and "lifecycle" in order.execution_context else None
+                closed_trade = self._closed_trade_from_order(order, fill) if order.execution_context and "exit" in order.execution_context else None
                 disposition, persisted_fill = self._store.save_intent_execution(
-                    order, fill, self.portfolio
+                    order, fill, self.portfolio,
+                    lifecycle_state=lifecycle_state,
+                    closed_trade=closed_trade,
+                    delete_lifecycle_symbol=order.symbol if closed_trade is not None else None,
                 )
             except Exception:
                 self._restore_persisted_state()
@@ -278,6 +305,8 @@ class PaperBroker(BrokerInterface):
                 self._restore_persisted_state()
                 self._execution_dispositions[str(source_intent_id)] = disposition
                 return None
+            if disposition == "RESUMED" and exit_reservation_created:
+                disposition = "EXECUTED"
             self._execution_dispositions[str(source_intent_id)] = disposition
             return persisted_fill
 
@@ -286,6 +315,47 @@ class PaperBroker(BrokerInterface):
         self._persist_portfolio()
 
         return fill
+
+    @staticmethod
+    def _entry_lifecycle_from_order(order: Order, fill: Fill) -> PositionLifecycleState:
+        context = order.execution_context["lifecycle"]
+        reference_price = float(order.reference_price or fill.price)
+        return PositionLifecycleState(
+            symbol=fill.symbol,
+            entry_date=date.fromisoformat(str(context["entry_date"])),
+            entry_price=fill.price,
+            initial_quantity=fill.quantity,
+            stop_price=float(context["stop_price"]),
+            take_profit_price=(float(context["take_profit_price"]) if context.get("take_profit_price") is not None else None),
+            highest_price=max(fill.price, reference_price),
+            trailing_atr_multiplier=(float(context["trailing_atr_multiplier"]) if context.get("trailing_atr_multiplier") is not None else None),
+            maximum_holding_days=(int(context["maximum_holding_days"]) if context.get("maximum_holding_days") is not None else None),
+            entry_order_id=fill.order_id,
+            strategy_version=context.get("strategy_version"),
+            policy_fingerprint=context.get("policy_fingerprint"),
+        )
+
+    @staticmethod
+    def _closed_trade_from_order(order: Order, fill: Fill) -> ClosedPaperTrade:
+        context = order.execution_context["exit"]
+        entry_price = float(context["entry_price"])
+        realized_pnl = fill.net_cash_flow - entry_price * fill.quantity
+        return ClosedPaperTrade(
+            symbol=fill.symbol,
+            entry_date=date.fromisoformat(str(context["entry_date"])),
+            exit_date=date.fromisoformat(str(context["exit_date"])),
+            quantity=fill.quantity,
+            entry_price=entry_price,
+            exit_price=fill.price,
+            gross_proceeds=fill.gross_value,
+            commission=fill.commission,
+            realized_pnl=realized_pnl,
+            return_pct=(realized_pnl / (entry_price * fill.quantity) * 100 if entry_price > 0 else 0.0),
+            holding_days=int(context["holding_days"]),
+            exit_reason=ExitReason(str(context["exit_reason"])),
+            order_id=fill.order_id,
+            created_at=fill.created_at,
+        )
 
     def lookup_execution_intent(self, source_intent_id: str) -> dict | None:
         if self._store is None:

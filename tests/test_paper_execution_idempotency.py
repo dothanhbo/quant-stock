@@ -207,14 +207,17 @@ def test_retry_repairs_missing_lifecycle_after_execution_bundle_commit(
     persisted_quantity = _counts(paper_db)[2]
     assert persisted_quantity > 0
     assert _counts(paper_db)[:4] == (1, 1, persisted_quantity, 1)
-    assert executor.broker.get_position_lifecycle("AAA") is None
+    first_lifecycle = executor.broker.get_position_lifecycle("AAA")
+    assert first_lifecycle is not None
+    assert first_lifecycle.entry_order_id is not None
+    assert first_lifecycle.policy_fingerprint is not None
 
     restarted = _executor(paper_db)
     result = restarted.execute_pending_signals(
         valuation_date=EXECUTION_DATE, market_database_path=market_db
     )
     assert result.executions[0].status == "ALREADY_EXECUTED"
-    assert restarted.broker.get_position_lifecycle("AAA") is not None
+    assert restarted.broker.get_position_lifecycle("AAA") == first_lifecycle
     assert _counts(paper_db)[:4] == (1, 1, persisted_quantity, 0)
 
 
@@ -362,20 +365,56 @@ def test_additive_migration_preserves_legacy_order_rows_and_repeats_safely(
                 updated_at TEXT NOT NULL)"""
         )
         connection.execute(
+            """CREATE TABLE paper_position_lifecycle (
+                symbol TEXT PRIMARY KEY, entry_date TEXT NOT NULL, entry_price REAL NOT NULL,
+                initial_quantity INTEGER NOT NULL, stop_price REAL NOT NULL,
+                take_profit_price REAL, highest_price REAL, trailing_stop_price REAL,
+                trailing_atr_multiplier REAL, maximum_holding_days INTEGER, updated_at TEXT NOT NULL
+            )"""
+        )
+        connection.execute(
             "INSERT INTO paper_orders VALUES ('legacy-1','AAA','BUY',100,'MARKET',NULL,10,'FILLED',100,10,NULL,'2026-01-01','2026-01-01')"
+        )
+        connection.execute(
+            "INSERT INTO paper_position_lifecycle VALUES "
+            "('AAA','2026-01-01',10,100,9,NULL,10,NULL,NULL,NULL,'2026-01-01')"
         )
 
     store = PaperTradingStore(paper_db)
     store.initialize()
     with sqlite3.connect(paper_db) as connection:
         columns = {row[1] for row in connection.execute("PRAGMA table_info(paper_orders)")}
+        lifecycle_columns = {row[1] for row in connection.execute("PRAGMA table_info(paper_position_lifecycle)")}
         client_id, source = connection.execute(
             "SELECT client_order_id, source_intent_id FROM paper_orders"
         ).fetchone()
+        context = connection.execute(
+            "SELECT entry_order_id,strategy_version,policy_fingerprint FROM paper_position_lifecycle"
+        ).fetchone()
         indexes = {row[1] for row in connection.execute("PRAGMA index_list(paper_orders)")}
     assert "source_intent_id" in columns
+    assert "execution_context" in columns
+    assert {"entry_order_id", "strategy_version", "policy_fingerprint"} <= lifecycle_columns
     assert (client_id, source) == ("legacy-1", None)
+    assert context == (None, None, None)
     assert "uq_paper_orders_source_intent" in indexes
+
+
+def test_legacy_executed_intent_without_frozen_context_fails_closed(tmp_path: Path) -> None:
+    executor = _executor(tmp_path / "paper.db")
+    from execution.models import Fill, OrderSide
+
+    fill = Fill(
+        order_id="legacy-order", symbol="AAA", side=OrderSide.BUY,
+        quantity=100, price=10.0, gross_value=1_000.0,
+        commission=1.0, slippage_cost=0.0, net_cash_flow=-1_001.0,
+    )
+    with pytest.raises(RuntimeError, match="no frozen lifecycle provenance"):
+        executor._restore_missing_intent_lifecycle(
+            signal={"symbol": "AAA"}, fill=fill, reference_price=10.0,
+            execution_date="2026-01-02", execution_context=None,
+        )
+    assert executor.broker.get_position_lifecycle("AAA") is None
 
 
 def test_no_crash_economics_match_and_unprotected_orders_keep_legacy_null_source(

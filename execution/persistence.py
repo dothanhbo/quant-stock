@@ -88,7 +88,8 @@ class PaperTradingStore:
                     rejection_reason TEXT,
                     created_at TEXT NOT NULL,
                     updated_at TEXT NOT NULL,
-                    source_intent_id TEXT
+                    source_intent_id TEXT,
+                    execution_context TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS paper_fills (
@@ -138,7 +139,10 @@ class PaperTradingStore:
                     trailing_stop_price REAL,
                     trailing_atr_multiplier REAL,
                     maximum_holding_days INTEGER,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    entry_order_id TEXT,
+                    strategy_version TEXT,
+                    policy_fingerprint TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS paper_closed_trades (
@@ -195,6 +199,19 @@ class PaperTradingStore:
                 connection.execute(
                     "ALTER TABLE paper_orders ADD COLUMN source_intent_id TEXT"
                 )
+            if "execution_context" not in order_columns:
+                connection.execute(
+                    "ALTER TABLE paper_orders ADD COLUMN execution_context TEXT"
+                )
+            lifecycle_columns = {
+                str(row[1])
+                for row in connection.execute("PRAGMA table_info(paper_position_lifecycle)")
+            }
+            for column in ("entry_order_id", "strategy_version", "policy_fingerprint"):
+                if column not in lifecycle_columns:
+                    connection.execute(
+                        f"ALTER TABLE paper_position_lifecycle ADD COLUMN {column} TEXT"
+                    )
             connection.execute(
                 "CREATE UNIQUE INDEX IF NOT EXISTS uq_paper_orders_source_intent "
                 "ON paper_orders(source_intent_id) WHERE source_intent_id IS NOT NULL"
@@ -262,49 +279,68 @@ class PaperTradingStore:
         )
 
         with self._connection() as connection:
-            connection.execute(
-                """
-                INSERT INTO paper_position_lifecycle (
-                    symbol,
-                    entry_date,
-                    entry_price,
-                    initial_quantity,
-                    stop_price,
-                    take_profit_price,
-                    highest_price,
-                    trailing_stop_price,
-                    trailing_atr_multiplier,
-                    maximum_holding_days,
-                    updated_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(symbol)
-                DO UPDATE SET
-                    entry_date = excluded.entry_date,
-                    entry_price = excluded.entry_price,
-                    initial_quantity = excluded.initial_quantity,
-                    stop_price = excluded.stop_price,
-                    take_profit_price = excluded.take_profit_price,
-                    highest_price = excluded.highest_price,
-                    trailing_stop_price = excluded.trailing_stop_price,
-                    trailing_atr_multiplier = excluded.trailing_atr_multiplier,
-                    maximum_holding_days = excluded.maximum_holding_days,
-                    updated_at = excluded.updated_at
-                """,
-                (
-                    state.symbol,
-                    state.entry_date.isoformat(),
-                    state.entry_price,
-                    state.initial_quantity,
-                    state.stop_price,
-                    state.take_profit_price,
-                    state.highest_price,
-                    state.trailing_stop_price,
-                    state.trailing_atr_multiplier,
-                    state.maximum_holding_days,
-                    updated_at.isoformat(),
-                ),
+            self._save_position_lifecycle(connection, state, updated_at=updated_at)
+
+    @staticmethod
+    def _save_position_lifecycle(
+        connection: sqlite3.Connection,
+        state: PositionLifecycleState,
+        *,
+        updated_at: datetime | None = None,
+    ) -> None:
+        updated_at = updated_at or state.updated_at or datetime.now().astimezone()
+        connection.execute(
+            """
+            INSERT INTO paper_position_lifecycle (
+                symbol,
+                entry_date,
+                entry_price,
+                initial_quantity,
+                stop_price,
+                take_profit_price,
+                highest_price,
+                trailing_stop_price,
+                trailing_atr_multiplier,
+                maximum_holding_days,
+                updated_at,
+                entry_order_id,
+                strategy_version,
+                policy_fingerprint
             )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(symbol)
+            DO UPDATE SET
+                entry_date = excluded.entry_date,
+                entry_price = excluded.entry_price,
+                initial_quantity = excluded.initial_quantity,
+                stop_price = excluded.stop_price,
+                take_profit_price = excluded.take_profit_price,
+                highest_price = excluded.highest_price,
+                trailing_stop_price = excluded.trailing_stop_price,
+                trailing_atr_multiplier = excluded.trailing_atr_multiplier,
+                maximum_holding_days = excluded.maximum_holding_days,
+                updated_at = excluded.updated_at,
+                entry_order_id = COALESCE(excluded.entry_order_id, paper_position_lifecycle.entry_order_id),
+                strategy_version = COALESCE(excluded.strategy_version, paper_position_lifecycle.strategy_version),
+                policy_fingerprint = COALESCE(excluded.policy_fingerprint, paper_position_lifecycle.policy_fingerprint)
+            """,
+            (
+                state.symbol,
+                state.entry_date.isoformat(),
+                state.entry_price,
+                state.initial_quantity,
+                state.stop_price,
+                state.take_profit_price,
+                state.highest_price,
+                state.trailing_stop_price,
+                state.trailing_atr_multiplier,
+                state.maximum_holding_days,
+                updated_at.isoformat(),
+                state.entry_order_id,
+                state.strategy_version,
+                state.policy_fingerprint,
+            ),
+        )
 
     def get_position_lifecycle(
         self,
@@ -367,6 +403,9 @@ class PaperTradingStore:
             updated_at=datetime.fromisoformat(
                 row["updated_at"]
             ),
+            entry_order_id=row["entry_order_id"],
+            strategy_version=row["strategy_version"],
+            policy_fingerprint=row["policy_fingerprint"],
         )
 
     def delete_position_lifecycle(
@@ -389,9 +428,13 @@ class PaperTradingStore:
         trade: ClosedPaperTrade,
     ) -> None:
         with self._connection() as connection:
-            connection.execute(
-                """
-                INSERT OR IGNORE INTO paper_closed_trades (
+            self._save_closed_trade(connection, trade)
+
+    @staticmethod
+    def _save_closed_trade(connection: sqlite3.Connection, trade: ClosedPaperTrade) -> None:
+        connection.execute(
+            """
+            INSERT OR IGNORE INTO paper_closed_trades (
                     symbol,
                     entry_date,
                     exit_date,
@@ -406,26 +449,26 @@ class PaperTradingStore:
                     exit_reason,
                     order_id,
                     created_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    trade.symbol,
-                    trade.entry_date.isoformat(),
-                    trade.exit_date.isoformat(),
-                    trade.quantity,
-                    trade.entry_price,
-                    trade.exit_price,
-                    trade.gross_proceeds,
-                    trade.commission,
-                    trade.realized_pnl,
-                    trade.return_pct,
-                    trade.holding_days,
-                    trade.exit_reason.value,
-                    trade.order_id,
-                    trade.created_at.isoformat(),
-                ),
             )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                trade.symbol,
+                trade.entry_date.isoformat(),
+                trade.exit_date.isoformat(),
+                trade.quantity,
+                trade.entry_price,
+                trade.exit_price,
+                trade.gross_proceeds,
+                trade.commission,
+                trade.realized_pnl,
+                trade.return_pct,
+                trade.holding_days,
+                trade.exit_reason.value,
+                trade.order_id,
+                trade.created_at.isoformat(),
+            ),
+        )
 
     def load_closed_trades(
         self,
@@ -520,8 +563,8 @@ class PaperTradingStore:
             INSERT INTO paper_orders (
                 client_order_id, symbol, side, quantity, order_type, limit_price,
                 reference_price, status, filled_quantity, average_fill_price,
-                rejection_reason, created_at, updated_at, source_intent_id
-            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                rejection_reason, created_at, updated_at, source_intent_id, execution_context
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
             ON CONFLICT(client_order_id)
             DO UPDATE SET
                 symbol = excluded.symbol, side = excluded.side, quantity = excluded.quantity,
@@ -530,7 +573,8 @@ class PaperTradingStore:
                 filled_quantity = excluded.filled_quantity,
                 average_fill_price = excluded.average_fill_price,
                 rejection_reason = excluded.rejection_reason, updated_at = excluded.updated_at,
-                source_intent_id = COALESCE(paper_orders.source_intent_id, excluded.source_intent_id)
+                source_intent_id = COALESCE(paper_orders.source_intent_id, excluded.source_intent_id),
+                execution_context = COALESCE(paper_orders.execution_context, excluded.execution_context)
             """,
             (
                 order.client_order_id, order.symbol, order.side.value, order.quantity,
@@ -538,6 +582,7 @@ class PaperTradingStore:
                 order.status.value, order.filled_quantity, order.average_fill_price,
                 order.rejection_reason, order.created_at.isoformat(),
                 order.updated_at.isoformat(), order.source_intent_id,
+                json.dumps(order.execution_context, sort_keys=True) if order.execution_context is not None else None,
             ),
         )
 
@@ -655,6 +700,8 @@ class PaperTradingStore:
             "order_type": str(row["order_type"]),
             "reference_price": row["reference_price"],
             "created_at": str(row["created_at"]),
+            "execution_context": json.loads(row["execution_context"])
+            if row["execution_context"] else None,
             "fill": fill,
         }
 
@@ -663,6 +710,10 @@ class PaperTradingStore:
         order: Order,
         fill: Fill,
         portfolio: PortfolioState,
+        *,
+        closed_trade: ClosedPaperTrade | None = None,
+        delete_lifecycle_symbol: str | None = None,
+        lifecycle_state: PositionLifecycleState | None = None,
     ) -> tuple[str, Fill | None]:
         """Atomically persist one source-linked order, fill, and portfolio state."""
         if not order.source_intent_id:
@@ -713,7 +764,64 @@ class PaperTradingStore:
             self._save_order(connection, order)
             self._save_fill(connection, fill)
             self._save_portfolio_state(connection, portfolio)
+            if lifecycle_state is not None:
+                self._save_position_lifecycle(connection, lifecycle_state)
+            if closed_trade is not None:
+                self._save_closed_trade(connection, closed_trade)
+            if delete_lifecycle_symbol is not None:
+                connection.execute(
+                    "DELETE FROM paper_position_lifecycle WHERE symbol = ?",
+                    (delete_lifecycle_symbol.strip().upper(),),
+                )
         return disposition, fill
+
+    def save_exit_intent(self, order: Order) -> dict:
+        """Durably reserve/resume one exit order before attempting its fill."""
+        if not order.source_intent_id or not order.source_intent_id.startswith("paper_exit:"):
+            raise ValueError("exit intent requires a paper_exit source key")
+        if order.side is not OrderSide.SELL:
+            raise ValueError("paper_exit source key requires a SELL order")
+        if not order.execution_context or not order.execution_context.get("exit"):
+            raise ValueError("paper_exit requires frozen exit context")
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            row = connection.execute(
+                "SELECT * FROM paper_orders WHERE source_intent_id = ?",
+                (order.source_intent_id,),
+            ).fetchone()
+            if row is None:
+                self._save_order(connection, order)
+                return {"created": True, "status": order.status.value}
+            if str(row["symbol"]).upper() != order.symbol.upper() or str(row["side"]) != OrderSide.SELL.value:
+                raise RuntimeError("exit intent key conflicts with a different persisted order")
+            persisted_terms = (
+                str(row["symbol"]).upper(), int(row["quantity"]),
+                str(row["order_type"]), row["reference_price"],
+            )
+            requested_terms = (
+                order.symbol.upper(), int(order.quantity),
+                order.order_type.value, order.reference_price,
+            )
+            if persisted_terms != requested_terms:
+                raise RuntimeError("exit intent key conflicts with different order terms")
+            if str(row["status"]) == OrderStatus.FILLED.value:
+                return {"created": False, "status": OrderStatus.FILLED.value}
+            if str(row["status"]) in {OrderStatus.REJECTED.value, OrderStatus.CANCELLED.value}:
+                filled = connection.execute(
+                    "SELECT 1 FROM paper_fills WHERE order_id = ? LIMIT 1",
+                    (row["client_order_id"],),
+                ).fetchone()
+                if filled is not None:
+                    raise RuntimeError("terminal exit intent already has a fill; refusing replay")
+            order.client_order_id = str(row["client_order_id"])
+            order.quantity = int(row["quantity"])
+            order.reference_price = float(row["reference_price"])
+            order.execution_context = json.loads(row["execution_context"]) if row["execution_context"] else None
+            order.status = OrderStatus.ACCEPTED
+            order.rejection_reason = None
+            order.updated_at = datetime.now().astimezone()
+            self._save_order(connection, order)
+            return {"created": False, "status": str(row["status"])}
 
     def load_portfolio_state(
         self,
@@ -841,6 +949,11 @@ class PaperTradingStore:
                 source_intent_id=(
                     str(row["source_intent_id"])
                     if row["source_intent_id"] is not None
+                    else None
+                ),
+                execution_context=(
+                    json.loads(row["execution_context"])
+                    if row["execution_context"]
                     else None
                 ),
             )

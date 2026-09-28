@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import sqlite3
+import hashlib
+import json
 from bisect import bisect_right
 from dataclasses import dataclass, field
 from datetime import date, datetime, timezone
@@ -14,7 +16,6 @@ from execution.exit_models import (
     PositionExitState,
 )
 from execution.lifecycle_models import (
-    ClosedPaperTrade,
     PositionLifecycleState,
 )
 from execution.order_manager import (
@@ -249,6 +250,57 @@ class PaperLifecycleManager:
                 persist_snapshot=False,
             )
 
+            pending_sells = [
+                order for order in self.broker.get_open_orders()
+                if order.symbol == symbol and order.side.value == "SELL"
+            ]
+            if pending_sells:
+                if len(pending_sells) != 1:
+                    rejected_exits.append(symbol)
+                    continue
+                pending = pending_sells[0]
+                context = pending.execution_context or {}
+                exit_context = context.get("exit")
+                if (
+                    not pending.source_intent_id
+                    or not pending.source_intent_id.startswith("paper_exit:")
+                    or not exit_context
+                    or pending.reference_price is None
+                ):
+                    # Legacy or incomplete open sells lack enough durable
+                    # evidence to resume safely; do not create a new sell.
+                    rejected_exits.append(symbol)
+                    continue
+                fill = self.order_manager.sell_market(
+                    symbol=symbol,
+                    quantity=pending.quantity,
+                    price=float(pending.reference_price),
+                    source_intent_id=pending.source_intent_id,
+                    execution_context=context,
+                )
+                if fill is None:
+                    rejected_exits.append(symbol)
+                    continue
+                entry_price = float(exit_context["entry_price"])
+                realized_pnl = fill.net_cash_flow - entry_price * fill.quantity
+                return_pct = (
+                    realized_pnl / (entry_price * fill.quantity) * 100
+                    if entry_price > 0 else 0.0
+                )
+                exited.append(LifecycleExit(
+                    symbol=symbol,
+                    valuation_date=date.fromisoformat(str(exit_context["exit_date"])),
+                    quantity=fill.quantity,
+                    reference_exit_price=float(pending.reference_price),
+                    fill_price=fill.price,
+                    realized_pnl=realized_pnl,
+                    return_pct=return_pct,
+                    holding_days=int(exit_context["holding_days"]),
+                    reason=str(exit_context["exit_reason"]),
+                    order_id=fill.order_id,
+                ))
+                continue
+
             holding_sessions = (
                 self._count_holding_sessions(
                     sessions=market_sessions,
@@ -338,6 +390,9 @@ class PaperLifecycleManager:
                             lifecycle
                             .maximum_holding_days
                         ),
+                        entry_order_id=lifecycle.entry_order_id,
+                        strategy_version=lifecycle.strategy_version,
+                        policy_fingerprint=lifecycle.policy_fingerprint,
                         updated_at=datetime.now(
                             timezone.utc
                         ),
@@ -402,6 +457,21 @@ class PaperLifecycleManager:
                 price=(
                     decision.execution_price
                 ),
+                source_intent_id=self._exit_intent_id(
+                    lifecycle=lifecycle,
+                    valuation_date=resolved_date,
+                    quantity=quantity,
+                    reason=decision.reason.value,
+                ),
+                execution_context={
+                    "exit": {
+                        "entry_date": lifecycle.entry_date.isoformat(),
+                        "entry_price": previous_average_price,
+                        "exit_date": resolved_date.isoformat(),
+                        "holding_days": decision.holding_days,
+                        "exit_reason": decision.reason.value,
+                    },
+                },
             )
 
             if fill is None:
@@ -426,37 +496,8 @@ class PaperLifecycleManager:
                 else 0.0
             )
 
-            closed_trade = ClosedPaperTrade(
-                symbol=symbol,
-                entry_date=(
-                    lifecycle.entry_date
-                ),
-                exit_date=resolved_date,
-                quantity=fill.quantity,
-                entry_price=(
-                    previous_average_price
-                ),
-                exit_price=fill.price,
-                gross_proceeds=(
-                    fill.gross_value
-                ),
-                commission=fill.commission,
-                realized_pnl=realized_pnl,
-                return_pct=return_pct,
-                holding_days=(
-                    decision.holding_days
-                ),
-                exit_reason=decision.reason,
-                order_id=fill.order_id,
-                created_at=fill.created_at,
-            )
-
-            self.broker.record_closed_trade(
-                closed_trade
-            )
-            self.broker.delete_position_lifecycle(
-                symbol
-            )
+            # Source-linked SELL persistence atomically writes the close
+            # record and removes active lifecycle state with its fill.
 
             exited.append(
                 LifecycleExit(
@@ -506,6 +547,31 @@ class PaperLifecycleManager:
                 snapshot.open_positions
             ),
         )
+
+    @staticmethod
+    def _exit_intent_id(
+        *,
+        lifecycle: PositionLifecycleState,
+        valuation_date: date,
+        quantity: int,
+        reason: str,
+    ) -> str:
+        identity = {
+            "entry_order_id": lifecycle.entry_order_id,
+            "symbol": lifecycle.symbol,
+            "entry_date": lifecycle.entry_date.isoformat(),
+            "entry_price": lifecycle.entry_price,
+            "initial_quantity": lifecycle.initial_quantity,
+            "stop_price": lifecycle.stop_price,
+            "take_profit_price": lifecycle.take_profit_price,
+            "trailing_stop_price": lifecycle.trailing_stop_price,
+            "updated_at": lifecycle.updated_at.isoformat() if lifecycle.updated_at else None,
+            "exit_date": valuation_date.isoformat(),
+            "quantity": quantity,
+            "reason": reason,
+        }
+        encoded = json.dumps(identity, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        return "paper_exit:" + hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
     def _resolve_date(
         self,

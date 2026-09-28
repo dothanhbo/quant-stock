@@ -1,6 +1,8 @@
 from __future__ import annotations
 
-from dataclasses import replace
+from dataclasses import asdict, replace
+import hashlib
+import json
 import math
 import os
 import sqlite3
@@ -608,6 +610,7 @@ class PaperSignalExecutor:
                             fill=fill,
                             reference_price=existing_execution["reference_price"],
                             execution_date=expected_date,
+                            execution_context=existing_execution.get("execution_context"),
                         )
                     self.broker.complete_pending_signal(
                         pending_id,
@@ -1300,6 +1303,21 @@ class PaperSignalExecutor:
                     if signal.get("_execution_intent_id") is not None
                     else None
                 ),
+                execution_context={
+                    "lifecycle": {
+                        "entry_date": resolved_report_date.isoformat(),
+                        "stop_price": float(candidate.stop_price),
+                        "take_profit_price": (
+                            float(signal["take_profit"]) * self.PRICE_SCALE
+                            if self._read_positive_float(signal, ("take_profit", "take_profit_price")) is not None
+                            else None
+                        ),
+                        "trailing_atr_multiplier": self.policy.trailing_atr_multiplier,
+                        "maximum_holding_days": self.policy.maximum_holding_days,
+                        "strategy_version": signal.get("strategy_version"),
+                        "policy_fingerprint": self._policy_fingerprint(),
+                    }
+                } if signal.get("_execution_intent_id") is not None else None,
             )
 
             if fill is None:
@@ -1637,6 +1655,9 @@ class PaperSignalExecutor:
             updated_at=datetime.now(
                 timezone.utc
             ),
+            entry_order_id=fill.order_id,
+            strategy_version=signal.get("strategy_version"),
+            policy_fingerprint=self._policy_fingerprint(),
         )
 
         self.broker.save_position_lifecycle(
@@ -1659,38 +1680,49 @@ class PaperSignalExecutor:
         fill,
         reference_price: float | None,
         execution_date: str,
+        execution_context: dict[str, Any] | None,
     ) -> None:
         """Repair the lifecycle row after an already-committed intent replay."""
+        if execution_context is None:
+            raise RuntimeError(
+                "legacy executed intent has no frozen lifecycle provenance; manual review required"
+            )
+        context = execution_context.get("lifecycle")
+        if not context:
+            raise RuntimeError("executed intent has no frozen lifecycle context")
         if reference_price is None or float(reference_price) <= 0:
             raise RuntimeError("executed intent has no valid persisted reference price")
-        atr = self._read_positive_float(signal, ("atr",))
-        if atr is None:
-            raise RuntimeError("executed intent cannot rebuild lifecycle without its original ATR")
         broker_price = float(reference_price)
-        display_price = broker_price / self.PRICE_SCALE
-        stop, target = self.policy.calculate_levels(
-            entry_price=display_price,
-            atr=atr,
+        state = PositionLifecycleState(
+            symbol=fill.symbol,
+            entry_date=date.fromisoformat(str(context["entry_date"])),
+            entry_price=fill.price,
+            initial_quantity=fill.quantity,
+            stop_price=float(context["stop_price"]),
+            take_profit_price=(
+                float(context["take_profit_price"])
+                if context.get("take_profit_price") is not None else None
+            ),
+            highest_price=max(fill.price, broker_price),
+            trailing_atr_multiplier=(
+                float(context["trailing_atr_multiplier"])
+                if context.get("trailing_atr_multiplier") is not None else None
+            ),
+            maximum_holding_days=(
+                int(context["maximum_holding_days"])
+                if context.get("maximum_holding_days") is not None else None
+            ),
+            entry_order_id=fill.order_id,
+            strategy_version=context.get("strategy_version"),
+            policy_fingerprint=context.get("policy_fingerprint"),
         )
-        restored_signal = dict(signal)
-        restored_signal.update({
-            "date": execution_date,
-            "entry": display_price,
-            "stop_loss": stop,
-            "take_profit": target,
-        })
-        candidate = self._build_candidate(
-            signal=restored_signal,
-            symbol=str(signal["symbol"]).strip().upper(),
-            broker_price=broker_price,
-        )
-        self._initialize_filled_position(
-            signal=restored_signal,
-            candidate=candidate,
-            fill=fill,
-            broker_price=broker_price,
-            report_date=date.fromisoformat(execution_date),
-        )
+        self.broker.save_position_lifecycle(state)
+        self.broker.update_market_price(fill.symbol, broker_price, persist_snapshot=True)
+
+    def _policy_fingerprint(self) -> str:
+        payload = asdict(self.policy)
+        encoded = json.dumps(payload, sort_keys=True, separators=(",", ":"), ensure_ascii=False)
+        return hashlib.sha256(encoded.encode("utf-8")).hexdigest()
 
     def _build_position_summary(
         self,

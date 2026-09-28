@@ -14,6 +14,7 @@ from execution.models import (
 from execution.risk_guard import (
     RiskGuard,
 )
+from typing import Any
 
 
 class OrderManager:
@@ -105,6 +106,7 @@ class OrderManager:
         price: float,
         daily_realized_pnl: float = 0.0,
         source_intent_id: str | None = None,
+        execution_context: dict[str, Any] | None = None,
     ) -> Fill | None:
         order = Order(
             symbol=symbol,
@@ -113,6 +115,7 @@ class OrderManager:
             order_type=OrderType.MARKET,
             reference_price=price,
             source_intent_id=source_intent_id,
+            execution_context=execution_context,
         )
 
         return self.submit_order(
@@ -127,6 +130,8 @@ class OrderManager:
         symbol: str,
         quantity: int,
         price: float,
+        source_intent_id: str | None = None,
+        execution_context: dict[str, Any] | None = None,
     ) -> Fill | None:
         order = Order(
             symbol=symbol,
@@ -134,6 +139,8 @@ class OrderManager:
             quantity=quantity,
             order_type=OrderType.MARKET,
             reference_price=price,
+            source_intent_id=source_intent_id,
+            execution_context=execution_context,
         )
 
         return self.submit_order(

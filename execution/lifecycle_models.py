@@ -21,6 +21,9 @@ class PositionLifecycleState:
     trailing_atr_multiplier: float | None = None
     maximum_holding_days: int | None = None
     updated_at: datetime | None = None
+    entry_order_id: str | None = None
+    strategy_version: str | None = None
+    policy_fingerprint: str | None = None
 
     def __post_init__(
         self,

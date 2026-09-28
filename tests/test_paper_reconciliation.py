@@ -24,7 +24,10 @@ def _store(path: Path) -> None:
             (("initial_cash", json.dumps(100_000.0)), ("cash", json.dumps(98_997.0))),
         )
         connection.execute(
-            """INSERT INTO paper_orders VALUES
+            """INSERT INTO paper_orders (
+                client_order_id,symbol,side,quantity,order_type,limit_price,reference_price,
+                status,filled_quantity,average_fill_price,rejection_reason,created_at,updated_at,source_intent_id
+            ) VALUES
             ('order-1','AAA','BUY',10,'MARKET',NULL,100.0,'FILLED',10,100.15,NULL,
              '2026-01-02T00:00:00+00:00','2026-01-02T00:00:00+00:00','pending_signal:1')"""
         )
@@ -72,12 +75,18 @@ def test_missing_fill_and_duplicate_source_identity_are_detected(tmp_path: Path)
     with sqlite3.connect(path) as connection:
         connection.execute("DROP INDEX uq_paper_orders_source_intent")
         connection.execute(
-            """INSERT INTO paper_orders VALUES
+            """INSERT INTO paper_orders (
+                client_order_id,symbol,side,quantity,order_type,limit_price,reference_price,
+                status,filled_quantity,average_fill_price,rejection_reason,created_at,updated_at,source_intent_id
+            ) VALUES
             ('order-2','BBB','BUY',1,'MARKET',NULL,10.0,'FILLED',1,10.0,NULL,
              '2026-01-03','2026-01-03','pending_signal:1')"""
         )
         connection.execute(
-            """INSERT INTO paper_orders VALUES
+            """INSERT INTO paper_orders (
+                client_order_id,symbol,side,quantity,order_type,limit_price,reference_price,
+                status,filled_quantity,average_fill_price,rejection_reason,created_at,updated_at,source_intent_id
+            ) VALUES
             ('order-3','CCC','BUY',1,'MARKET',NULL,10.0,'FILLED',1,10.0,NULL,
              '2026-01-03','2026-01-03','pending_signal:3')"""
         )
@@ -92,7 +101,10 @@ def test_unresolved_sell_order_is_not_assumed_retry_safe(tmp_path: Path) -> None
     _store(path)
     with sqlite3.connect(path) as connection:
         connection.execute(
-            """INSERT INTO paper_orders VALUES
+            """INSERT INTO paper_orders (
+                client_order_id,symbol,side,quantity,order_type,limit_price,reference_price,
+                status,filled_quantity,average_fill_price,rejection_reason,created_at,updated_at,source_intent_id
+            ) VALUES
             ('sell-open','AAA','SELL',10,'MARKET',NULL,110.0,'ACCEPTED',0,NULL,NULL,
              '2026-01-03','2026-01-03',NULL)"""
         )
@@ -106,7 +118,10 @@ def test_sell_fill_without_closed_trade_is_detectable_but_not_repaired(tmp_path:
     _store(path)
     with sqlite3.connect(path) as connection:
         connection.execute(
-            """INSERT INTO paper_orders VALUES
+            """INSERT INTO paper_orders (
+                client_order_id,symbol,side,quantity,order_type,limit_price,reference_price,
+                status,filled_quantity,average_fill_price,rejection_reason,created_at,updated_at,source_intent_id
+            ) VALUES
             ('sell-filled','AAA','SELL',10,'MARKET',NULL,110.0,'FILLED',10,109.9,NULL,
              '2026-01-04','2026-01-04',NULL)"""
         )
@@ -187,9 +202,46 @@ def test_v1_v2_v3_are_explicit_and_audit_identity_is_repeatable(tmp_path: Path) 
     assert same.identity == results[0].identity
     assert same.checks == results[0].checks
     exit_link = _by_code(same)["exit_intent_durable_link"]
-    assert exit_link.state is FindingState.AMBIGUOUS
+    assert exit_link.state is FindingState.PASS
     assert exit_link.severity.value == "MATERIAL"
-    assert "no source intent" in exit_link.evidence
+    assert "New protected exits use unique paper_exit source keys" in exit_link.evidence
+
+
+def test_reconciliation_distinguishes_linked_exit_and_frozen_lifecycle_context(tmp_path: Path) -> None:
+    path = tmp_path / "paper.db"
+    _store(path)
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "UPDATE paper_position_lifecycle SET entry_order_id='order-1', "
+            "strategy_version='v2-test', policy_fingerprint='sha256:test' WHERE symbol='AAA'"
+        )
+        connection.execute(
+            "INSERT INTO paper_orders (client_order_id,symbol,side,quantity,order_type,"
+            "reference_price,status,filled_quantity,created_at,updated_at,source_intent_id,execution_context) "
+            "VALUES ('exit-1','AAA','SELL',10,'MARKET',110,'ACCEPTED',0,'2026-01-03','2026-01-03',"
+            "'paper_exit:abc','{\"exit\":{\"entry_date\":\"2026-01-02\",\"entry_price\":100,"
+            "\"exit_date\":\"2026-01-03\",\"holding_days\":1,\"exit_reason\":\"STOP_LOSS\"}}')"
+        )
+    checks = _by_code(audit_paper_database(path, paper_version="V2"))
+    assert checks["exit_intent_durable_link"].state is FindingState.PASS
+    assert checks["exit_intent_durable_link"].affected_count == 0
+    assert checks["lifecycle_reconstruction_context_persisted"].state is FindingState.PASS
+    assert checks["unresolved_sell_order"].state is FindingState.PASS
+
+
+def test_legacy_sell_and_missing_lifecycle_provenance_remain_ambiguous(tmp_path: Path) -> None:
+    path = tmp_path / "paper.db"
+    _store(path)
+    with sqlite3.connect(path) as connection:
+        connection.execute(
+            "INSERT INTO paper_orders (client_order_id,symbol,side,quantity,order_type,"
+            "reference_price,status,filled_quantity,created_at,updated_at) "
+            "VALUES ('legacy-sell','AAA','SELL',10,'MARKET',110,'ACCEPTED',0,'2026-01-03','2026-01-03')"
+        )
+    checks = _by_code(audit_paper_database(path, paper_version="V3"))
+    assert checks["exit_intent_durable_link"].state is FindingState.AMBIGUOUS
+    assert checks["exit_intent_durable_link"].affected_count == 1
+    assert checks["lifecycle_reconstruction_context_persisted"].state is FindingState.AMBIGUOUS
 
 
 def test_nonexistent_db_fails_closed_without_creating_it(tmp_path: Path) -> None:
