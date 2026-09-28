@@ -80,6 +80,32 @@ def test_core_database_import_is_side_effect_free_and_runtime_init_honors_enviro
     assert completed.stdout.splitlines() == ["True False False", "True"]
 
 
+def test_market_database_initializer_is_import_safe_and_explicit(tmp_path: Path) -> None:
+    market = tmp_path / "initializer" / "market.db"
+    code = (
+        "import os,pathlib; import scripts.init_db as command; "
+        "p=pathlib.Path(os.environ['MARKET_DATABASE_PATH']); "
+        "print(p.exists(),p.parent.exists()); command.main(); print(p.exists())"
+    )
+    completed = subprocess.run(
+        [sys.executable, "-c", code],
+        cwd=Path(__file__).resolve().parents[1],
+        env=dict(
+            os.environ,
+            MARKET_DATABASE_PATH=str(market),
+            PYTHONDONTWRITEBYTECODE="1",
+        ),
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.stdout.splitlines() == [
+        "False False",
+        "Database created!",
+        "True",
+    ]
+
+
 def test_scanner_import_creates_neither_market_nor_paper_database(tmp_path: Path) -> None:
     market = tmp_path / "market-state" / "market.db"
     paper = tmp_path / "paper-state" / "paper.db"

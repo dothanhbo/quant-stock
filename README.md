@@ -1,1731 +1,233 @@
-# 📈 Quant Stock
+# Quant Stock V1
 
-> **A quantitative research framework for the Vietnamese stock market.**
+Quant Stock is a personal quantitative-research and decision-support platform
+for Vietnamese equities. It combines reproducible historical research,
+prospective Forward V1 evidence, portfolio/risk/execution studies, monitored
+paper execution, and an end-of-day production pipeline.
 
-[![Python](https://img.shields.io/badge/Python-3.12+-3776AB?logo=python&logoColor=white)](#)
-[![License](https://img.shields.io/badge/License-MIT-green.svg)](#license)
-[![Research](https://img.shields.io/badge/Focus-Quantitative%20Research-orange)](#research-framework)
-[![Status](https://img.shields.io/badge/Status-Active-success)](#development-roadmap)
-[![Market](https://img.shields.io/badge/Market-Vietnam-red)](#)
+It does **not** place orders with a live broker. Historical, paper, and forward
+results are evidence for research and operations; they are not investment
+advice or proof of future profitability.
 
-Quant Stock is an **end-to-end quantitative investment research framework** designed specifically for the Vietnamese stock market.
-
-Unlike many retail trading projects that focus solely on finding profitable entry signals, Quant Stock emphasizes **research quality, statistical validation, portfolio simulation, and systematic strategy development**.
-
-The project provides a complete workflow—from historical market data and technical indicators to portfolio-level backtesting, advanced research diagnostics, and persistent paper execution. Validated signals can be queued for next-session execution, passed through shared position sizing, regime-aware portfolio risk controls, liquidity limits, a simulated broker, SQLite state persistence, lifecycle management, and Telegram notifications before any live deployment is considered.
-
----
-
-# 🎯 Project Vision
-
-Quant Stock is **not** designed to find a "holy grail" trading strategy.
-
-Instead, its mission is to answer a much more important question:
-
-> **Can an investment idea survive rigorous quantitative validation?**
-
-Every strategy should demonstrate:
-
-- Positive long-term expectancy
-- Statistical robustness
-- Stability across different market conditions
-- Portfolio-level profitability
-- Controlled downside risk
-
-Only after passing multiple validation stages should a strategy be considered for further research.
-
----
-
-# 💡 Why Quant Stock?
-
-Many open-source trading projects stop after producing a profitable historical backtest.
-
-Unfortunately, a profitable backtest alone says very little.
-
-A strategy may fail because of:
-
-- Overfitting
-- Survivorship bias
-- Market regime dependency
-- Transaction costs
-- Poor portfolio construction
-- Data snooping
-
-Quant Stock attempts to reduce these risks by integrating multiple validation techniques into a single research framework.
-
-The philosophy is simple:
-
-> **Research first. Trading second.**
-
----
-
-# 🚀 Key Features
-
-## 📊 Market Data
-
-- Historical SQLite database
-- VNINDEX benchmark integration
-- Multi-symbol support
-- Incremental market updates
-- Data freshness validation
-- Centralized OHLCV pipeline
-
----
-
-## 📈 Indicator Engine
-
-Current indicators include:
-
-- EMA (10 / 20 / 50 / 200)
-- RSI
-- ATR
-- ATR Percentage
-- ADX
-- Relative Strength
-- Donchian Channel
-- Volume Ratio
-- Breakout Detection
-- Distance from EMA
-- Momentum Indicators
-
-The indicator layer is reusable across scanning, backtesting, research, and execution.
-
----
-
-## 📌 Entry Models
-
-Implemented strategies:
-
-- Trend Strategy V1
-- Donchian Breakout V1
-- Hybrid Trend + Donchian
-- Market Regime Filter
-
-Strategies follow a common interface so they can be evaluated consistently across the framework.
-
----
-
-## 📉 Exit Models
-
-Supported exit mechanisms:
-
-- ATR Stop Loss
-- ATR Profit Target
-- Time-based Exit
-- Maximum Holding Period
-- Gap-aware Execution
-- Trailing ATR logic in research, portfolio simulation, and paper-position lifecycle
-
----
-
-## 💼 Portfolio Engine
-
-Portfolio simulation includes:
-
-- Cash management
-- Shared position-sizing interface
-- ATR risk sizing
-- Fixed-fraction sizing for benchmarking
-- Transaction costs
-- Slippage
-- Tax
-- Maximum concurrent positions
-- Portfolio heat and exposure controls
-- Equity curve generation
-- Portfolio performance metrics
-
-Unlike many retail backtesting tools, Quant Stock evaluates strategies at the **portfolio level**, providing a more realistic representation of investment performance.
-
----
-
-## 🧪 Paper Trading Execution
-
-The paper-trading layer extends validated research into a simulated execution environment:
-
-- Shared `PositionSizer` implementations with backtesting
-- ATR-based risk sizing by default
-- Pending-signal queue with execution at the next valid VNINDEX session open
-- Order Manager
-- Risk Guard
-- Maximum position and portfolio exposure limits
-- Maximum open positions
-- Regime-aware allocation limits for BULL, SIDEWAY, and BEAR markets
-- ADTV20-based order-liquidity cap using signal-date information only
-- Daily loss limit
-- Kill switch support
-- Commission and slippage simulation
-- Persistent orders, fills, positions, pending signals, lifecycle state, closed trades, and snapshots in SQLite
-- Automated stop-loss, profit-target, trailing-ATR, and maximum-holding-period exits
-- Maximum holding period measured in VNINDEX trading sessions
-- Paper performance analytics for return, win rate, profit factor, expectancy, drawdown, CAGR, volatility, Sharpe, Sortino, and Calmar
-- Duplicate-position prevention
-- Telegram execution summaries
-- Paper mode disabled by configuration when not required
-
-No live broker API is called by the paper-trading workflow.
-
----
-
-## 📲 Notifications
-
-- Daily scanner summaries
-- Signal and watchlist reporting
-- Paper-order execution results
-- Pending-signal and lifecycle execution results
-- Portfolio cash, equity, exposure, and open-position summaries
-- Retry handling for temporary Telegram API failures
-- Safe message splitting and HTML escaping
-
----
-
-## 🔬 Research Framework
-
-Current research modules include:
-
-- Walk Forward Validation
-- Composite Walk Forward Optimization
-- Strategy Ablation Study
-- Monte Carlo Simulation
-- Parameter Stability Analysis
-- Market Regime Analysis
-- Trade Quality Diagnostics
-- Portfolio Benchmarking
-- Portfolio Stress Testing
-- Robustness Scoring
-- Research Integrity Baseline
-- Structural Entry / Exit Matrix
-- Candidate Ranking and Competition Analysis
-- Monthly Momentum Baseline
-- Breadth and Execution Robustness Testing
-- Automated HTML Research Report
-
-These modules help distinguish robust strategies from those that simply fit historical data.
-
----
-
-# 🏗️ System Architecture
-
-```mermaid
-flowchart TD
-    A[(Historical Market Database)] --> B[Indicator Engine]
-    B --> C[Strategy Scanner]
-    C --> D[Pending Signal Queue]
-    D --> E[Next-Session Open Execution]
-    E --> F[Position Sizer and Risk Guard]
-    F --> G[Paper Broker]
-    G --> H[(Paper Trading SQLite)]
-    H --> I[Position Lifecycle Manager]
-    I --> G
-    G --> J[Telegram Notifications]
-
-    C --> K[Backtesting Engine]
-    K --> L[Walk Forward / Monte Carlo / Stress Tests]
-    L --> M[HTML Research Report]
-```
-
-The project now separates research, portfolio construction, execution, persistence, and notification responsibilities.
-
-The same position-sizing abstractions and centralized `TradingPolicy` can be reused by portfolio backtests, scanner logic, and paper execution, reducing the risk that simulated production behavior diverges from the validated research configuration.
-
----
-
-# 🔄 Research and Execution Pipeline
-
-Every investment idea follows a research-first workflow.
+## V1 architecture
 
 ```text
-Historical Market Data
-          │
-          ▼
-Indicator Calculation
-          │
-          ▼
-Signal Generation
-          │
-          ▼
-Portfolio Backtesting
-          │
-          ▼
-Walk Forward Validation
-          │
-          ▼
-Monte Carlo and Stress Testing
-          │
-          ▼
-Parameter and Model Selection
-          │
-          ▼
-Automated Research Report
-          │
-          ▼
-Shared Position Sizing
-          │
-          ▼
-Pending Signal Queue
-          │
-          ▼
-Next VNINDEX Session Open
-          │
-          ▼
-Risk Guard
-          │
-          ▼
-Paper Broker
-          │
-          ▼
-Position Lifecycle Management
-          │
-          ▼
-SQLite Persistence, Analytics, and Telegram
+DATA / INGESTION
+  core/, scripts/update_data.py, data/market.db
+        |
+RESEARCH / EVALUATION
+  quantlab/, backtesting/, research/
+        |
+DECISION GATES
+  frozen policy identities and research decision artifacts
+        |
+FORWARD VALIDATION
+  quantlab/forward/, research/forward_validation/protocol_v1.json
+        |
+PORTFOLIO / RISK / EXECUTION
+  quantlab/portfolio/, quantlab/execution/, execution/
+        |
+DAILY PRODUCTION
+  main.py -> scripts/run_daily.py -> app/daily_pipeline.py
+        |
+MONITORING
+  quantlab/monitoring.py, quantlab/monitoring_history.py
 ```
 
-The objective is not simply to discover profitable trades, but to understand **why a strategy works, when it works, under which conditions it may fail, and how it behaves in a simulated execution environment**.
+The `research/archive/` tree is historical provenance, not the active API.
+Other older research runners are retained when they are needed to reproduce or
+interpret earlier protocols. Generated research evidence belongs under the
+ignored `research_results/` directory.
 
-Paper trading is a validation stage—not evidence that a strategy is suitable for live capital.
+## Canonical production operation
 
----
+The VPS is the sole canonical production runtime and owns persistent market,
+Forward, and paper state. GitHub Actions is not a production scheduler or
+database owner. Run commands from the repository root on the VPS.
 
-# 📂 Repository Structure
-
-```text
-quant-stock/
-│
-├── analysis/                    # Paper and backtest performance analytics
-├── app/                         # Daily pipeline orchestration
-├── backtesting/                 # Backtest, portfolio simulation and diagnostics
-│   └── position_sizers/         # Shared sizing interfaces and implementations
-├── config/                      # Strategy and research configuration
-├── core/                        # Database and shared infrastructure
-├── dashboard/                   # Paper portfolio dashboard
-├── data/                        # Local generated databases (ignored by Git)
-├── execution/                   # Paper broker, risk guard, orders and lifecycle
-├── reporting/                   # Terminal dashboards and reporting helpers
-├── research/                    # Walk forward, Monte Carlo, stress and reports
-├── scripts/                     # Operational and data-update scripts
-├── services/                    # Telegram clients and notification formatters
-├── strategy/                    # Indicators, filters, scanners and entry models
-├── tests/                       # Automated tests
-│
-├── .env.example                 # Environment variable template
-├── requirements.txt
-└── README.md
-```
-
-Generated databases, reports, charts, caches, and local `.env` files should remain outside version control.
-
----
-
-# 📅 Development Journey
-
-The project has evolved through multiple research stages.
-
-| Version | Milestone |
-|----------|-----------|
-| v0.1 | Historical Data Pipeline |
-| v0.2 | Indicator Engine |
-| v0.3 | Trend Strategy |
-| v0.4 | Donchian Breakout |
-| v0.5 | Hybrid Strategy |
-| v0.6 | Portfolio Engine |
-| v0.7 | Walk Forward Validation |
-| v0.8 | Monte Carlo Simulation |
-| v0.9 | Market Regime Analysis |
-| v1.0 | Documentation Release |
-| v1.1 | Paper Execution Foundation |
-| Current | Paper Lifecycle, Next-Session Execution and Analytics |
-| Future | Signal Intelligence Research |
-
-Rather than continuously adding new indicators, development has focused on improving the **quality of research methodology**.
-
----
-
-# 🎓 Design Principles
-
-Several core principles guide the development of Quant Stock.
-
-### 1. Simplicity
-
-Complex strategies are not necessarily better.
-
-Every rule should have a measurable contribution.
-
----
-
-### 2. Reproducibility
-
-Every research result should be reproducible from historical market data.
-
-No manual intervention.
-
-No discretionary adjustments.
-
----
-
-### 3. Robustness
-
-Strategies must survive multiple validation methods before being considered useful.
-
-A single successful backtest is never sufficient evidence.
-
----
-
-### 4. Risk First
-
-Return is only meaningful when evaluated alongside risk.
-
-Sharpe Ratio, Drawdown, Profit Factor, Expectancy, and Portfolio Stability are treated as first-class metrics.
-
----
-
-### 5. Research over Prediction
-
-The objective is not to predict tomorrow's market.
-
-The objective is to develop repeatable investment processes supported by quantitative evidence.
-
----
-
-# ⚙️ Installation
-
-## Prerequisites
-
-Before using Quant Stock, ensure that your environment meets the following requirements.
-
-| Component | Version |
-|-----------|---------|
-| Python | 3.12+ |
-| SQLite | 3.x |
-| Git | Latest |
-| Operating System | Windows / Linux / macOS |
-
----
-
-## Clone Repository
-
-```bash
-git clone https://github.com/dothanhbo/quant-stock.git
-
-cd quant-stock
-```
-
----
-
-## Create Virtual Environment
-
-Windows
-
-```bash
-python -m venv .venv
-
-.venv\Scripts\activate
-```
-
-Linux / macOS
-
-```bash
-python3 -m venv .venv
-
-source .venv/bin/activate
-```
-
----
-
-## Install Dependencies
-
-```bash
-pip install -r requirements.txt
-```
-
----
-
-## Update Market Data
-
-Download the latest market data.
-
-```bash
-python scripts/update_market.py
-```
-
----
-
-## Verify Database
-
-The database should contain
-
-- VNINDEX
-- Listed stocks
-- Historical OHLCV data
-
-Example
-
-```text
-market.db
-
-prices
-
-symbols
-
-...
-```
-
----
-
-# 🚀 Quick Start
-
-## 1. Configure environment variables
-
-Create a local `.env` file. Do not commit it.
-
-```env
-TELEGRAM_TOKEN=
-CHAT_ID=
-
-PAPER_TRADING_ENABLED=false
-PAPER_DATABASE_PATH=data/paper_trading.db
-PAPER_INITIAL_CASH=100000000
-
-PAPER_POSITION_SIZER=atr_risk
-PAPER_RISK_PER_TRADE_PCT=1.0
-PAPER_ATR_STOP_MULTIPLIER=2.0
-PAPER_MAX_POSITION_PCT=20.0
-PAPER_MAX_ORDER_ADTV20_PCT=1.0
-
-TRADING_ENTRY_MODEL=hybrid
-TRADING_EXIT_MODEL=atr
-TRADING_EXECUTION_TIMING=next_open
-TRADING_STOP_ATR_MULTIPLIER=2.0
-TRADING_TARGET_ATR_MULTIPLIER=5.0
-TRADING_TRAILING_ATR_MULTIPLIER=2.0
-TRADING_MAX_HOLDING_DAYS=30
-
-PAPER_MAX_ORDERS_PER_SCAN=3
-PAPER_LOT_SIZE=100
-PAPER_MAX_EXPOSURE_PCT=80
-PAPER_MAX_OPEN_POSITIONS=10
-PAPER_MAX_DAILY_LOSS_PCT=3
-PAPER_MIN_CASH_BUFFER_PCT=5
-```
-
-Keep `PAPER_TRADING_ENABLED=false` until local tests pass.
-
-## 2. Compile the project
-
-```bash
-python -m compileall .
-```
-
-## 3. Run the market scanner
-
-```bash
-python -m strategy.scanner
-```
-
-The scanner evaluates the latest valid market date, prints the signal dashboard, persists new signals, and sends the Telegram summary.
-
-## 4. Run a single-symbol backtest
-
-```bash
-python -m backtesting.engine --symbol HPG --quiet
-```
-
-## 5. Run composite walk-forward validation
-
-```bash
-python -m research.composite_walk_forward --symbols HPG FPT --start 2018-01-01 --end 2024-12-31 --train-years 4 --test-months 12 --step-months 12
-```
-
-## 6. Run portfolio stress testing
-
-```bash
-python -m research.benchmark_portfolio_stress --symbols HPG FPT
-```
-
-## 7. Generate the research dashboard
-
-```bash
-python -m research.generate_research_report
-```
-
-Open the generated HTML file from `research_results/`.
-
-## 8. Test shared position sizing
-
-```bash
-python test_shared_position_sizer.py
-```
-
-## 9. Enable paper trading
-
-After the tests pass, update:
-
-```env
-PAPER_TRADING_ENABLED=true
-```
-
-Then run the complete daily pipeline:
+The one canonical daily entrypoint is:
 
 ```bash
 python -m scripts.run_daily
 ```
 
-For a scan-only run without updating market data or processing the existing paper portfolio:
+`main.py` is a compatibility alias for the same command. The daily stage order
+is:
+
+1. update the resolved current VN100 plus VNINDEX universe;
+2. enforce the market-data integrity gate;
+3. record/mature activated Forward V1 evidence;
+4. execute pending paper entries and manage existing paper positions;
+5. scan the same completed market session and queue new paper signals.
+
+The integrity gate runs even with `--skip-update`. An incomplete provider run,
+missing/stale required symbol, duplicate required key, or invalid OHLCV fails
+closed before Forward, paper, or scanner state can change. A valid prior market
+session on a non-trading day is `NOT_APPLICABLE`; stateful downstream stages
+are skipped rather than replayed against stale data.
+
+Useful diagnostic flags are `--skip-update`, `--skip-lifecycle`, `--skip-scan`,
+and `--stop-on-data-errors`. They do not create a second canonical production
+entrypoint.
+
+## Databases and path contracts
+
+All databases are runtime data and ignored by Git.
+
+| Store | Default | Override / owner |
+|---|---|---|
+| Market OHLCV | repository-root `data/market.db` | explicit function argument, then non-empty `MARKET_DATABASE_PATH`, then the default; relative market paths resolve from repository root |
+| Forward V1 | `data/forward_validation.db` | Forward CLI/runtime `--ledger` or `ledger_path`; append-only after explicit activation |
+| Paper V1 | `data/paper_trading.db` | `PAPER_DATABASE_PATH` |
+| Paper V2 | `data/paper_trading_v2.db` | `PAPER_V2_DATABASE_PATH`, assigned to the common paper runtime by the V2 wrapper |
+| Paper V3 | `data/paper_trading_v3.db` | `PAPER_V3_DATABASE_PATH`, assigned to the common paper runtime by the V3 wrapper |
+
+Market data and paper state are intentionally separate. V2 and V3 paper state
+must also remain isolated. Paper-path overrides are process-working-directory
+relative, so production services run from the repository root and use explicit
+absolute overrides when that cannot be guaranteed.
+
+## Paper policies
+
+The default daily paper policy is frozen Q70 (`Q70_FROZEN`). Set
+`PAPER_STRATEGY_VERSION=V3_BREADTH_40_60` to select the isolated Paper V3
+wrapper. V3 preserves Q70 selection and applies breadth exposure only after a
+candidate passes Q70; see [research/README_V3.md](research/README_V3.md).
+
+Protected entry and exit intents are idempotent and persisted, but paper fills
+remain simulations. Paper execution uses next-session timing, configured costs,
+risk limits, exposure limits, and persistent lifecycle recovery; it is not a
+substitute for broker reconciliation.
+
+## Forward V1
+
+Forward V1 is prospective, append-only evidence governed by
+`research/forward_validation/protocol_v1.json`. Activation is explicit, missed
+formation sessions are audit gaps, and evidence at or before the historical or
+operational activation boundary cannot be backfilled.
+
+Read status without activating or recording a formation:
 
 ```bash
-python -m strategy.scanner
+python -m research.run_quantlab_forward_validation status
 ```
 
-The complete pipeline updates market data, processes pending entries and existing-position exits, then scans the latest valid market session and queues new signals. New entries are filled only at the open of the next valid VNINDEX session; missed executions are not backfilled at a later price.
+The daily production command invokes the Forward daily operation only after a
+successful current-session market-data integrity gate. Do not use the
+`activate`, `record`, or `mature` maintenance commands without following the
+frozen protocol and preserving the ledger first.
 
-Paper execution uses the configured shared position sizer, passes orders through regime, liquidity, and portfolio risk controls, persists account state in SQLite, and sends a consolidated Telegram portfolio update.
+## Configuration
 
-`TRADING_MAX_HOLDING_DAYS` is counted in VNINDEX trading sessions. The production regime policy also caps new allocation at 5 positions / 5% portfolio heat in BULL, 3 positions / 4% heat in SIDEWAY, and blocks new positions in BEAR.
+Keep secrets and host-specific overrides in an untracked `.env`. Do not commit
+tokens, API keys, or database files.
 
-## 10. Generate the paper performance report
+Important active variables include:
+
+| Area | Variables |
+|---|---|
+| Market | `MARKET_DATABASE_PATH` |
+| Paper selection/state | `PAPER_STRATEGY_VERSION`, `PAPER_TRADING_ENABLED`, `PAPER_DATABASE_PATH`, `PAPER_V2_DATABASE_PATH`, `PAPER_V3_DATABASE_PATH` |
+| Frozen execution policy | `TRADING_ENTRY_MODEL`, `TRADING_EXIT_MODEL`, `TRADING_EXECUTION_TIMING`, `TRADING_STOP_ATR_MULTIPLIER`, `TRADING_TARGET_ATR_MULTIPLIER`, `TRADING_TRAILING_ATR_MULTIPLIER`, `TRADING_MAX_HOLDING_DAYS` |
+| Paper sizing/risk/costs | `PAPER_INITIAL_CASH`, `PAPER_POSITION_SIZER`, `PAPER_RISK_PER_TRADE_PCT`, `PAPER_FIXED_FRACTION_PCT`, `PAPER_ATR_STOP_MULTIPLIER`, `PAPER_ATR_TARGET_MULTIPLIER`, `PAPER_MAX_ORDERS_PER_SCAN`, `PAPER_LOT_SIZE`, `PAPER_COMMISSION_RATE`, `PAPER_SLIPPAGE_BPS`, `PAPER_SELL_TAX_RATE`, `PAPER_MAX_POSITION_PCT`, `PAPER_MAX_EXPOSURE_PCT`, `PAPER_MAX_OPEN_POSITIONS`, `PAPER_MAX_DAILY_LOSS_PCT`, `PAPER_MIN_CASH_BUFFER_PCT`, `PAPER_MAX_ORDER_ADTV20_PCT` |
+| Telegram | `TELEGRAM_TOKEN`, `CHAT_ID` |
+| Optional AI explanation | `AI_ANALYSIS_ENABLED`, `GEMINI_API_KEY`, `GEMINI_MODEL`, `AI_ANALYSIS_TIMEOUT_SECONDS`, `AI_ANALYSIS_MAX_OUTPUT_TOKENS` |
+
+V2/V3 wrappers deliberately freeze their entry/exit values before importing
+scanner or lifecycle singletons. Do not use environment overrides to relabel a
+different policy as Q70 or V3.
+
+## Setup and validation
+
+Python 3.12+ and SQLite 3 are expected.
 
 ```bash
+python -m venv .venv
+python -m pip install -r requirements.txt
+python -m pytest -q
+```
+
+Initialize only the market schema selected by the canonical resolver:
+
+```bash
+python -m scripts.init_db
+```
+
+Operational and maintenance commands:
+
+```bash
+# Market-only incremental update (network/provider access)
+python -m scripts.update_data
+
+# Read/check current universe coverage
+python -m scripts.check_market_data --summary-only
+
+# Paper performance report
 python -m scripts.report_paper_performance --database data/paper_trading.db
-```
 
-The report reads closed trades and daily snapshots from SQLite and calculates realized performance, win rate, profit factor, expectancy, drawdown, CAGR, volatility, Sharpe, Sortino, and Calmar.
+# Read-only Telegram query service (separate VPS process)
+python -m services.telegram_bot.app
 
-## 11. Run the paper dashboard
-
-```bash
+# Paper dashboard
 python -m streamlit run dashboard/app.py
+
+# Persist one monitoring snapshot under research_results/
+python -m research.run_quantlab_monitoring_snapshot
+
+# Compare persisted monitoring snapshots
+python -m research.run_quantlab_monitoring_history
 ```
 
----
-
-# 📊 Market Data
-
-Quant Stock is designed around a centralized historical database.
-
-Current data includes
-
-- Open
-- High
-- Low
-- Close
-- Volume
-
-Benchmark
-
-- VNINDEX
-
-The database serves as the single source of truth for every research module.
-
-This ensures that
-
-- every strategy uses identical data
-- research is reproducible
-- historical experiments remain consistent
-
----
-
-# 🧮 Indicator Engine
-
-The Indicator Engine transforms raw market data into reusable quantitative features.
-
-Current implementation includes
-
-| Indicator | Purpose |
-|-----------|----------|
-| EMA10 | Short trend |
-| EMA20 | Intermediate trend |
-| EMA50 | Medium trend |
-| EMA200 | Long-term trend |
-| RSI | Momentum |
-| ATR | Volatility |
-| ATR % | Relative volatility |
-| ADX | Trend strength |
-| Relative Strength | Stock vs VNINDEX |
-| Volume Ratio | Volume expansion |
-| Donchian High | Breakout detection |
-| Distance EMA20 | Extension measurement |
-| Return 3D | Overheating filter |
-
-Indicators are calculated only once and reused throughout the research pipeline.
-
-This design greatly reduces duplicated computation.
-
----
-
-# 🎯 Strategy Framework
-
-Every strategy inherits from a common base interface.
-
-```text
-BaseStrategy
-
-↓
-
-Trend Strategy
-
-↓
-
-Donchian Strategy
-
-↓
-
-Hybrid Strategy
-```
-
-This modular architecture allows new strategies to be added without modifying the backtesting engine.
-
----
-
-## Trend Strategy
-
-Designed to capture sustained market trends.
-
-Core concepts
-
-- EMA alignment
-- Trend confirmation
-- ADX filter
-- Volume confirmation
-- Relative Strength
-
-Suitable for
-
-- trending markets
-- medium-term swing trading
-
----
-
-## Donchian Breakout
-
-Designed to detect momentum breakouts.
-
-Core concepts
-
-- 20-day breakout
-- volume expansion
-- trend confirmation
-- breakout validation
-- ATR risk management
-
-Suitable for
-
-- momentum trading
-- breakout continuation
-
----
-
-## Hybrid Strategy
-
-Combines
-
-- Trend Following
-
-and
-
-- Donchian Breakout
-
-Current modes
-
-- Strict
-- Trend Context
-- Score Blend
-
-Research shows that different hybrid modes perform differently under changing market conditions.
-
----
-
-# 🌍 Market Regime
-
-One of the key features of Quant Stock is the ability to classify the market environment before evaluating trading opportunities.
-
-Current regimes
-
-- BULL
-- SIDEWAY
-- BEAR
-
-The classification currently uses
-
-- EMA50
-- EMA200
-- EMA50 slope
-- 20-day return
-
-instead of relying on simple moving-average crossovers.
-
-This approach helps reduce false regime changes during noisy periods.
-
-Market regime is used by
-
-- Hybrid Strategy
-- Signal Evaluation
-- Portfolio exposure policy
-- Paper entry authorization
-- Research Diagnostics
-- Trade Quality Analysis
-
-Current production allocation policy
-
-- BULL: maximum 5 positions and 5% portfolio heat
-- SIDEWAY: maximum 3 positions and 4% portfolio heat
-- BEAR: no new positions
-
-Future versions may include
-
-- Volatility Regime
-- Breadth Indicators
-- Macro Filters
-
----
-
-# 💰 Portfolio Engine
-
-Unlike traditional single-stock backtests, Quant Stock evaluates strategies using a portfolio simulation engine.
-
-Current features
-
-- Cash management
-- Position sizing
-- Maximum concurrent positions
-- Transaction costs
-- Buy commission
-- Sell commission
-- Sell tax
-- Buy slippage
-- Sell slippage
-- Equity curve
-- Portfolio statistics
-
-The engine supports realistic execution assumptions instead of idealized fills.
-
----
-
-## Transaction Cost Model
-
-Each trade includes
-
-- Buy commission
-- Sell commission
-- Transaction tax
-- Slippage
-
-These costs are included automatically in
-
-- Net PnL
-- Portfolio Return
-- Equity Curve
-- Drawdown
-- Sharpe Ratio
-
-This makes research results significantly closer to real-world performance.
-
----
-
-## Portfolio Statistics
-
-The engine currently reports
-
-- Total Return
-- CAGR
-- Maximum Drawdown
-- Sharpe Ratio
-- Sortino Ratio
-- Profit Factor
-- Win Rate
-- Expectancy
-- Transaction Cost
-- Final Equity
-
-Future versions will also include
-
-- Calmar Ratio
-- Ulcer Index
-- Rolling Sharpe
-- Rolling Drawdown
-
----
-
-# 🔧 Extending the Framework
-
-Adding a new strategy requires only two steps.
-
-### Step 1
-
-Create a new class
-
-```python
-class MyStrategy(BaseStrategy):
-    ...
-```
-
-### Step 2
-
-Implement
-
-```python
-evaluate(...)
-```
-
-The strategy automatically becomes compatible with
-
-- Backtesting
-- Portfolio Engine
-- Walk Forward
-- Monte Carlo
-- Trade Diagnostics
-- Market Regime
-- Research Reports
-
-No changes are required elsewhere in the framework.
-
----
-
-# 📈 Design Philosophy
-
-Quant Stock follows a modular research-first architecture.
-
-Every module has one responsibility.
-
-```text
-Market Data
-
-↓
-
-Indicators
-
-↓
-
-Strategies
-
-↓
-
-Portfolio
-
-↓
-
-Research
-
-↓
-
-Reports
-```
-
-This separation makes the framework
-
-- easy to maintain
-- easy to test
-- easy to extend
-
-while reducing coupling between components.
-
----
-
-# 🔬 Research Framework
-
-A profitable historical backtest alone is not sufficient evidence that a strategy possesses a genuine trading edge.
-
-Quant Stock therefore applies multiple layers of validation to every strategy before drawing conclusions.
-
-The objective is to determine whether a strategy is
-
-- statistically robust,
-- stable across different market environments,
-- resilient to parameter changes,
-- and capable of surviving realistic portfolio simulation.
-
-Current research modules include
-
-- Walk Forward Validation
-- Monte Carlo Simulation
-- Parameter Stability Analysis
-- Market Regime Analysis
-- Portfolio Backtesting
-- Trade Quality Diagnostics
-- Strategy Ablation Study
-- Research Integrity Baseline
-- Structural Entry / Exit Matrix
-- Candidate Ranking and Competition Analysis
-- Monthly Momentum Baseline
-- Breadth and Execution Robustness Testing
-
-Together, these modules form the core research workflow of Quant Stock.
-
----
-
-# 🔄 Walk Forward Validation
-
-One of the biggest dangers in quantitative investing is **overfitting**.
-
-A strategy that performs well on historical data may simply be memorizing the past rather than capturing a persistent market behavior.
-
-To reduce this risk, Quant Stock uses **Walk Forward Validation**.
-
-The process is illustrated below.
-
-```text
-Training Window
-
-↓
-
-Optimize Strategy
-
-↓
-
-Freeze Parameters
-
-↓
-
-Out-of-Sample Test
-
-↓
-
-Slide Forward
-
-↓
-
-Repeat
-```
-
-Unlike a traditional backtest, Walk Forward repeatedly evaluates a strategy on **previously unseen data**.
-
-This provides a much stronger indication of whether the observed performance is likely to generalize.
-
-Current implementation supports
-
-- multiple rolling windows
-- fixed training periods
-- out-of-sample evaluation
-- portfolio-level validation
-
----
-
-# 🎲 Monte Carlo Simulation
-
-Historical trades represent only one possible sequence of outcomes.
-
-Real markets may produce trades in a completely different order.
-
-To estimate the range of possible future performance, Quant Stock applies **Monte Carlo Simulation**.
-
-Two simulation methods are currently implemented.
-
----
-
-## Shuffle Simulation
-
-Trade results are randomly reordered while preserving the original trade distribution.
-
-Purpose
-
-- evaluate sequence risk
-- estimate drawdown variability
-- assess return stability
-
----
-
-## Bootstrap Simulation
-
-Trades are randomly sampled **with replacement**.
-
-Purpose
-
-- estimate confidence intervals
-- simulate unseen market paths
-- evaluate robustness under uncertainty
-
----
-
-Current outputs include
-
-- Probability of Profit
-- Probability of Loss
-- Probability of CAGR > 5%
-- Probability of CAGR > 10%
-- Drawdown Distribution
-- Sharpe Distribution
-- Profit Factor Distribution
-- Final Equity Distribution
-
-Rather than focusing on a single historical outcome, Monte Carlo evaluates thousands of plausible futures.
-
----
-
-# ⚙️ Parameter Stability Analysis
-
-Many trading systems perform well only under one specific parameter combination.
-
-Such systems are often fragile and fail after deployment.
-
-Quant Stock evaluates parameter robustness by testing multiple combinations across
-
-- ATR Stop
-- ATR Target
-- Maximum Holding Period
-
-Each configuration is compared using
-
-- CAGR
-- Sharpe Ratio
-- Drawdown
-- Profit Factor
-- Expectancy
-
-The goal is **not** to identify the single best parameter set.
-
-Instead, the objective is to identify **stable regions** where performance remains consistently acceptable.
-
-Strategies with broad stability are preferred over those requiring highly specific parameter values.
-
----
-
-# 🌍 Market Regime Analysis
-
-Market behavior changes over time.
-
-A strategy that performs well during strong bull markets may fail during sideways or bearish environments.
-
-Quant Stock therefore classifies every trading day into one of three regimes.
-
-- BULL
-- SIDEWAY
-- BEAR
-
-Current classification uses
-
-- EMA50
-- EMA200
-- EMA50 slope
-- 20-day index return
-
-Every completed trade is linked to the corresponding market regime.
-
-This allows research questions such as
-
-- Does the strategy perform better in bull markets?
-- How does expectancy change during bear markets?
-- Should position sizing depend on market regime?
-
-Market regime statistics include
-
-- win rate
-- average return
-- expectancy
-- holding period
-- payoff ratio
-- profit factor
-
----
-
-# 📈 Portfolio Research
-
-Single-stock backtests can produce misleading conclusions.
-
-Capital allocation constraints, overlapping positions, and cash management significantly influence real investment performance.
-
-Quant Stock therefore evaluates strategies using a portfolio simulation engine.
-
-Current portfolio features include
-
-- maximum concurrent positions
-- capital allocation
-- realistic transaction costs
-- slippage
-- taxation
-- cash management
-- equity tracking
-
-Portfolio-level evaluation provides a much more realistic estimate of long-term investment performance.
-
----
-
-# 🧪 Trade Quality Diagnostics
-
-Every completed trade contains additional diagnostic information beyond simple profit and loss.
-
-Examples include
-
-- Signal Score
-- Relative Strength
-- ADX
-- Volume Ratio
-- Market Regime
-- Entry Model
-- Holding Period
-
-These attributes allow trades to be grouped and analyzed after the backtest.
-
-Typical research questions include
-
-- Do higher Signal Scores produce better returns?
-- Does stronger Relative Strength improve expectancy?
-- Which ADX range performs best?
-- Does high volume improve breakout quality?
-- Which entry model produces the highest quality trades?
-
-Trade diagnostics transform a backtest into a structured research dataset.
-
----
-
-# 🧩 Strategy Ablation Study
-
-A strategy often contains multiple rules.
-
-Not every rule contributes equally.
-
-Quant Stock supports ablation studies by removing or modifying individual components and measuring the resulting impact.
-
-Examples include
-
-- removing ADX filter
-- removing Relative Strength
-- disabling Volume confirmation
-- disabling Market Regime
-- replacing Trend Entry
-- replacing Exit Model
-
-The objective is to identify
-
-- essential rules
-- redundant filters
-- unnecessary complexity
-
-This helps keep strategies both simple and effective.
-
----
-
-# 📊 Performance Metrics
-
-Every experiment reports a common set of evaluation metrics.
-
-Performance
-
-- Total Return
-- CAGR
-- Final Equity
-
-Risk
-
-- Maximum Drawdown
-- Volatility
-
-Risk-adjusted Performance
-
-- Sharpe Ratio
-- Sortino Ratio
-- Calmar Ratio (planned)
-
-Trade Statistics
-
-- Win Rate
-- Profit Factor
-- Payoff Ratio
-- Expectancy
-- Average Holding Period
-
-Portfolio Statistics
-
-- Maximum Open Positions
-- Cash Utilization
-- Transaction Cost
-- Equity Curve
-
----
-
-# 📚 Research Findings
-
-The following observations have been obtained from the current research process.
-
-### Finding 1
-
-Portfolio-level evaluation provides substantially different conclusions from isolated single-stock backtests.
-
----
-
-### Finding 2
-
-Strategies that appear profitable in historical backtests may fail Walk Forward Validation.
-
----
-
-### Finding 3
-
-Parameter stability is often more valuable than maximizing historical return.
-
----
-
-### Finding 4
-
-Market regime significantly influences both expectancy and drawdown.
-
----
-
-### Finding 5
-
-Monte Carlo Simulation provides a more realistic estimate of future uncertainty than a single historical equity curve.
-
----
-
-### Finding 6
-
-Transaction costs have a measurable impact on long-term portfolio performance and should always be included during research.
-
----
-
-### Finding 7
-
-Hybrid strategies generally exhibit more stable behavior across different market environments than purely trend-following approaches.
-
----
-
-### Finding 8
-
-Candidate ranking changes the selected portfolio on only approximately 3% of trading days under the current constraints.
-
----
-
-### Finding 9
-
-Replacement opportunities occur in only approximately 2% of candidate trades, so automatic position replacement is not justified under the current assumptions.
-
----
-
-### Finding 10
-
-Trend Strategy V1 did not survive the current research-integrity baseline and is not used as the production entry policy. The validated paper policy currently uses Hybrid Trend Context.
-
----
-
-# 🏆 Current Research and Execution Status
-
-| Module | Status |
-|---------|--------|
-| Market Data Pipeline | ✅ |
-| Indicator Engine | ✅ |
-| Trend Strategy | ✅ |
-| Donchian Breakout | ✅ |
-| Hybrid Strategy | ✅ |
-| Signal Scoring and Watchlist | ✅ |
-| Market Regime Adaptation | ✅ |
-| Portfolio Engine | ✅ |
-| Shared Position Sizing | ✅ |
-| Walk Forward Validation | ✅ |
-| Composite Walk Forward | ✅ |
-| Monte Carlo Simulation | ✅ |
-| Parameter Stability | ✅ |
-| Portfolio Stress Testing | ✅ |
-| Robustness Scoring | ✅ |
-| Research Integrity Baseline | ✅ |
-| Structural Entry / Exit Matrix | ✅ |
-| Candidate Ranking and Competition | ✅ |
-| Monthly Momentum Baseline | ✅ |
-| Breadth and Execution Robustness | ✅ |
-| Automated HTML Research Report | ✅ |
-| Telegram Scanner Notification | ✅ |
-| Paper Broker | ✅ |
-| Risk Guard | ✅ |
-| SQLite Paper Persistence | ✅ |
-| Next-Session Open Execution | ✅ |
-| ADTV20 Liquidity Guard | ✅ |
-| Regime Portfolio Exposure Policy | ✅ |
-| Paper Execution Telegram Summary | ✅ |
-| Order Exit Lifecycle | ✅ |
-| Paper Performance Analytics | ✅ |
-| Forward Paper Validation | 🚧 |
-| Live Broker Integration | 📅 Planned |
-| Machine Learning Ranking | 📅 Planned |
-
----
-
-# 📈 Current Performance Snapshot
-
-One of the strongest configurations discovered so far achieved
-
-| Metric | Value |
-|---------|------:|
-| Total Return | +70.40% |
-| CAGR | 7.24% |
-| Sharpe Ratio | 1.58 |
-| Profit Factor | 1.41 |
-| Max Drawdown | -13.94% |
-
-These results were obtained using portfolio-level backtesting with realistic transaction costs.
-
-Historical performance is presented for research purposes only and should not be interpreted as a guarantee of future returns.
-
----
-
-# 🛣️ Development Roadmap
-
-Quant Stock follows an iterative, research-driven development process. New execution capabilities are added only after their corresponding research and risk assumptions are testable.
-
-## ✅ Phase 1 — Research Foundation
-
-Completed:
-
-- Historical market database and update pipeline
-- Indicator engine
-- Trend, Donchian, and hybrid entry models
-- Exit models and transaction-cost assumptions
-- Portfolio-level backtesting
-- Walk Forward Validation
-- Monte Carlo simulation
-- Parameter stability and diagnostics
-- Market regime analysis
-
-## ✅ Phase 2 — Portfolio Research and Robustness
-
-Completed:
-
-- Shared `PositionSizer` interface
-- Fixed-fraction and ATR risk sizing
-- Portfolio allocation diagnostics
-- Composite weighting research
-- Portfolio stress scenarios
-- Robustness ranking
-- Automated HTML research dashboard
-
-## ✅ Phase 3 — Paper Execution Foundation
-
-Completed:
-
-- Telegram client refactor
-- Notification formatter separation
-- Paper Broker
-- Order Manager
-- Risk Guard
-- Commission and slippage simulation
-- SQLite persistence
-- Shared sizing between backtesting and paper trading
-- Paper execution Telegram summaries
-- Duplicate-position prevention
-- Portfolio cash, equity, and exposure reporting
-
-## 🚧 Phase 4 — Paper Trading Validation and Analytics
-
-Implemented:
-
-- Mark-to-market updates
-- Stop-loss and take-profit execution
-- Working ATR trailing stop with persisted ATR and highest-price state
-- Maximum holding period based on VNINDEX trading sessions
-- Pending-signal queue and next-session open execution
-- Missed-execution protection without late backfilling
-- ADTV20 order-liquidity cap using signal-date data
-- BULL, SIDEWAY, and BEAR portfolio-exposure policy
-- Exit-signal processing and position lifecycle persistence
-- Order and position reconciliation
-- Daily portfolio snapshots
-- Realized and unrealized performance analytics
-- Paper equity curve
-- Win rate, profit factor, expectancy, drawdown, CAGR, Sharpe, Sortino, and Calmar reporting
-- Consolidated lifecycle, execution, and portfolio Telegram reporting
-
-Current validation focus:
-
-- Accumulate a sufficiently long forward paper-trading sample
-- Monitor execution drift, rejected orders, and missed sessions
-- Review lifecycle behavior across different market regimes
-- Validate portfolio analytics after enough trades and daily snapshots exist
-- Improve daily and weekly operational summaries where evidence justifies it
-
-## 📅 Phase 5 — Controlled Live-Execution Preparation
-
-Planned only after paper validation:
-
-- Broker adapter interface
-- Live order reconciliation
-- Partial-fill handling
-- Idempotent retries
-- Trading-session validation
-- Heartbeat and connection monitoring
-- Audit logging
-- Emergency kill switch
-- Deployment and operational monitoring
-
-## 📅 Phase 6 — Signal Intelligence Research
-
-Potential future work:
-
-- Probability-calibrated signal ranking
-- Feature engineering
-- Machine-learning-assisted prioritization
-- Explainable model diagnostics
-- Sector and correlation-aware allocation
-
-Live execution is intentionally not treated as a shortcut. It remains downstream of research validation, paper execution, lifecycle management, and operational risk controls.
-
----
-
-# 🔮 Future Research
-
-The framework is intentionally designed to remain open for future extensions.
-
-Possible research topics include
-
-### Portfolio Construction
-
-- Risk Parity
-- Minimum Variance
-- Hierarchical Risk Parity
-- Equal Risk Contribution
-
----
-
-### Signal Engineering
-
-- Relative Strength Ranking
-- Breadth Indicators
-- Sector Rotation
-- Momentum Ranking
-- Volatility Filters
-
----
-
-### Risk Management
-
-- Dynamic Stop Loss
-- ATR Position Sizing
-- Regime-dependent Risk
-- Tail Risk Analysis
-
----
-
-### Machine Learning
-
-Potential models
-
-- Logistic Regression
-- Random Forest
-- XGBoost
-- LightGBM
-- CatBoost
-
-Potential applications
-
-- Trade Ranking
-- Signal Filtering
-- Win Probability
-- Return Prediction
-
----
-
-### Alternative Data
-
-Possible future integrations
-
-- Macroeconomic indicators
-- Interest rates
-- Foreign investor flows
-- ETF flows
-- Financial statements
-- Earnings surprises
-
----
-
-# 📖 Lessons Learned
-
-Throughout the development of Quant Stock, several important lessons emerged.
-
-### 1.
-
-A profitable backtest alone provides little evidence of a genuine edge.
-
----
-
-### 2.
-
-Portfolio-level evaluation produces very different conclusions from isolated stock testing.
-
----
-
-### 3.
-
-Walk Forward Validation exposes overfitting much more effectively than historical optimization.
-
----
-
-### 4.
-
-Parameter robustness is generally more valuable than selecting the single best parameter combination.
-
----
-
-### 5.
-
-Transaction costs should always be included during research.
-
-Ignoring realistic execution assumptions significantly overestimates long-term performance.
-
----
-
-### 6.
-
-Market Regime explains a considerable portion of strategy performance variation.
-
----
-
-### 7.
-
-Simple strategies often generalize better than highly optimized rule sets.
-
----
-
-# 🤝 Contributing
-
-Contributions are welcome.
-
-Potential contribution areas include
-
-- New indicators
-- New strategies
-- Portfolio optimization
-- Research modules
-- Documentation improvements
-- Bug fixes
-- Performance optimization
-
-Before opening a Pull Request, please ensure
-
-- Code follows project style
-- Tests pass successfully
-- Documentation is updated
-- New functionality includes appropriate comments
-
----
-
-# 🧪 Testing Philosophy
-
-Every new feature should satisfy three conditions.
-
-1.
-
-It produces reproducible results.
-
-2.
-
-It does not break existing research modules.
-
-3.
-
-It can be validated using historical market data.
-
----
-
-# 📚 References
-
-The following resources inspired parts of this project.
-
-Books
-
-- Advances in Financial Machine Learning
-- Trading Systems and Methods
-- Quantitative Trading
-- Algorithmic Trading
-
-Research Topics
-
-- Walk Forward Optimization
-- Monte Carlo Analysis
-- Risk Management
-- Portfolio Theory
-- Trend Following
-- Momentum Investing
-
----
-
-# 📄 License
-
-This project is released under the MIT License.
-
-You are free to
-
-- use
-- modify
-- distribute
-- extend
-
-provided the original license is retained.
-
----
-
-# ⚠️ Disclaimer
-
-This repository is intended solely for
-
-- educational purposes
-- quantitative research
-- strategy development
-
-Nothing contained in this repository constitutes financial advice, investment advice, or a recommendation to buy or sell any financial instrument.
-
-Past performance does not guarantee future results.
-
-Users remain solely responsible for all investment decisions.
-
----
-
-# 👨‍💻 Author
-
-Developed by **Do Thanh Bo**
-
-MBA Student | Quantitative Research Enthusiast | Vietnamese Stock Market
-
-GitHub
-
-https://github.com/dothanhbo
-
----
-
-# ⭐ Acknowledgements
-
-This project would not exist without
-
-- the open-source Python ecosystem,
-- the Vietnamese quantitative investing community,
-- and the many researchers who have shared their work on systematic trading.
-
-Special thanks to everyone who contributes to open financial research.
-
----
-
-# 📈 Project Status
-
-Current Version
-
-```text
-v1.1 — Research Framework with Paper Execution and Lifecycle Validation
-```
-
-Status
-
-```text
-Active Development
-```
-
-Primary Focus
-
-```text
-Forward Paper Trading Validation, Portfolio Analytics and Execution Monitoring
-```
-
-Current Stage
-
-```text
-Phase 4
-```
-
----
-
-# 🎯 Final Thoughts
-
-Quant Stock was never intended to become another trading bot.
-
-Its primary objective is to become a **quantitative research and controlled execution framework** capable of testing ideas objectively, validating assumptions statistically, and carrying validated signals into a persistent paper-trading environment before any live-capital decision.
-
-Every module—from data collection and indicator calculation to portfolio simulation and research diagnostics—has been developed with a single philosophy:
-
-> **Research first. Evidence second. Execution last.**
-
-The framework will continue evolving toward a more robust, transparent, and reproducible environment. The near-term priority is now to accumulate forward paper-trading evidence, monitor execution and lifecycle behavior, validate portfolio analytics over a meaningful sample, and strengthen operational safety before live-broker integration is considered.
-
-If this repository helps your own research or learning journey, consider giving it a ⭐ and sharing your ideas through discussions or pull requests.
-
-Happy Research!
+The Telegram query process and daily pipeline may share the canonical market
+database, but only one Telegram `getUpdates` consumer should use a bot token at
+a time. AI analysis is explanatory only and cannot alter Quant decisions.
+
+## Research boundary
+
+`quantlab/` contains the deterministic data, feature, evaluation, portfolio,
+risk, execution-realism, Forward, and monitoring contracts used by current
+canonical research. `backtesting/` and `strategy/` retain compatible historical
+and production-parity machinery. Standalone runners under `research/` are not
+production schedules; each must preserve its inputs, identities, universe,
+costs, and output directory.
+
+Database coverage is not historical VN100 membership. Historical comparisons
+that apply the current VN100 retrospectively remain explicitly biased legacy
+comparisons. Do not overwrite or relabel earlier canonical artifacts.
+
+## Repository map
+
+| Path | Role |
+|---|---|
+| `core/` | canonical paths, database access, universe and market integrity |
+| `quantlab/` | deterministic research, Forward, risk, execution, and monitoring infrastructure |
+| `backtesting/` | historical candidate, simulation, metrics, WFO, and compatibility infrastructure |
+| `strategy/` | feature/entry/scanner and Q70/V3 paper policy surfaces |
+| `execution/` | paper broker, persistence, idempotent entry/exit lifecycle and risk guards |
+| `app/` | daily orchestration |
+| `scripts/` | supported production and maintenance entrypoints |
+| `services/` | Telegram transport/query/formatting and optional AI explanation |
+| `research/` | canonical research runners, protocol inputs, and historical provenance |
+| `analysis/`, `reporting/`, `dashboard/` | paper/backtest inspection and presentation |
+| `tests/` | current and frozen-contract regression coverage |
+
+## V1 limitations
+
+- There is no live-broker adapter or automated broker order execution.
+- Paper fills and costs cannot reproduce exchange queues, partial fills, or
+  institutional order-book impact.
+- Historical provider/price-unit and corporate-action provenance is incomplete
+  for some evidence; retained audits describe the boundary.
+- Database coverage does not reconstruct point-in-time historical VN100.
+- Forward V1 evidence accumulates prospectively and cannot be backfilled; its
+  sample and monitoring history may remain sparse.
+- Historical paper records can have weaker provenance than current idempotent
+  entry/exit records.
+- The VPS is a single canonical runtime, not high-availability infrastructure;
+  backup, retention, process supervision, and filesystem durability remain VPS
+  operational responsibilities.
+- Historical profitability is not validated future edge.
+
+## License
+
+MIT. See [LICENSE](LICENSE).
