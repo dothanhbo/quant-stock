@@ -4,6 +4,10 @@ import argparse
 import math
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+from config.paper_store import resolve_active_paper_store
+
 from analysis.paper_performance import (
     calculate_paper_performance,
     load_closed_trades_frame,
@@ -44,9 +48,9 @@ def build_parser() -> argparse.ArgumentParser:
 
     parser.add_argument(
         "--database",
-        default="data/paper_trading.db",
+        default=None,
         help=(
-            "Đường dẫn paper_trading.db."
+            "Đường dẫn paper database; mặc định là active store."
         ),
     )
 
@@ -265,10 +269,13 @@ def export_report(
 
 
 def main() -> None:
+    load_dotenv()
     args = build_parser().parse_args()
 
-    database_path = Path(
-        args.database
+    database_path = (
+        Path(args.database)
+        if args.database is not None
+        else resolve_active_paper_store().database_path
     )
 
     report = calculate_paper_performance(

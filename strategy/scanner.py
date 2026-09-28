@@ -7,6 +7,7 @@ import pandas as pd
 from sqlalchemy import text
 from dotenv import load_dotenv
 
+from config.paper_store import apply_active_paper_store_environment
 from config.strategy_loader import COMMON_CONFIG
 from config.trading_policy import TradingPolicy
 from core.database import engine, get_reference_market_date, get_symbol_latest_dates, load_price_data
@@ -52,6 +53,7 @@ def initialize_scanner_runtime() -> PaperSignalExecutor:
     """Initialize persistent paper state only when the scanner actually runs."""
     global paper_signal_executor
     if paper_signal_executor is None:
+        apply_active_paper_store_environment()
         paper_signal_executor = PaperSignalExecutor.from_env()
     return paper_signal_executor
 

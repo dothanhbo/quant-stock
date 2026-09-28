@@ -2,6 +2,8 @@ from __future__ import annotations
 
 import os
 
+from config.paper_store import V3_STRATEGY_IDENTITY, apply_active_paper_store_environment
+
 from config.strategy_config import V3_BREADTH_PAPER
 from config import trading_policy
 from strategy.paper_v3_scanner import PaperV3Scanner
@@ -9,12 +11,8 @@ from strategy.paper_v3_scanner import PaperV3Scanner
 
 def configure() -> None:
     os.environ["PAPER_TRADING_ENABLED"] = "true"
-    os.environ["PAPER_DATABASE_PATH"] = os.getenv(
-        "PAPER_V3_DATABASE_PATH",
-        "data/paper_trading_v3.db",
-    )
+    apply_active_paper_store_environment(strategy_identity=V3_STRATEGY_IDENTITY)
     os.environ["TRADING_EXIT_MODEL"] = "atr"
-    os.environ["PAPER_STRATEGY_VERSION"] = "V3_BREADTH_40_60"
     trading_policy.apply_strategy_config(V3_BREADTH_PAPER)
     os.environ["TRADING_TRAILING_ATR_MULTIPLIER"] = "2.0"
     os.environ["PAPER_V2_ENABLED"] = "false"

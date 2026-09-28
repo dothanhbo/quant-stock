@@ -38,6 +38,14 @@ from dashboard.data import (
     load_snapshots,
     load_vnindex,
 )
+from config.paper_store import configured_paper_environment, resolve_active_paper_store
+
+
+DEFAULT_PAPER_DATABASE = str(
+    resolve_active_paper_store(
+        configured_paper_environment(root=PROJECT_ROOT)
+    ).database_path
+)
 
 
 st.set_page_config(
@@ -1354,7 +1362,7 @@ def main() -> None:
 
     paper_db = st.sidebar.text_input(
         "Paper DB",
-        "data/paper_trading.db",
+        DEFAULT_PAPER_DATABASE,
     )
 
     try:

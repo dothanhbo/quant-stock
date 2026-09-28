@@ -3,12 +3,6 @@ from __future__ import annotations
 from manager.view_models import DashboardViewModel
 
 
-def _state_label(*, exists: bool, readable: bool) -> str:
-    if not exists:
-        return "MISSING"
-    return "AVAILABLE" if readable else "UNKNOWN"
-
-
 def render(model: DashboardViewModel) -> None:
     import streamlit as st
 
@@ -35,10 +29,39 @@ def render(model: DashboardViewModel) -> None:
     market_columns[3].metric("Symbols", snapshot.market.symbol_count if snapshot.market.symbol_count is not None else "UNKNOWN")
 
     st.subheader("Persistent State")
-    state_columns = st.columns(len(snapshot.persistent_databases))
-    for column, state in zip(state_columns, snapshot.persistent_databases, strict=True):
-        column.metric(state.label, _state_label(exists=state.exists, readable=state.readable))
-    st.caption("Availability is a storage fact, not a strategy-health assessment.")
+    state_columns = st.columns(4)
+    active = model.paper.active_store
+    if active is None:
+        state_columns[0].metric("Paper active store", "UNKNOWN")
+        state_columns[1].metric("Paper strategy", "UNKNOWN")
+        state_columns[2].metric("Paper state", "UNKNOWN")
+    else:
+        state_columns[0].metric("Paper active store", active.display_name)
+        state_columns[1].metric("Paper strategy", active.strategy_identity)
+        if not active.exists:
+            paper_state = "MISSING"
+        elif not active.readable or active.open_position_count is None:
+            paper_state = "UNKNOWN"
+        else:
+            paper_state = (
+                f"{active.open_position_count} open · "
+                f"{active.pending_signal_count if active.pending_signal_count is not None else 'UNKNOWN'} pending"
+            )
+        state_columns[2].metric("Paper state", paper_state)
+    forward = model.forward
+    if not forward.exists:
+        forward_value = "MISSING"
+    elif not forward.readable or forward.active_protocol_count is None:
+        forward_value = "UNKNOWN"
+    else:
+        forward_value = f"{forward.active_protocol_count} active"
+    state_columns[3].metric("Forward", forward_value)
+    inactive_state = any(
+        (store.open_position_count or 0) > 0 or (store.pending_signal_count or 0) > 0
+        for store in model.paper.other_stores
+    )
+    st.caption(f"Inactive paper state: {'PRESENT' if inactive_state else 'NONE'}")
+    st.caption("Counts reflect persisted state, not strategy health or current market valuation.")
 
     st.subheader("Research")
     research_columns = st.columns(2)

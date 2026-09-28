@@ -7,6 +7,12 @@ import sys
 
 from dotenv import load_dotenv
 
+from config.paper_store import (
+    V3_STRATEGY_IDENTITY,
+    apply_active_paper_store_environment,
+    effective_paper_strategy,
+)
+
 from app.daily_pipeline import (
     DailyPipeline,
 )
@@ -112,16 +118,11 @@ def run_forward_validation_daily():
     return result
 
 
-PAPER_V3_VERSION = "V3_BREADTH_40_60"
+PAPER_V3_VERSION = V3_STRATEGY_IDENTITY
 
 
 def _use_v3() -> bool:
-    import os
-
-    return (
-        os.getenv("PAPER_STRATEGY_VERSION", "Q70_FROZEN").strip().upper()
-        == PAPER_V3_VERSION
-    )
+    return effective_paper_strategy() == PAPER_V3_VERSION
 
 
 def run_paper_v2_lifecycle():
@@ -157,6 +158,7 @@ def run_strategy_scanner(
 
 def main() -> int:
     load_dotenv()
+    apply_active_paper_store_environment()
     args = build_parser().parse_args()
     resolve_required_market_symbols.cache_clear()
     bootstrap_market_database()

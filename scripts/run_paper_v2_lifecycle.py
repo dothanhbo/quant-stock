@@ -4,13 +4,12 @@ from __future__ import annotations
 
 import os
 
+from config.paper_store import Q70_STRATEGY_IDENTITY, apply_active_paper_store_environment
+
 
 def main():
     os.environ["PAPER_TRADING_ENABLED"] = "true"
-    os.environ["PAPER_DATABASE_PATH"] = os.getenv(
-        "PAPER_V2_DATABASE_PATH",
-        "data/paper_trading_v2.db",
-    )
+    apply_active_paper_store_environment(strategy_identity=Q70_STRATEGY_IDENTITY)
     os.environ["PAPER_ATR_STOP_MULTIPLIER"] = "2.0"
     os.environ["TRADING_EXIT_MODEL"] = "atr"
     os.environ["TRADING_STOP_ATR_MULTIPLIER"] = "2.0"

@@ -4,7 +4,7 @@ import argparse
 from collections.abc import Callable, Sequence
 from functools import partial
 
-from quantctl.commands import doctor, operations, research, status, version
+from quantctl.commands import doctor, operations, research, state, status, version
 from quantctl.registry import CommandSafety
 
 
@@ -42,6 +42,16 @@ def build_parser() -> argparse.ArgumentParser:
     ):
         operation_parser = commands.add_parser(name, help=help_text)
         operation_parser.set_defaults(handler=partial(operations.run_named, name))
+
+    paper_parser = commands.add_parser("paper", help="inspect paper-trading state")
+    paper_commands = paper_parser.add_subparsers(dest="paper_command", required=True)
+    paper_status = paper_commands.add_parser("status", help="show read-only paper state")
+    paper_status.set_defaults(handler=state.run_paper_status)
+
+    forward_parser = commands.add_parser("forward", help="inspect Forward validation state")
+    forward_commands = forward_parser.add_subparsers(dest="forward_command", required=True)
+    forward_status = forward_commands.add_parser("status", help="show read-only Forward state")
+    forward_status.set_defaults(handler=state.run_forward_status)
     return parser
 
 

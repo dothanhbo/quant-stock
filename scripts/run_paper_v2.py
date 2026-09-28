@@ -1,16 +1,14 @@
 from __future__ import annotations
 
 import os
+from config.paper_store import Q70_STRATEGY_IDENTITY, apply_active_paper_store_environment
 from config.strategy_config import Q70_FROZEN
 from config import trading_policy
 from strategy.paper_v2_scanner import PaperV2Scanner
 
 def configure() -> None:
     os.environ["PAPER_TRADING_ENABLED"] = "true"
-    os.environ["PAPER_DATABASE_PATH"] = os.getenv(
-        "PAPER_V2_DATABASE_PATH",
-        "data/paper_trading_v2.db",
-    )
+    apply_active_paper_store_environment(strategy_identity=Q70_STRATEGY_IDENTITY)
 
     # Candidate selected by the causal robustness + state/quality research.
     os.environ["TRADING_EXIT_MODEL"] = "atr"

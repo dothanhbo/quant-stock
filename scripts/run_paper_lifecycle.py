@@ -4,6 +4,7 @@ import os
 import sqlite3
 
 from dotenv import load_dotenv
+from config.paper_store import resolve_active_paper_store
 from core.paths import resolve_market_database_path
 
 from execution.exit_engine import (
@@ -91,10 +92,7 @@ def main() -> PaperExecutionBatchResult | None:
             5.0,
         ),
         sell_tax_rate=policy.sell_tax_rate,
-        database_path=os.getenv(
-            "PAPER_DATABASE_PATH",
-            "data/paper_trading.db",
-        ),
+        database_path=resolve_active_paper_store().database_path,
         restore_state=True,
     )
 

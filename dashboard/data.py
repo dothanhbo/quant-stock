@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import date, datetime
 from pathlib import Path
 import sqlite3
@@ -8,11 +8,13 @@ from typing import Any
 
 import pandas as pd
 
+from config.paper_store import resolve_active_paper_store
+
 
 @dataclass(frozen=True, slots=True)
 class DashboardPaths:
     market_db: Path = Path("data/market.db")
-    paper_db: Path = Path("data/paper_trading.db")
+    paper_db: Path = field(default_factory=lambda: resolve_active_paper_store().database_path)
 
 
 @dataclass(frozen=True, slots=True)

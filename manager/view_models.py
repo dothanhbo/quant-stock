@@ -14,6 +14,12 @@ from quantctl.registry import (
     discover_active_runners,
     inspect_system,
 )
+from quantctl.state import (
+    ForwardSystemSnapshot,
+    PaperSystemSnapshot,
+    inspect_forward_system,
+    inspect_paper_system,
+)
 
 
 @dataclass(frozen=True, slots=True)
@@ -21,6 +27,8 @@ class DashboardViewModel:
     quantctl_version: str
     doctor_status: str
     snapshot: SystemSnapshot
+    paper: PaperSystemSnapshot
+    forward: ForwardSystemSnapshot
 
 
 @dataclass(frozen=True, slots=True)
@@ -45,6 +53,12 @@ class OperationsViewModel:
     operations: tuple[OperationViewModel, ...]
 
 
+@dataclass(frozen=True, slots=True)
+class StateViewModel:
+    paper: PaperSystemSnapshot
+    forward: ForwardSystemSnapshot
+
+
 def build_dashboard_model(
     *,
     root: Path = PROJECT_ROOT,
@@ -52,7 +66,16 @@ def build_dashboard_model(
 ) -> DashboardViewModel:
     snapshot = inspect_system(root=root)
     checks = collect_checks(root=root, environ=environ, snapshot=snapshot)
-    return DashboardViewModel(QUANTCTL_VERSION, overall_status(checks), snapshot)
+    return DashboardViewModel(
+        QUANTCTL_VERSION,
+        overall_status(checks),
+        snapshot,
+        inspect_paper_system(
+            root=root,
+            environ=None if environ is None else dict(environ),
+        ),
+        inspect_forward_system(root=root),
+    )
 
 
 def build_research_model(*, root: Path = PROJECT_ROOT) -> ResearchViewModel:
@@ -74,4 +97,18 @@ def build_operations_model(*, root: Path = PROJECT_ROOT) -> OperationsViewModel:
             OperationViewModel(spec, operation_available(spec, root=root))
             for spec in list_operations()
         )
+    )
+
+
+def build_state_model(
+    *,
+    root: Path = PROJECT_ROOT,
+    environ: Mapping[str, str] | None = None,
+) -> StateViewModel:
+    return StateViewModel(
+        inspect_paper_system(
+            root=root,
+            environ=None if environ is None else dict(environ),
+        ),
+        inspect_forward_system(root=root),
     )

@@ -3,6 +3,7 @@ from __future__ import annotations
 import os
 
 from dotenv import load_dotenv
+from config.paper_store import resolve_active_paper_store
 from core.paths import resolve_market_database_path
 
 from execution.paper_broker import PaperBroker
@@ -43,10 +44,7 @@ def main() -> None:
             "PAPER_SLIPPAGE_BPS",
             5.0,
         ),
-        database_path=os.getenv(
-            "PAPER_DATABASE_PATH",
-            "data/paper_trading.db",
-        ),
+        database_path=resolve_active_paper_store().database_path,
         restore_state=True,
     )
 

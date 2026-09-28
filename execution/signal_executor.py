@@ -37,6 +37,7 @@ from execution.order_manager import OrderManager
 from execution.paper_broker import PaperBroker
 from execution.risk_guard import RiskGuard, RiskLimits
 from config.trading_policy import TradingPolicy
+from config.paper_store import resolve_active_paper_store
 from core.paths import resolve_market_database_path
 
 
@@ -127,12 +128,7 @@ class PaperExecutionConfig:
                 "PAPER_TRADING_ENABLED",
                 False,
             ),
-            database_path=Path(
-                os.getenv(
-                    "PAPER_DATABASE_PATH",
-                    "data/paper_trading.db",
-                )
-            ),
+            database_path=resolve_active_paper_store().database_path,
             initial_cash=_read_float(
                 "PAPER_INITIAL_CASH",
                 100_000_000,

@@ -8,11 +8,12 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from manager.pages import dashboard, operations, research, system
+from manager.pages import dashboard, operations, research, state, system
 from manager.view_models import (
     build_dashboard_model,
     build_operations_model,
     build_research_model,
+    build_state_model,
     build_system_model,
 )
 
@@ -26,7 +27,10 @@ def main() -> None:
     st.info("READ-ONLY INSPECTION + EXPLICIT CONTROLLED OPERATIONS")
 
     st.sidebar.header("Navigation")
-    page = st.sidebar.radio("Page", ("Dashboard", "Operations", "Research", "System / Doctor"))
+    page = st.sidebar.radio(
+        "Page",
+        ("Dashboard", "Operations", "State", "Research", "System / Doctor"),
+    )
     if st.sidebar.button("Refresh", type="secondary", use_container_width=True):
         st.rerun()
     st.sidebar.caption("Refresh re-reads local state only.")
@@ -35,6 +39,8 @@ def main() -> None:
         dashboard.render(build_dashboard_model())
     elif page == "Operations":
         operations.render(build_operations_model())
+    elif page == "State":
+        state.render(build_state_model())
     elif page == "Research":
         research.render(build_research_model())
     else:

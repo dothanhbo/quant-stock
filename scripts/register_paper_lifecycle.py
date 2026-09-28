@@ -5,6 +5,7 @@ import os
 from datetime import date
 
 from dotenv import load_dotenv
+from config.paper_store import resolve_active_paper_store
 
 from execution.lifecycle_models import (
     PositionLifecycleState,
@@ -77,10 +78,7 @@ def main() -> None:
                 "5",
             )
         ),
-        database_path=os.getenv(
-            "PAPER_DATABASE_PATH",
-            "data/paper_trading.db",
-        ),
+        database_path=resolve_active_paper_store().database_path,
         restore_state=True,
     )
 
