@@ -50,6 +50,7 @@ class Order:
     updated_at: datetime = field(
         default_factory=utc_now
     )
+    source_intent_id: str | None = None
 
     def __post_init__(self) -> None:
         self.symbol = self.symbol.strip().upper()
@@ -58,6 +59,11 @@ class Order:
             raise ValueError(
                 "symbol không được để trống."
             )
+
+        if self.source_intent_id is not None:
+            self.source_intent_id = str(self.source_intent_id).strip()
+            if not self.source_intent_id:
+                raise ValueError("source_intent_id must be non-empty when supplied")
 
         if self.quantity <= 0:
             raise ValueError(

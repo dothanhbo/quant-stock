@@ -346,7 +346,7 @@ class PaperExecutionBatchResult:
         self,
     ) -> int:
         return sum(
-            item.status == "FILLED"
+            item.status in {"FILLED", "RESUMED"}
             for item in self.executions
         )
 
@@ -585,10 +585,68 @@ class PaperSignalExecutor:
                 )
                 pending_id = int(signal["_pending_id"])
                 signal_date = str(signal.get("date", ""))[:10]
+                source_intent_id = f"pending_signal:{pending_id}"
                 expected_date = self._load_next_market_session(
                     connection,
                     signal_date=signal_date,
                 )
+
+                existing_execution = self.broker.lookup_execution_intent(
+                    source_intent_id
+                )
+                if existing_execution is not None and existing_execution["status"] == "FILLED":
+                    fill = existing_execution["fill"]
+                    if fill is None:
+                        raise RuntimeError("filled execution intent has no persisted fill")
+                    if self.broker.get_position_lifecycle(symbol) is None:
+                        if expected_date is None:
+                            raise RuntimeError(
+                                "executed intent has no lifecycle and its market session cannot be resolved"
+                            )
+                        self._restore_missing_intent_lifecycle(
+                            signal=signal,
+                            fill=fill,
+                            reference_price=existing_execution["reference_price"],
+                            execution_date=expected_date,
+                        )
+                    self.broker.complete_pending_signal(
+                        pending_id,
+                        processed_date=resolved_date.isoformat(),
+                        status="ALREADY_EXECUTED",
+                        reason="Execution intent đã được khớp trước đó; không tạo lệnh mới.",
+                    )
+                    freshness_results.append(PaperSignalExecution(
+                        symbol=symbol,
+                        status="ALREADY_EXECUTED",
+                        quantity=fill.quantity,
+                        fill_price=fill.price,
+                        gross_value=fill.gross_value,
+                        commission=fill.commission,
+                        position_sizer=self.position_sizer.name,
+                        signal_rank=self._safe_int(signal.get("signal_rank")),
+                        signal_score=self._safe_float(signal.get("score")),
+                        reason="Execution intent đã được khớp trước đó.",
+                    ))
+                    continue
+                if existing_execution is not None and existing_execution["status"] in {
+                    "REJECTED", "CANCELLED",
+                }:
+                    reason = "Execution intent đã kết thúc với trạng thái không khớp."
+                    self.broker.complete_pending_signal(
+                        pending_id,
+                        processed_date=resolved_date.isoformat(),
+                        status="REJECTED",
+                        reason=reason,
+                    )
+                    freshness_results.append(PaperSignalExecution(
+                        symbol=symbol,
+                        status="REJECTED",
+                        position_sizer=self.position_sizer.name,
+                        signal_rank=self._safe_int(signal.get("signal_rank")),
+                        signal_score=self._safe_float(signal.get("score")),
+                        reason=reason,
+                    ))
+                    continue
 
                 if expected_date is None:
                     reason = (
@@ -700,6 +758,7 @@ class PaperSignalExecutor:
         for signal in due:
             symbol = str(signal["symbol"]).strip().upper()
             pending_id = int(signal.pop("_pending_id"))
+            signal["_execution_intent_id"] = f"pending_signal:{pending_id}"
             open_price = opens.get(symbol)
             atr = self._read_positive_float(signal, ("atr",))
             if open_price is None or open_price <= 0 or atr is None:
@@ -1236,6 +1295,11 @@ class PaperSignalExecutor:
                 quantity=quantity,
                 price=broker_price,
                 daily_realized_pnl=daily_realized_pnl,
+                source_intent_id=(
+                    str(signal["_execution_intent_id"])
+                    if signal.get("_execution_intent_id") is not None
+                    else None
+                ),
             )
 
             if fill is None:
@@ -1289,6 +1353,35 @@ class PaperSignalExecutor:
 
             submitted_count += 1
 
+            execution_disposition = None
+            if signal.get("_execution_intent_id") is not None:
+                execution_disposition = self.broker.consume_execution_disposition(
+                    str(signal["_execution_intent_id"])
+                )
+            if execution_disposition == "ALREADY_EXECUTED":
+                if self.broker.get_position_lifecycle(symbol) is None:
+                    self._initialize_filled_position(
+                        signal=signal,
+                        candidate=candidate,
+                        fill=fill,
+                        broker_price=broker_price,
+                        report_date=resolved_report_date,
+                    )
+                executions.append(PaperSignalExecution(
+                    symbol=symbol,
+                    status="ALREADY_EXECUTED",
+                    quantity=fill.quantity,
+                    requested_price=display_entry_price,
+                    fill_price=fill.price,
+                    gross_value=fill.gross_value,
+                    commission=fill.commission,
+                    position_sizer=self.position_sizer.name,
+                    signal_rank=signal_rank,
+                    signal_score=signal_score,
+                    reason="Concurrent duplicate resolved to the persisted execution.",
+                ))
+                continue
+
             self._initialize_filled_position(
                 signal=signal,
                 candidate=candidate,
@@ -1300,7 +1393,11 @@ class PaperSignalExecutor:
             executions.append(
                 PaperSignalExecution(
                     symbol=symbol,
-                    status="FILLED",
+                    status=(
+                        "RESUMED"
+                        if execution_disposition == "RESUMED"
+                        else "FILLED"
+                    ),
                     quantity=fill.quantity,
                     requested_price=(
                         display_entry_price
@@ -1553,6 +1650,46 @@ class PaperSignalExecutor:
             fill.symbol,
             broker_price,
             persist_snapshot=True,
+        )
+
+    def _restore_missing_intent_lifecycle(
+        self,
+        *,
+        signal: dict[str, Any],
+        fill,
+        reference_price: float | None,
+        execution_date: str,
+    ) -> None:
+        """Repair the lifecycle row after an already-committed intent replay."""
+        if reference_price is None or float(reference_price) <= 0:
+            raise RuntimeError("executed intent has no valid persisted reference price")
+        atr = self._read_positive_float(signal, ("atr",))
+        if atr is None:
+            raise RuntimeError("executed intent cannot rebuild lifecycle without its original ATR")
+        broker_price = float(reference_price)
+        display_price = broker_price / self.PRICE_SCALE
+        stop, target = self.policy.calculate_levels(
+            entry_price=display_price,
+            atr=atr,
+        )
+        restored_signal = dict(signal)
+        restored_signal.update({
+            "date": execution_date,
+            "entry": display_price,
+            "stop_loss": stop,
+            "take_profit": target,
+        })
+        candidate = self._build_candidate(
+            signal=restored_signal,
+            symbol=str(signal["symbol"]).strip().upper(),
+            broker_price=broker_price,
+        )
+        self._initialize_filled_position(
+            signal=restored_signal,
+            candidate=candidate,
+            fill=fill,
+            broker_price=broker_price,
+            report_date=date.fromisoformat(execution_date),
         )
 
     def _build_position_summary(

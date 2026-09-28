@@ -104,6 +104,7 @@ class OrderManager:
         quantity: int,
         price: float,
         daily_realized_pnl: float = 0.0,
+        source_intent_id: str | None = None,
     ) -> Fill | None:
         order = Order(
             symbol=symbol,
@@ -111,6 +112,7 @@ class OrderManager:
             quantity=quantity,
             order_type=OrderType.MARKET,
             reference_price=price,
+            source_intent_id=source_intent_id,
         )
 
         return self.submit_order(
@@ -148,6 +150,10 @@ class OrderManager:
             == order.symbol
             and existing.side
             == order.side
+            and not (
+                order.source_intent_id is not None
+                and existing.source_intent_id == order.source_intent_id
+            )
             for existing
             in self.broker.get_open_orders()
         )

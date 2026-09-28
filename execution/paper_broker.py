@@ -115,17 +115,36 @@ class PaperBroker(BrokerInterface):
             for position
             in self.portfolio.get_positions()
         }
+        self._duplicate_execution_intents: set[str] = set()
+        self._execution_dispositions: dict[str, str] = {}
 
     def submit_order(
         self,
         order: Order,
     ) -> Fill | None:
+        source_intent_id = order.source_intent_id
+        atomic_intent_execution = source_intent_id is not None
+        if atomic_intent_execution and self._store is None:
+            raise RuntimeError("source-linked execution requires persistent paper storage")
+        if source_intent_id is not None:
+            existing = self._store.lookup_execution_intent(source_intent_id)
+            if existing is not None:
+                if existing["status"] == OrderStatus.FILLED.value:
+                    if existing["fill"] is None:
+                        raise RuntimeError("filled execution intent has no persisted fill")
+                    self._restore_persisted_state()
+                    self._duplicate_execution_intents.add(source_intent_id)
+                    self._execution_dispositions[source_intent_id] = "ALREADY_EXECUTED"
+                    return existing["fill"]
+                if existing["status"] in {OrderStatus.REJECTED.value, OrderStatus.CANCELLED.value}:
+                    return None
+                order.client_order_id = existing["client_order_id"]
+
         self._orders[
             order.client_order_id
         ] = order
-        self._persist_order(
-            order
-        )
+        if not atomic_intent_execution:
+            self._persist_order(order)
 
         market_price = self._resolve_order_price(
             order
@@ -242,15 +261,60 @@ class PaperBroker(BrokerInterface):
             fill
         )
 
-        self._persist_order(
-            order
-        )
-        self._persist_fill(
-            fill
-        )
+        if atomic_intent_execution:
+            try:
+                disposition, persisted_fill = self._store.save_intent_execution(
+                    order, fill, self.portfolio
+                )
+            except Exception:
+                self._restore_persisted_state()
+                raise
+            if disposition == "ALREADY_EXECUTED":
+                self._restore_persisted_state()
+                self._duplicate_execution_intents.add(str(source_intent_id))
+                self._execution_dispositions[str(source_intent_id)] = disposition
+                return persisted_fill
+            if disposition == "ALREADY_REJECTED":
+                self._restore_persisted_state()
+                self._execution_dispositions[str(source_intent_id)] = disposition
+                return None
+            self._execution_dispositions[str(source_intent_id)] = disposition
+            return persisted_fill
+
+        self._persist_order(order)
+        self._persist_fill(fill)
         self._persist_portfolio()
 
         return fill
+
+    def lookup_execution_intent(self, source_intent_id: str) -> dict | None:
+        if self._store is None:
+            return None
+        return self._store.lookup_execution_intent(source_intent_id)
+
+    def consume_duplicate_execution(self, source_intent_id: str) -> bool:
+        """Report whether this submit resolved to an already-persisted intent."""
+        key = str(source_intent_id)
+        if key not in self._duplicate_execution_intents:
+            return False
+        self._duplicate_execution_intents.remove(key)
+        return True
+
+    def consume_execution_disposition(self, source_intent_id: str) -> str | None:
+        return self._execution_dispositions.pop(str(source_intent_id), None)
+
+    def _restore_persisted_state(self) -> None:
+        if self._store is None:
+            return
+        self.portfolio = self._store.load_portfolio_state(
+            fallback_initial_cash=self.portfolio.initial_cash
+        )
+        self._orders = self._store.load_orders()
+        self._fills = self._store.load_fills()
+        self._market_prices = {
+            position.symbol: position.market_price
+            for position in self.portfolio.get_positions()
+        }
 
     def record_order(
         self,

@@ -87,7 +87,8 @@ class PaperTradingStore:
                     average_fill_price REAL,
                     rejection_reason TEXT,
                     created_at TEXT NOT NULL,
-                    updated_at TEXT NOT NULL
+                    updated_at TEXT NOT NULL,
+                    source_intent_id TEXT
                 );
 
                 CREATE TABLE IF NOT EXISTS paper_fills (
@@ -185,6 +186,18 @@ class PaperTradingStore:
                 CREATE INDEX IF NOT EXISTS idx_pending_signals_status
                 ON paper_pending_signals(status, signal_date);
                 """
+            )
+            order_columns = {
+                str(row[1])
+                for row in connection.execute("PRAGMA table_info(paper_orders)")
+            }
+            if "source_intent_id" not in order_columns:
+                connection.execute(
+                    "ALTER TABLE paper_orders ADD COLUMN source_intent_id TEXT"
+                )
+            connection.execute(
+                "CREATE UNIQUE INDEX IF NOT EXISTS uq_paper_orders_source_intent "
+                "ON paper_orders(source_intent_id) WHERE source_intent_id IS NOT NULL"
             )
 
     def queue_signal(self, signal: dict) -> bool:
@@ -498,180 +511,209 @@ class PaperTradingStore:
         order: Order,
     ) -> None:
         with self._connection() as connection:
-            connection.execute(
-                """
-                INSERT INTO paper_orders (
-                    client_order_id,
-                    symbol,
-                    side,
-                    quantity,
-                    order_type,
-                    limit_price,
-                    reference_price,
-                    status,
-                    filled_quantity,
-                    average_fill_price,
-                    rejection_reason,
-                    created_at,
-                    updated_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                ON CONFLICT(client_order_id)
-                DO UPDATE SET
-                    symbol = excluded.symbol,
-                    side = excluded.side,
-                    quantity = excluded.quantity,
-                    order_type = excluded.order_type,
-                    limit_price = excluded.limit_price,
-                    reference_price = excluded.reference_price,
-                    status = excluded.status,
-                    filled_quantity = excluded.filled_quantity,
-                    average_fill_price = excluded.average_fill_price,
-                    rejection_reason = excluded.rejection_reason,
-                    updated_at = excluded.updated_at
-                """,
-                (
-                    order.client_order_id,
-                    order.symbol,
-                    order.side.value,
-                    order.quantity,
-                    order.order_type.value,
-                    order.limit_price,
-                    order.reference_price,
-                    order.status.value,
-                    order.filled_quantity,
-                    order.average_fill_price,
-                    order.rejection_reason,
-                    order.created_at.isoformat(),
-                    order.updated_at.isoformat(),
-                ),
-            )
+            self._save_order(connection, order)
+
+    @staticmethod
+    def _save_order(connection: sqlite3.Connection, order: Order) -> None:
+        connection.execute(
+            """
+            INSERT INTO paper_orders (
+                client_order_id, symbol, side, quantity, order_type, limit_price,
+                reference_price, status, filled_quantity, average_fill_price,
+                rejection_reason, created_at, updated_at, source_intent_id
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            ON CONFLICT(client_order_id)
+            DO UPDATE SET
+                symbol = excluded.symbol, side = excluded.side, quantity = excluded.quantity,
+                order_type = excluded.order_type, limit_price = excluded.limit_price,
+                reference_price = excluded.reference_price, status = excluded.status,
+                filled_quantity = excluded.filled_quantity,
+                average_fill_price = excluded.average_fill_price,
+                rejection_reason = excluded.rejection_reason, updated_at = excluded.updated_at,
+                source_intent_id = COALESCE(paper_orders.source_intent_id, excluded.source_intent_id)
+            """,
+            (
+                order.client_order_id, order.symbol, order.side.value, order.quantity,
+                order.order_type.value, order.limit_price, order.reference_price,
+                order.status.value, order.filled_quantity, order.average_fill_price,
+                order.rejection_reason, order.created_at.isoformat(),
+                order.updated_at.isoformat(), order.source_intent_id,
+            ),
+        )
 
     def save_fill(
         self,
         fill: Fill,
     ) -> None:
         with self._connection() as connection:
-            connection.execute(
-                """
-                INSERT INTO paper_fills (
-                    order_id,
-                    symbol,
-                    side,
-                    quantity,
-                    price,
-                    gross_value,
-                    commission,
-                    slippage_cost,
-                    net_cash_flow,
-                    created_at
-                )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    fill.order_id,
-                    fill.symbol,
-                    fill.side.value,
-                    fill.quantity,
-                    fill.price,
-                    fill.gross_value,
-                    fill.commission,
-                    fill.slippage_cost,
-                    fill.net_cash_flow,
-                    fill.created_at.isoformat(),
-                ),
-            )
+            self._save_fill(connection, fill)
+
+    @staticmethod
+    def _save_fill(connection: sqlite3.Connection, fill: Fill) -> None:
+        connection.execute(
+            """
+            INSERT INTO paper_fills (
+                order_id, symbol, side, quantity, price, gross_value, commission,
+                slippage_cost, net_cash_flow, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                fill.order_id, fill.symbol, fill.side.value, fill.quantity,
+                fill.price, fill.gross_value, fill.commission, fill.slippage_cost,
+                fill.net_cash_flow, fill.created_at.isoformat(),
+            ),
+        )
 
     def save_portfolio_state(
         self,
         portfolio: PortfolioState,
     ) -> None:
-        snapshot = portfolio.snapshot()
-
         with self._connection() as connection:
-            connection.execute(
-                """
-                INSERT INTO paper_metadata(key, value)
-                VALUES ('cash', ?)
-                ON CONFLICT(key)
-                DO UPDATE SET value = excluded.value
-                """,
-                (
-                    json.dumps(
-                        portfolio.cash
-                    ),
-                ),
-            )
+            self._save_portfolio_state(connection, portfolio)
 
-            connection.execute(
-                """
-                INSERT INTO paper_metadata(key, value)
-                VALUES ('realized_pnl', ?)
-                ON CONFLICT(key)
-                DO UPDATE SET value = excluded.value
-                """,
-                (
-                    json.dumps(
-                        portfolio.realized_pnl
-                    ),
-                ),
-            )
+    @staticmethod
+    def _save_portfolio_state(
+        connection: sqlite3.Connection,
+        portfolio: PortfolioState,
+    ) -> None:
+        snapshot = portfolio.snapshot()
+        connection.execute(
+            """
+            INSERT INTO paper_metadata(key, value) VALUES ('cash', ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            (json.dumps(portfolio.cash),),
+        )
+        connection.execute(
+            """
+            INSERT INTO paper_metadata(key, value) VALUES ('realized_pnl', ?)
+            ON CONFLICT(key) DO UPDATE SET value = excluded.value
+            """,
+            (json.dumps(portfolio.realized_pnl),),
+        )
+        connection.execute("DELETE FROM paper_positions")
+        connection.executemany(
+            """
+            INSERT INTO paper_positions (
+                symbol, quantity, average_price, market_price, realized_pnl
+            ) VALUES (?, ?, ?, ?, ?)
+            """,
+            [
+                (position.symbol, position.quantity, position.average_price,
+                 position.market_price, position.realized_pnl)
+                for position in portfolio.get_positions()
+            ],
+        )
+        connection.execute(
+            """
+            INSERT INTO paper_portfolio_snapshots (
+                cash, positions_value, equity, realized_pnl, unrealized_pnl,
+                gross_exposure_pct, open_positions, created_at
+            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                snapshot.cash, snapshot.positions_value, snapshot.equity,
+                snapshot.realized_pnl, snapshot.unrealized_pnl,
+                snapshot.gross_exposure_pct, snapshot.open_positions,
+                snapshot.created_at.isoformat(),
+            ),
+        )
 
-            connection.execute(
-                """
-                DELETE FROM paper_positions
-                """
+    def lookup_execution_intent(self, source_intent_id: str) -> dict | None:
+        """Return the durable order/fill linked to an execution intent, if any."""
+        with self._connection() as connection:
+            row = connection.execute(
+                "SELECT * FROM paper_orders WHERE source_intent_id = ?",
+                (str(source_intent_id),),
+            ).fetchone()
+            if row is None:
+                return None
+            fill_row = connection.execute(
+                "SELECT * FROM paper_fills WHERE order_id = ? ORDER BY id LIMIT 1",
+                (row["client_order_id"],),
+            ).fetchone()
+        fill = None
+        if fill_row is not None:
+            fill = Fill(
+                order_id=str(fill_row["order_id"]),
+                symbol=str(fill_row["symbol"]),
+                side=OrderSide(fill_row["side"]),
+                quantity=int(fill_row["quantity"]),
+                price=float(fill_row["price"]),
+                gross_value=float(fill_row["gross_value"]),
+                commission=float(fill_row["commission"]),
+                slippage_cost=float(fill_row["slippage_cost"]),
+                net_cash_flow=float(fill_row["net_cash_flow"]),
+                created_at=datetime.fromisoformat(fill_row["created_at"]),
             )
+        return {
+            "status": str(row["status"]),
+            "client_order_id": str(row["client_order_id"]),
+            "symbol": str(row["symbol"]),
+            "side": str(row["side"]),
+            "quantity": int(row["quantity"]),
+            "order_type": str(row["order_type"]),
+            "reference_price": row["reference_price"],
+            "created_at": str(row["created_at"]),
+            "fill": fill,
+        }
 
-            connection.executemany(
-                """
-                INSERT INTO paper_positions (
-                    symbol,
-                    quantity,
-                    average_price,
-                    market_price,
-                    realized_pnl
-                )
-                VALUES (?, ?, ?, ?, ?)
-                """,
-                [
-                    (
-                        position.symbol,
-                        position.quantity,
-                        position.average_price,
-                        position.market_price,
-                        position.realized_pnl,
+    def save_intent_execution(
+        self,
+        order: Order,
+        fill: Fill,
+        portfolio: PortfolioState,
+    ) -> tuple[str, Fill | None]:
+        """Atomically persist one source-linked order, fill, and portfolio state."""
+        if not order.source_intent_id:
+            raise ValueError("source-linked execution requires source_intent_id")
+        disposition = "EXECUTED"
+        with self._connection() as connection:
+            connection.execute("BEGIN IMMEDIATE")
+            existing = connection.execute(
+                "SELECT * FROM paper_orders WHERE source_intent_id = ?",
+                (order.source_intent_id,),
+            ).fetchone()
+            if existing is not None:
+                status = str(existing["status"])
+                if status == OrderStatus.FILLED.value:
+                    row = connection.execute(
+                        "SELECT * FROM paper_fills WHERE order_id = ? ORDER BY id LIMIT 1",
+                        (existing["client_order_id"],),
+                    ).fetchone()
+                    if row is None:
+                        raise RuntimeError("filled execution intent has no persisted fill")
+                    existing_fill = Fill(
+                        order_id=str(row["order_id"]), symbol=str(row["symbol"]),
+                        side=OrderSide(row["side"]), quantity=int(row["quantity"]),
+                        price=float(row["price"]), gross_value=float(row["gross_value"]),
+                        commission=float(row["commission"]), slippage_cost=float(row["slippage_cost"]),
+                        net_cash_flow=float(row["net_cash_flow"]),
+                        created_at=datetime.fromisoformat(row["created_at"]),
                     )
-                    for position
-                    in portfolio.get_positions()
-                ],
-            )
-
-            connection.execute(
-                """
-                INSERT INTO paper_portfolio_snapshots (
-                    cash,
-                    positions_value,
-                    equity,
-                    realized_pnl,
-                    unrealized_pnl,
-                    gross_exposure_pct,
-                    open_positions,
-                    created_at
+                    return "ALREADY_EXECUTED", existing_fill
+                if status in {OrderStatus.REJECTED.value, OrderStatus.CANCELLED.value}:
+                    return "ALREADY_REJECTED", None
+                expected = (
+                    str(existing["symbol"]).upper(), str(existing["side"]),
+                    int(existing["quantity"]), str(existing["order_type"]),
+                    existing["reference_price"],
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?)
-                """,
-                (
-                    snapshot.cash,
-                    snapshot.positions_value,
-                    snapshot.equity,
-                    snapshot.realized_pnl,
-                    snapshot.unrealized_pnl,
-                    snapshot.gross_exposure_pct,
-                    snapshot.open_positions,
-                    snapshot.created_at.isoformat(),
-                ),
-            )
+                actual = (
+                    order.symbol.upper(), order.side.value, int(order.quantity),
+                    order.order_type.value, order.reference_price,
+                )
+                if expected != actual:
+                    raise RuntimeError(
+                        "incomplete execution intent cannot be resumed with changed order terms"
+                    )
+                order.client_order_id = str(existing["client_order_id"])
+                disposition = "RESUMED"
+
+            self._save_order(connection, order)
+            self._save_fill(connection, fill)
+            self._save_portfolio_state(connection, portfolio)
+        return disposition, fill
 
     def load_portfolio_state(
         self,
@@ -795,6 +837,11 @@ class PaperTradingStore:
                 ),
                 updated_at=datetime.fromisoformat(
                     row["updated_at"]
+                ),
+                source_intent_id=(
+                    str(row["source_intent_id"])
+                    if row["source_intent_id"] is not None
+                    else None
                 ),
             )
 
