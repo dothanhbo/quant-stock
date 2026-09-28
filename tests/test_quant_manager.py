@@ -1,0 +1,158 @@
+from __future__ import annotations
+
+import hashlib
+from pathlib import Path
+import sqlite3
+import subprocess
+import sys
+
+from manager.view_models import (
+    build_dashboard_model,
+    build_research_model,
+    build_system_model,
+)
+from quantctl.commands import status
+
+
+PROJECT_ROOT = Path(__file__).resolve().parent.parent
+CANONICAL_HASHES = {
+    "market.db": "38c4c423590824d66452cfc169c8083fd13ec9e272ae9db7a58d36cbe91c4c6b",
+    "forward_validation.db": "4200785d80c8d25377dad265d33e586717f1fc898e7c6ae55d470e3a497140a5",
+    "paper_trading.db": "b058888c6339afce7974e7e7730b542502646907a1599d425a89146b7c779d32",
+    "paper_trading_v2.db": "d0261e033b903b8ce1209e588e3b99bb3eb17ddfa7e0a6bfb4e2773f6242ea05",
+    "paper_trading_v3.db": "cd6fe45bb3871c1517053a895ecbd58367773bbe29d30ca1fef30d571a03a19e",
+}
+
+
+def _digest(path: Path) -> str:
+    return hashlib.sha256(path.read_bytes()).hexdigest()
+
+
+def _market_database(path: Path) -> None:
+    with sqlite3.connect(path) as connection:
+        connection.execute("CREATE TABLE prices (symbol TEXT, time TEXT, close REAL)")
+        connection.executemany(
+            "INSERT INTO prices VALUES (?, ?, ?)",
+            (("AAA", "2026-01-02", 10.0), ("VNINDEX", "2026-01-02", 1000.0)),
+        )
+
+
+def test_dashboard_model_is_read_only(tmp_path: Path) -> None:
+    data = tmp_path / "data"
+    data.mkdir()
+    market = data / "market.db"
+    _market_database(market)
+    before = _digest(market)
+
+    model = build_dashboard_model(root=tmp_path, environ={})
+
+    assert model.snapshot.market.latest_session == "2026-01-02"
+    assert _digest(market) == before
+    assert not tuple(data.glob("*.db-wal"))
+    assert not tuple(data.glob("*.db-shm"))
+
+
+def test_research_model_lists_only_active_root_runners(tmp_path: Path) -> None:
+    research = tmp_path / "research"
+    archive = research / "archive"
+    archive.mkdir(parents=True)
+    (research / "run_quantlab_current.py").write_text("VALUE = 1\n", encoding="utf-8")
+    (archive / "run_quantlab_old.py").write_text("VALUE = 1\n", encoding="utf-8")
+
+    model = build_research_model(root=tmp_path)
+
+    assert tuple(item.short_name for item in model.runners) == ("current",)
+    assert all("archive" not in item.path.parts for item in model.runners)
+
+
+def test_missing_databases_are_presented_gracefully(tmp_path: Path) -> None:
+    (tmp_path / "research").mkdir()
+    model = build_dashboard_model(root=tmp_path, environ={})
+
+    assert not model.snapshot.market.exists
+    assert not model.snapshot.market.readable
+    assert all(not state.exists for state in model.snapshot.persistent_databases)
+
+
+def test_system_model_never_contains_secret_values(tmp_path: Path) -> None:
+    token = "secret-token-never-render"
+    chat_id = "123456789"
+    model = build_system_model(
+        root=tmp_path,
+        environ={"TELEGRAM_TOKEN": token, "CHAT_ID": chat_id},
+    )
+    rendered_facts = repr(model)
+
+    assert token not in rendered_facts
+    assert chat_id not in rendered_facts
+    assert any(item.name == "TELEGRAM_TOKEN" and item.detail == "CONFIGURED" for item in model.checks)
+    assert any(item.name == "CHAT_ID" and item.detail == "CONFIGURED" for item in model.checks)
+
+
+def test_ui_has_no_operational_command_binding() -> None:
+    sources = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted((PROJECT_ROOT / "manager").rglob("*.py"))
+    )
+    forbidden = (
+        "scripts.run_daily",
+        "scripts.update_data",
+        "strategy.scanner",
+        "TelegramClient(",
+        "run_backtest(",
+        "run_walk_forward(",
+        "subprocess.run(",
+        "requests.get(",
+        "requests.post(",
+    )
+    assert all(item not in sources for item in forbidden)
+    assert sources.count("st.sidebar.button(") == 1
+    assert '"Refresh"' in sources
+
+
+def test_existing_quantctl_status_contract_remains_available(tmp_path: Path) -> None:
+    (tmp_path / "research").mkdir()
+    output = status.render(root=tmp_path)
+    assert "QUANT SYSTEM STATUS" in output
+    assert "Database: MISSING" in output
+    assert "Forward: MISSING" in output
+
+
+def test_importing_manager_does_not_import_streamlit_or_touch_state() -> None:
+    code = (
+        "import sys; "
+        "import manager, manager.app, manager.view_models, "
+        "manager.pages.dashboard, manager.pages.research, manager.pages.system; "
+        "print('streamlit' in sys.modules)"
+    )
+    completed = subprocess.run(
+        (sys.executable, "-B", "-c", code),
+        cwd=PROJECT_ROOT,
+        check=True,
+        capture_output=True,
+        text=True,
+    )
+    assert completed.stdout.strip() == "False"
+
+
+def test_manager_reads_canonical_databases_without_mutation() -> None:
+    data = PROJECT_ROOT / "data"
+    before = {name: _digest(data / name) for name in CANONICAL_HASHES}
+    assert before == CANONICAL_HASHES
+
+    build_dashboard_model(root=PROJECT_ROOT, environ={})
+    build_system_model(root=PROJECT_ROOT, environ={})
+
+    after = {name: _digest(data / name) for name in CANONICAL_HASHES}
+    assert after == before
+
+
+def test_view_models_are_immutable(tmp_path: Path) -> None:
+    (tmp_path / "research").mkdir()
+    dashboard = build_dashboard_model(root=tmp_path, environ={})
+    try:
+        dashboard.doctor_status = "PASS"
+    except (AttributeError, TypeError):
+        pass
+    else:
+        raise AssertionError("dashboard model must be immutable")

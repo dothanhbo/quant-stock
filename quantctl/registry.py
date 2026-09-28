@@ -14,6 +14,12 @@ QUANTCTL_VERSION = "M1"
 EXPECTED_ACTIVE_RUNNER_COUNT = 22
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
 ACTIVE_RUNNER_PATTERN = "run_quantlab_*.py"
+STATE_DATABASES = (
+    ("Forward", "forward_validation.db"),
+    ("Paper V1", "paper_trading.db"),
+    ("Paper V2", "paper_trading_v2.db"),
+    ("Paper V3", "paper_trading_v3.db"),
+)
 
 
 class CommandSafety(str, Enum):
@@ -48,6 +54,25 @@ class MarketDatabaseInfo:
     symbol_count: int | None = None
     latest_session_symbol_count: int | None = None
     error: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class PersistentDatabaseInfo:
+    label: str
+    path: Path
+    exists: bool
+    readable: bool
+    error: str | None = None
+
+
+@dataclass(frozen=True, slots=True)
+class SystemSnapshot:
+    git: GitInfo
+    market: MarketDatabaseInfo
+    persistent_databases: tuple[PersistentDatabaseInfo, ...]
+    runners: tuple[RunnerInfo, ...]
+    archive_isolated: bool
+    telegram_module_available: bool
 
 
 def run_git(arguments: Iterable[str], *, root: Path = PROJECT_ROOT) -> str | None:
@@ -160,3 +185,23 @@ def sqlite_database_readable(path: Path) -> tuple[bool, str | None]:
     except (OSError, sqlite3.Error) as exc:
         return False, f"{type(exc).__name__}: {exc}"
     return True, None
+
+
+def inspect_system(*, root: Path = PROJECT_ROOT) -> SystemSnapshot:
+    data_root = root / "data"
+    persistent: list[PersistentDatabaseInfo] = []
+    for label, filename in STATE_DATABASES:
+        path = (data_root / filename).resolve()
+        exists = path.is_file()
+        readable, error = sqlite_database_readable(path) if exists else (False, "database file is missing")
+        persistent.append(PersistentDatabaseInfo(label, path, exists, readable, error))
+
+    runners = discover_active_runners(root=root)
+    return SystemSnapshot(
+        git=inspect_git(root=root),
+        market=inspect_market_database(data_root / "market.db"),
+        persistent_databases=tuple(persistent),
+        runners=runners,
+        archive_isolated=all(not runner.archive_imports for runner in runners),
+        telegram_module_available=(root / "services" / "telegram_bot" / "__init__.py").is_file(),
+    )

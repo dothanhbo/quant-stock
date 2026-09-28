@@ -7,14 +7,11 @@ from pathlib import Path
 import sys
 from typing import Mapping
 
-from quantctl.commands.status import STATE_DATABASES
 from quantctl.registry import (
     EXPECTED_ACTIVE_RUNNER_COUNT,
     PROJECT_ROOT,
-    discover_active_runners,
-    inspect_git,
-    inspect_market_database,
-    sqlite_database_readable,
+    SystemSnapshot,
+    inspect_system,
 )
 
 
@@ -61,11 +58,13 @@ def collect_checks(
     *,
     root: Path = PROJECT_ROOT,
     environ: Mapping[str, str] | None = None,
+    snapshot: SystemSnapshot | None = None,
 ) -> tuple[Check, ...]:
     environment = os.environ if environ is None else environ
     checks: list[Check] = []
     checks.append(Check("Repository", "PASS" if root.is_dir() else "FAIL", "repository root", str(root)))
-    git = inspect_git(root=root)
+    snapshot = snapshot or inspect_system(root=root)
+    git = snapshot.git
     checks.append(Check("Repository", "PASS" if git.available else "WARN", "Git metadata", git.head or "unavailable"))
     checks.append(Check("Python", "PASS", "Python runtime", sys.version.split()[0]))
     for display_name, import_name in PACKAGE_IMPORTS:
@@ -79,18 +78,16 @@ def collect_checks(
         configured = bool(str(environment.get(name, "")).strip()) or name in dotenv_names
         checks.append(Check("Environment", "PASS" if configured else "WARN", name, "CONFIGURED" if configured else "NOT_CONFIGURED"))
 
-    market = inspect_market_database(root / "data" / "market.db")
+    market = snapshot.market
     market_status = "PASS" if market.readable else "FAIL"
     checks.append(Check("Market Data", market_status, "database readable", market.latest_session or market.error or "UNKNOWN"))
-    for label, filename in STATE_DATABASES:
-        path = root / "data" / filename
-        if not path.is_file():
-            checks.append(Check("Persistent State", "WARN", label, "MISSING"))
+    for state in snapshot.persistent_databases:
+        if not state.exists:
+            checks.append(Check("Persistent State", "WARN", state.label, "MISSING"))
             continue
-        readable, error = sqlite_database_readable(path)
-        checks.append(Check("Persistent State", "PASS" if readable else "FAIL", label, "readable" if readable else (error or "unreadable")))
+        checks.append(Check("Persistent State", "PASS" if state.readable else "FAIL", state.label, "readable" if state.readable else (state.error or "unreadable")))
 
-    runners = discover_active_runners(root=root)
+    runners = snapshot.runners
     count_ok = len(runners) == EXPECTED_ACTIVE_RUNNER_COUNT
     checks.append(Check("Research", "PASS" if count_ok else "FAIL", "active runner count", f"{len(runners)} discovered; expected {EXPECTED_ACTIVE_RUNNER_COUNT}"))
     unavailable = tuple(item.short_name for item in runners if not item.available)
@@ -98,8 +95,7 @@ def collect_checks(
     archive_importers = tuple(item.short_name for item in runners if item.archive_imports)
     checks.append(Check("Research", "PASS" if not archive_importers else "FAIL", "archive isolation", "no active runner imports research.archive" if not archive_importers else ", ".join(archive_importers)))
 
-    telegram_module = root / "services" / "telegram_bot" / "__init__.py"
-    checks.append(Check("Telegram", "PASS" if telegram_module.is_file() else "WARN", "module surface", "available; not imported" if telegram_module.is_file() else "missing"))
+    checks.append(Check("Telegram", "PASS" if snapshot.telegram_module_available else "WARN", "module surface", "available; not imported" if snapshot.telegram_module_available else "missing"))
     return tuple(checks)
 
 
