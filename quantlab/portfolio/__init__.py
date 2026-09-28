@@ -81,6 +81,18 @@ from .risk_policy import (
     RiskPolicySummary,
     evaluate_portfolio_risk_policies,
 )
+from .risk_policy_outcome import (
+    CASH_RETURN_ASSUMPTION,
+    FROZEN_RISK_POLICY_OUTCOMES_V1,
+    RiskPolicyCostSensitivity,
+    RiskPolicyOutcomeBlockSummary,
+    RiskPolicyOutcomeContrast,
+    RiskPolicyOutcomeObservation,
+    RiskPolicyOutcomeResult,
+    RiskPolicyOutcomeSpec,
+    RiskPolicyOutcomeSummary,
+    evaluate_risk_policy_outcomes,
+)
 
 __all__ = (
     "DailyConstructedPortfolio",
@@ -154,4 +166,14 @@ __all__ = (
     "RiskPolicyState",
     "RiskPolicySummary",
     "evaluate_portfolio_risk_policies",
+    "CASH_RETURN_ASSUMPTION",
+    "FROZEN_RISK_POLICY_OUTCOMES_V1",
+    "RiskPolicyCostSensitivity",
+    "RiskPolicyOutcomeBlockSummary",
+    "RiskPolicyOutcomeContrast",
+    "RiskPolicyOutcomeObservation",
+    "RiskPolicyOutcomeResult",
+    "RiskPolicyOutcomeSpec",
+    "RiskPolicyOutcomeSummary",
+    "evaluate_risk_policy_outcomes",
 )
