@@ -204,6 +204,8 @@ def execute_operation(
 
     command = (sys.executable, "-m", str(spec.module_target))
     child_environment = dict(os.environ)
+    child_environment["PYTHONIOENCODING"] = "utf-8"
+    child_environment["PYTHONUTF8"] = "1"
     child_environment[RUN_ID_ENV] = run_id
     child_environment[HISTORY_PATH_ENV] = str(store_path)
     try:

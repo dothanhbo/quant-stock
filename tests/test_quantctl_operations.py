@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import os
 from pathlib import Path
 import subprocess
 import sys
@@ -13,11 +14,13 @@ from quantctl.cli import main
 from quantctl.operations import (
     OperationCapability,
     OperationResult,
+    OperationSpec,
     execute_operation,
     get_operation,
     list_operations,
 )
 from quantctl.run_history import HISTORY_PATH_ENV, RUN_ID_ENV, OperationHistoryStore, RunStatus
+from quantctl.run_history import sanitize_captured_output
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -127,6 +130,10 @@ def test_wrappers_invoke_each_canonical_module_exactly_once(
     assert len(calls) == 1
     assert calls[0][0] == (sys.executable, "-m", module)
     assert calls[0][1]["cwd"] == PROJECT_ROOT
+    environment = calls[0][1]["env"]
+    assert isinstance(environment, dict)
+    assert environment["PYTHONIOENCODING"] == "utf-8"
+    assert environment["PYTHONUTF8"] == "1"
 
 
 def test_wrapper_failure_propagates_clearly(tmp_path: Path) -> None:
@@ -188,6 +195,91 @@ def test_keyboard_interrupt_is_recorded_as_cancelled_and_reraised(tmp_path: Path
     assert runs[0].exit_code == 130
 
 
+def test_real_child_process_forces_utf8_and_safely_captures_unicode(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    module = tmp_path / "unicode_operation_fixture.py"
+    module.write_text(
+        "import sys\n"
+        "print('📊 Thị trường Việt Nam')\n"
+        "print('⚠️ lỗi tiếng Việt', file=sys.stderr)\n"
+        "print('TOKEN=child-secret')\n"
+        "print('ữ' * 30000)\n"
+        "print('PASSWORD=stderr-secret', file=sys.stderr)\n"
+        "print('ỗ' * 30000, file=sys.stderr)\n",
+        encoding="utf-8",
+    )
+    spec = OperationSpec(
+        "unicode-fixture",
+        "Unicode subprocess regression fixture.",
+        (OperationCapability.LOCAL_WRITE,),
+        "unicode_operation_fixture",
+    )
+    monkeypatch.setattr("quantctl.operations.get_operation", lambda name: spec)
+    monkeypatch.setattr("quantctl.operations.operation_available", lambda spec, root: True)
+    monkeypatch.setenv("PYTHONIOENCODING", "cp1252")
+    monkeypatch.setenv("PYTHONUTF8", "0")
+    monkeypatch.setenv(
+        "PYTHONPATH",
+        os.pathsep.join((str(tmp_path), str(PROJECT_ROOT))),
+    )
+
+    result = execute_operation(
+        "unicode-fixture",
+        root=tmp_path,
+        history_path=tmp_path / "history.db",
+    )
+
+    assert result.success
+    assert "📊 Thị trường Việt Nam" in result.stdout
+    assert "⚠️ lỗi tiếng Việt" in result.stderr
+    assert "child-secret" not in result.stdout
+    assert "stderr-secret" not in result.stderr
+    assert "TOKEN=[REDACTED]" in result.stdout
+    assert "PASSWORD=[REDACTED]" in result.stderr
+    assert len(result.stdout) == 20_000
+    assert len(result.stderr) == 20_000
+    assert result.stdout.endswith("[OUTPUT TRUNCATED]")
+    assert result.stderr.endswith("[OUTPUT TRUNCATED]")
+    runs = OperationHistoryStore(tmp_path / "history.db").list_runs()
+    assert len(runs) == 1 and runs[0].status is RunStatus.SUCCESS
+
+
+def test_direct_tracked_entrypoint_reconfigures_cp1252_stdio(tmp_path: Path) -> None:
+    script = tmp_path / "direct_unicode.py"
+    script.write_text(
+        "from quantctl.run_history import run_tracked_entrypoint\n"
+        "def main():\n"
+        "    print('📊 Việt Nam trực tiếp')\n"
+        "    return 0\n"
+        "raise SystemExit(run_tracked_entrypoint('scan', main))\n",
+        encoding="utf-8",
+    )
+    environment = dict(os.environ)
+    environment.update(
+        {
+            "PYTHONIOENCODING": "cp1252",
+            "PYTHONUTF8": "0",
+            "PYTHONPATH": str(PROJECT_ROOT),
+            RUN_ID_ENV: "existing-test-run",
+        }
+    )
+
+    completed = subprocess.run(
+        (sys.executable, str(script)),
+        cwd=tmp_path,
+        check=False,
+        capture_output=True,
+        text=True,
+        encoding="utf-8",
+        env=environment,
+    )
+
+    assert completed.returncode == 0
+    assert completed.stdout.strip() == "📊 Việt Nam trực tiếp"
+    assert completed.stderr == ""
+
+
 def test_wrapper_contains_no_provider_or_business_logic() -> None:
     source = (PROJECT_ROOT / "quantctl" / "operations.py").read_text(encoding="utf-8")
     assert "from scripts.update_data" not in source
@@ -210,11 +302,39 @@ class _FakeStreamlit:
         self.click = click
         self.session_state: dict[str, object] = {}
         self.buttons: list[tuple[str, bool]] = []
+        self.errors: list[str] = []
+        self.codes: list[str] = []
+        self.expanders: list[str] = []
 
     def __getattr__(self, name: str):
-        if name in {"header", "warning", "subheader", "write", "caption", "divider", "success", "error", "json", "code"}:
+        if name in {
+            "header", "warning", "subheader", "write", "caption", "divider",
+            "success", "json", "markdown", "metric", "rerun",
+        }:
             return lambda *args, **kwargs: None
         raise AttributeError(name)
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args: object) -> None:
+        return None
+
+    def spinner(self, *args: object, **kwargs: object):
+        return self
+
+    def expander(self, *args: object, **kwargs: object):
+        self.expanders.append(str(args[0]))
+        return self
+
+    def error(self, value: object, *args: object, **kwargs: object) -> None:
+        self.errors.append(str(value))
+
+    def code(self, value: object, *args: object, **kwargs: object) -> None:
+        self.codes.append(str(value))
+
+    def columns(self, count: int):
+        return [self for _ in range(count)]
 
     def checkbox(self, *args, **kwargs) -> bool:
         return self.confirm
@@ -260,3 +380,32 @@ def test_write_operation_requires_confirmation_and_explicit_click(
 
     assert calls == ["update"]
     assert fake_streamlit.session_state["quant_manager_last_operation_result"].operation == "update"
+
+
+def test_failure_ux_keeps_bounded_redacted_output_in_technical_details(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    fake_streamlit = _FakeStreamlit()
+    monkeypatch.setitem(sys.modules, "streamlit", fake_streamlit)
+    output = sanitize_captured_output("TOKEN=hidden\n" + "ữ" * 30_000)
+    result = OperationResult(
+        "scan",
+        False,
+        1,
+        "Operation scan failed with exit code 1.",
+        "2026-01-01T00:00:00+00:00",
+        "2026-01-01T00:00:01+00:00",
+        MappingProxyType({"module_target": "strategy.scanner"}),
+        stderr=output,
+        run_id="12345678-1234-1234-1234-123456789abc",
+        duration_ms=1000,
+        status="FAILED",
+    )
+
+    operations_page._display_result(result)
+
+    assert fake_streamlit.errors == ["Run Scanner failed."]
+    assert fake_streamlit.expanders == ["Technical details"]
+    assert all("hidden" not in value for value in fake_streamlit.codes)
+    assert any("TOKEN=[REDACTED]" in value for value in fake_streamlit.codes)
+    assert any(value.endswith("[OUTPUT TRUNCATED]") for value in fake_streamlit.codes)

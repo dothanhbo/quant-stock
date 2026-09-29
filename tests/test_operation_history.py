@@ -15,6 +15,7 @@ from quantctl.run_history import (
     HISTORY_PATH_ENV,
     RUN_ID_ENV,
     OperationHistoryStore,
+    RunStep,
     RunStatus,
     record_daily_pipeline_steps,
     run_tracked_entrypoint,
@@ -259,3 +260,50 @@ def test_malformed_history_degrades_without_traceback_or_manager_crash(
     assert dashboard.history_warning == "Operation history is unavailable or malformed."
     assert manager_history.recent == ()
     assert manager_history.warning == dashboard.history_warning
+
+
+def test_run_history_page_handles_empty_and_failed_stepped_runs(
+    tmp_path: Path, monkeypatch: pytest.MonkeyPatch
+) -> None:
+    from streamlit.testing.v1 import AppTest
+
+    database = tmp_path / "operation_history.db"
+    monkeypatch.setenv(HISTORY_PATH_ENV, str(database))
+    app = AppTest.from_file(str(PROJECT_ROOT / "manager" / "app.py"), default_timeout=15).run()
+    app.sidebar.radio[0].set_value("OPERATIONS  /  Run History")
+    app.run()
+    assert not app.exception
+    assert any("No operational runs recorded" in item.value for item in app.caption)
+
+    store = OperationHistoryStore(database)
+    run_id = store.begin_run("daily", ("LOCAL_WRITE",), started_at_utc="2026-01-01T00:00:00+00:00")
+    store.record_steps(
+        run_id,
+        (
+            RunStep(
+                run_id,
+                1,
+                "Scanner",
+                "2026-01-01T00:00:00+00:00",
+                "2026-01-01T00:00:01+00:00",
+                RunStatus.FAILED,
+                1000,
+                1,
+                "Unicode child output failed",
+            ),
+        ),
+    )
+    store.finish_run(
+        run_id,
+        status=RunStatus.FAILED,
+        exit_code=1,
+        duration_ms=1000,
+        failed_step="Scanner",
+        error_message="Unicode child output failed",
+    )
+
+    app.run()
+    assert not app.exception
+    assert any(item.value == "Unicode child output failed" for item in app.error)
+    assert any(item.label.startswith("Run ") for item in app.expander)
+    assert len(app.dataframe) >= 2

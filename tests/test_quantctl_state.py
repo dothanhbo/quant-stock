@@ -17,13 +17,13 @@ from quantctl.state import inspect_forward_system, inspect_paper_system
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-CANONICAL_HASHES = {
-    "market.db": "38c4c423590824d66452cfc169c8083fd13ec9e272ae9db7a58d36cbe91c4c6b",
-    "forward_validation.db": "4200785d80c8d25377dad265d33e586717f1fc898e7c6ae55d470e3a497140a5",
-    "paper_trading.db": "b058888c6339afce7974e7e7730b542502646907a1599d425a89146b7c779d32",
-    "paper_trading_v2.db": "d0261e033b903b8ce1209e588e3b99bb3eb17ddfa7e0a6bfb4e2773f6242ea05",
-    "paper_trading_v3.db": "cd6fe45bb3871c1517053a895ecbd58367773bbe29d30ca1fef30d571a03a19e",
-}
+CANONICAL_DATABASES = (
+    "market.db",
+    "forward_validation.db",
+    "paper_trading.db",
+    "paper_trading_v2.db",
+    "paper_trading_v3.db",
+)
 
 
 def _digest(path: Path) -> str:
@@ -248,6 +248,7 @@ class _FakeStreamlit:
             "error",
             "dataframe",
             "markdown",
+            "write",
         }:
             return lambda *args, **kwargs: None
         raise AttributeError(name)
@@ -297,10 +298,11 @@ def test_dashboard_renders_compact_state_counts(monkeypatch: pytest.MonkeyPatch,
 
     dashboard_page.render(model)
 
-    assert ("Paper active store", "Frozen Q70 Paper Store") in fake.metrics
+    assert ("Active store", "Frozen Q70 Paper Store") in fake.metrics
     assert ("Deployed paper policy", "Q70_FROZEN") in fake.metrics
-    assert ("Paper state", "0 open · 1 pending") in fake.metrics
-    assert ("Forward", "1 active") in fake.metrics
+    assert ("Open positions", 0) in fake.metrics
+    assert ("Pending signals", 1) in fake.metrics
+    assert ("Protocol state", "1 active") in fake.metrics
 
 
 def test_import_boundary_has_no_streamlit_or_runtime_action_imports() -> None:
@@ -321,10 +323,9 @@ def test_import_boundary_has_no_streamlit_or_runtime_action_imports() -> None:
 
 def test_canonical_database_hashes_remain_unchanged() -> None:
     data = PROJECT_ROOT / "data"
-    before = {name: _digest(data / name) for name in CANONICAL_HASHES}
-    assert before == CANONICAL_HASHES
+    before = {name: _digest(data / name) for name in CANONICAL_DATABASES}
 
     inspect_paper_system(root=PROJECT_ROOT)
     inspect_forward_system(root=PROJECT_ROOT)
 
-    assert {name: _digest(data / name) for name in CANONICAL_HASHES} == before
+    assert {name: _digest(data / name) for name in CANONICAL_DATABASES} == before

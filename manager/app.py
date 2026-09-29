@@ -17,6 +17,17 @@ from manager.view_models import (
     build_state_model,
     build_system_model,
 )
+from quantctl.registry import inspect_git
+
+
+_NAVIGATION_LABELS = {
+    "Dashboard": "OVERVIEW  /  Dashboard",
+    "Operations": "OPERATIONS  /  Operations",
+    "Run History": "OPERATIONS  /  Run History",
+    "State": "STATE  /  Paper & Forward",
+    "Research": "RESEARCH  /  Research",
+    "System / Doctor": "SYSTEM  /  Doctor",
+}
 
 
 def main() -> None:
@@ -25,12 +36,16 @@ def main() -> None:
     st.set_page_config(page_title="Quant Manager", layout="wide")
     st.title("Quant Manager")
     st.caption("System Control & Research Console")
-    st.info("READ-ONLY INSPECTION + EXPLICIT CONTROLLED OPERATIONS")
+    st.info("Read-only inspection with explicit, controlled operations.")
 
+    git = inspect_git()
+    st.sidebar.caption("Environment: LOCAL")
+    st.sidebar.caption(f"Repository: {git.tag or git.head or 'UNKNOWN'}")
     st.sidebar.header("Navigation")
     page = st.sidebar.radio(
         "Page",
         ("Dashboard", "Operations", "Run History", "State", "Research", "System / Doctor"),
+        format_func=_NAVIGATION_LABELS.__getitem__,
     )
     if st.sidebar.button("Refresh", type="secondary", width="stretch"):
         st.rerun()

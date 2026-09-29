@@ -356,6 +356,9 @@ def run_tracked_entrypoint(
     *,
     root: Path = PROJECT_ROOT,
 ) -> int:
+    from quantctl.runtime import configure_utf8_stdio
+
+    configure_utf8_stdio()
     existing_run_id = os.environ.get(RUN_ID_ENV, "").strip()
     if existing_run_id:
         value = function()

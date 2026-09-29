@@ -22,10 +22,19 @@ def render(model: SystemViewModel) -> None:
     import streamlit as st
 
     st.header("System / Doctor")
-    st.caption("Read-only diagnostics. Secret values are never displayed.")
+    st.caption("Read-only health checks. Secret values are never displayed and no repair is attempted.")
     _show_status(model.overall_status, f"OVERALL: {model.overall_status}")
     for section, checks in groupby(model.checks, key=lambda item: item.section):
-        st.subheader(section)
-        for check in checks:
-            detail = f": {check.detail}" if check.detail else ""
-            _show_status(check.status, f"{check.status} — {check.name}{detail}")
+        rows = tuple(checks)
+        failures = sum(item.status == "FAIL" for item in rows)
+        warnings = sum(item.status == "WARN" for item in rows)
+        label = {
+            "Market Data": "Data",
+            "Persistent State": "Paper / Forward",
+        }.get(section, section)
+        st.subheader(label)
+        st.caption(f"{len(rows)} checks · {failures} failed · {warnings} warnings")
+        with st.expander(f"{label} details", expanded=bool(failures)):
+            for check in rows:
+                detail = f": {check.detail}" if check.detail else ""
+                _show_status(check.status, f"{check.status} — {check.name}{detail}")

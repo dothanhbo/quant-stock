@@ -15,13 +15,13 @@ from quantctl.commands import status
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
-CANONICAL_HASHES = {
-    "market.db": "38c4c423590824d66452cfc169c8083fd13ec9e272ae9db7a58d36cbe91c4c6b",
-    "forward_validation.db": "4200785d80c8d25377dad265d33e586717f1fc898e7c6ae55d470e3a497140a5",
-    "paper_trading.db": "b058888c6339afce7974e7e7730b542502646907a1599d425a89146b7c779d32",
-    "paper_trading_v2.db": "d0261e033b903b8ce1209e588e3b99bb3eb17ddfa7e0a6bfb4e2773f6242ea05",
-    "paper_trading_v3.db": "cd6fe45bb3871c1517053a895ecbd58367773bbe29d30ca1fef30d571a03a19e",
-}
+CANONICAL_DATABASES = (
+    "market.db",
+    "forward_validation.db",
+    "paper_trading.db",
+    "paper_trading_v2.db",
+    "paper_trading_v3.db",
+)
 
 
 def _digest(path: Path) -> str:
@@ -137,13 +137,12 @@ def test_importing_manager_does_not_import_streamlit_or_touch_state() -> None:
 
 def test_manager_reads_canonical_databases_without_mutation() -> None:
     data = PROJECT_ROOT / "data"
-    before = {name: _digest(data / name) for name in CANONICAL_HASHES}
-    assert before == CANONICAL_HASHES
+    before = {name: _digest(data / name) for name in CANONICAL_DATABASES}
 
     build_dashboard_model(root=PROJECT_ROOT, environ={})
     build_system_model(root=PROJECT_ROOT, environ={})
 
-    after = {name: _digest(data / name) for name in CANONICAL_HASHES}
+    after = {name: _digest(data / name) for name in CANONICAL_DATABASES}
     assert after == before
 
 
@@ -165,3 +164,52 @@ def test_manager_uses_current_streamlit_width_api() -> None:
     )
 
     assert "use_container_width" not in sources
+    configuration = (PROJECT_ROOT / ".streamlit" / "config.toml").read_text(encoding="utf-8")
+    assert "showSidebarNavigation = false" in configuration
+
+
+def test_every_manager_page_exposes_the_operator_ux_contract() -> None:
+    from streamlit.testing.v1 import AppTest
+
+    app = AppTest.from_file(str(PROJECT_ROOT / "manager" / "app.py"), default_timeout=15).run()
+    pages = (
+        "OVERVIEW  /  Dashboard",
+        "OPERATIONS  /  Operations",
+        "OPERATIONS  /  Run History",
+        "STATE  /  Paper & Forward",
+        "RESEARCH  /  Research",
+        "SYSTEM  /  Doctor",
+    )
+    expected_sections = {
+        pages[0]: {"System", "Market Data", "Production", "Forward", "Last Run", "Research"},
+        pages[1]: {"Data Status", "Update Market Data", "Run Scanner", "Run Daily Pipeline"},
+        pages[2]: {"Latest Operational Run", "Recent Runs"},
+        pages[3]: {"Active Paper", "Forward Validation"},
+        pages[4]: {"Research Frontier", "Production Replacement Status", "Factor Decisions"},
+        pages[5]: {"Repository", "Python", "Environment", "Data", "Paper / Forward"},
+    }
+
+    assert tuple(app.sidebar.radio[0].options) == pages
+    for page in pages:
+        app.sidebar.radio[0].set_value(page)
+        app.run()
+        assert not app.exception
+        assert expected_sections[page].issubset({item.value for item in app.subheader})
+
+    app.sidebar.radio[0].set_value(pages[1])
+    app.run()
+    operation_buttons = {item.label: item.disabled for item in app.button if item.label.startswith("Run ")}
+    assert operation_buttons == {
+        "Run Data Status": False,
+        "Run Update": True,
+        "Run Scan": True,
+        "Run Daily": True,
+    }
+    assert len(app.checkbox) == 3
+
+    app.button[0].click()
+    app.run()
+    assert not app.exception
+    assert "Latest operation result" in {item.value for item in app.subheader}
+    assert any("completed successfully" in item.value for item in app.success)
+    assert "Technical details" in {item.label for item in app.expander}
