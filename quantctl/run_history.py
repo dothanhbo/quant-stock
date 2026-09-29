@@ -19,6 +19,8 @@ HISTORY_PATH_ENV = "QUANT_OPERATION_HISTORY_PATH"
 RUN_ID_ENV = "QUANT_OPERATION_RUN_ID"
 DEFAULT_HISTORY_PATH = Path("data/operation_history.db")
 _MAX_ERROR_LENGTH = 500
+_MAX_CAPTURED_OUTPUT_LENGTH = 20_000
+_TRUNCATION_MARKER = "\n[OUTPUT TRUNCATED]"
 _SECRET_PATTERNS = (
     re.compile(r"(?i)(bearer\s+)[^\s]+"),
     re.compile(r"(?i)((?:api[_-]?key|token|secret|password|chat[_-]?id)\s*[=:]\s*)[^\s,;]+"),
@@ -30,6 +32,10 @@ class RunStatus(str, Enum):
     SUCCESS = "SUCCESS"
     FAILED = "FAILED"
     CANCELLED = "CANCELLED"
+
+
+class HistoryReadError(RuntimeError):
+    """Raised when an existing operation-history store cannot be read safely."""
 
 
 @dataclass(frozen=True, slots=True)
@@ -73,13 +79,29 @@ def history_path(*, root: Path = PROJECT_ROOT, path: Path | None = None) -> Path
     return configured.resolve() if configured.is_absolute() else (root / configured).resolve()
 
 
+def _redact_secrets(text: str) -> str:
+    for pattern in _SECRET_PATTERNS:
+        text = pattern.sub(r"\1[REDACTED]", text)
+    return text
+
+
 def sanitize_diagnostic(value: object | None) -> str | None:
     if value is None:
         return None
     text = " ".join(str(value).split())
-    for pattern in _SECRET_PATTERNS:
-        text = pattern.sub(r"\1[REDACTED]", text)
+    text = _redact_secrets(text)
     return text[:_MAX_ERROR_LENGTH] or None
+
+
+def sanitize_captured_output(value: object | None) -> str:
+    """Redact and bound subprocess output before returning it to a UI or terminal."""
+    if value is None:
+        return ""
+    text = _redact_secrets(str(value))
+    if len(text) <= _MAX_CAPTURED_OUTPUT_LENGTH:
+        return text
+    retained = _MAX_CAPTURED_OUTPUT_LENGTH - len(_TRUNCATION_MARKER)
+    return text[:retained] + _TRUNCATION_MARKER
 
 
 def _json_object(value: str | None) -> Mapping[str, Any]:
@@ -246,43 +268,49 @@ class OperationHistoryStore:
             raise ValueError("history limit must be positive")
         if not self.path.is_file():
             return ()
-        with sqlite_read_only(self.path) as connection:
-            connection.row_factory = sqlite3.Row
-            rows = connection.execute(
-                "SELECT * FROM operation_runs ORDER BY started_at_utc DESC, run_id DESC LIMIT ?",
-                (int(limit),),
-            ).fetchall()
-        return tuple(self._run_from_row(row) for row in rows)
+        try:
+            with sqlite_read_only(self.path) as connection:
+                connection.row_factory = sqlite3.Row
+                rows = connection.execute(
+                    "SELECT * FROM operation_runs ORDER BY started_at_utc DESC, run_id DESC LIMIT ?",
+                    (int(limit),),
+                ).fetchall()
+            return tuple(self._run_from_row(row) for row in rows)
+        except (sqlite3.Error, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise HistoryReadError("Operation history is unavailable or malformed.") from exc
 
     def get_run(self, run_id: str) -> RunDetail | None:
         if not self.path.is_file():
             return None
-        with sqlite_read_only(self.path) as connection:
-            connection.row_factory = sqlite3.Row
-            row = connection.execute(
-                "SELECT * FROM operation_runs WHERE run_id=?", (run_id,)
-            ).fetchone()
-            if row is None:
-                return None
-            step_rows = connection.execute(
-                "SELECT * FROM operation_steps WHERE run_id=? ORDER BY sequence", (run_id,)
-            ).fetchall()
-        steps = tuple(
-            RunStep(
-                str(item["run_id"]),
-                int(item["sequence"]),
-                str(item["step_name"]),
-                str(item["started_at_utc"]),
-                str(item["finished_at_utc"]),
-                RunStatus(str(item["status"])),
-                int(item["duration_ms"]),
-                None if item["exit_code"] is None else int(item["exit_code"]),
-                None if item["error_message"] is None else str(item["error_message"]),
-                _json_object(item["metadata_json"]),
+        try:
+            with sqlite_read_only(self.path) as connection:
+                connection.row_factory = sqlite3.Row
+                row = connection.execute(
+                    "SELECT * FROM operation_runs WHERE run_id=?", (run_id,)
+                ).fetchone()
+                if row is None:
+                    return None
+                step_rows = connection.execute(
+                    "SELECT * FROM operation_steps WHERE run_id=? ORDER BY sequence", (run_id,)
+                ).fetchall()
+            steps = tuple(
+                RunStep(
+                    str(item["run_id"]),
+                    int(item["sequence"]),
+                    str(item["step_name"]),
+                    str(item["started_at_utc"]),
+                    str(item["finished_at_utc"]),
+                    RunStatus(str(item["status"])),
+                    int(item["duration_ms"]),
+                    None if item["exit_code"] is None else int(item["exit_code"]),
+                    None if item["error_message"] is None else str(item["error_message"]),
+                    _json_object(item["metadata_json"]),
+                )
+                for item in step_rows
             )
-            for item in step_rows
-        )
-        return RunDetail(self._run_from_row(row), steps, _json_object(row["metadata_json"]))
+            return RunDetail(self._run_from_row(row), steps, _json_object(row["metadata_json"]))
+        except (sqlite3.Error, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+            raise HistoryReadError("Operation history is unavailable or malformed.") from exc
 
     def latest_run(self) -> RunDetail | None:
         rows = self.list_runs(1)

@@ -156,3 +156,12 @@ def test_view_models_are_immutable(tmp_path: Path) -> None:
         pass
     else:
         raise AssertionError("dashboard model must be immutable")
+
+
+def test_manager_uses_current_streamlit_width_api() -> None:
+    sources = "\n".join(
+        path.read_text(encoding="utf-8")
+        for path in sorted((PROJECT_ROOT / "manager").rglob("*.py"))
+    )
+
+    assert "use_container_width" not in sources

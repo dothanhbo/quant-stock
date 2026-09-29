@@ -26,7 +26,7 @@ from quantctl.research_status import (
     inspect_production_policy,
     inspect_research_frontier,
 )
-from quantctl.run_history import OperationHistoryStore, RunDetail, history_path
+from quantctl.run_history import HistoryReadError, OperationHistoryStore, RunDetail, history_path
 
 
 @dataclass(frozen=True, slots=True)
@@ -39,6 +39,7 @@ class DashboardViewModel:
     production: ProductionPolicySnapshot
     research: ResearchFrontierSnapshot
     latest_run: RunDetail | None
+    history_warning: str | None
 
 
 @dataclass(frozen=True, slots=True)
@@ -74,6 +75,14 @@ class StateViewModel:
 class RunHistoryViewModel:
     latest: RunDetail | None
     recent: tuple[RunDetail, ...]
+    warning: str | None = None
+
+
+def _latest_run(root: Path) -> tuple[RunDetail | None, str | None]:
+    try:
+        return OperationHistoryStore(history_path(root=root)).latest_run(), None
+    except HistoryReadError as exc:
+        return None, str(exc)
 
 
 def build_dashboard_model(
@@ -83,6 +92,7 @@ def build_dashboard_model(
 ) -> DashboardViewModel:
     snapshot = inspect_system(root=root)
     checks = collect_checks(root=root, environ=environ, snapshot=snapshot)
+    latest_run, history_warning = _latest_run(root)
     return DashboardViewModel(
         QUANTCTL_VERSION,
         overall_status(checks),
@@ -94,7 +104,8 @@ def build_dashboard_model(
         inspect_forward_system(root=root),
         inspect_production_policy(root=root, environ=environ),
         inspect_research_frontier(root=root),
-        OperationHistoryStore(history_path(root=root)).latest_run(),
+        latest_run,
+        history_warning,
     )
 
 
@@ -136,6 +147,9 @@ def build_state_model(
 
 def build_run_history_model(*, root: Path = PROJECT_ROOT, limit: int = 20) -> RunHistoryViewModel:
     store = OperationHistoryStore(history_path(root=root))
-    summaries = store.list_runs(limit)
-    details = tuple(item for summary in summaries if (item := store.get_run(summary.run_id)) is not None)
-    return RunHistoryViewModel(store.latest_run(), details)
+    try:
+        summaries = store.list_runs(limit)
+        details = tuple(item for summary in summaries if (item := store.get_run(summary.run_id)) is not None)
+        return RunHistoryViewModel(store.latest_run(), details)
+    except HistoryReadError as exc:
+        return RunHistoryViewModel(None, (), str(exc))

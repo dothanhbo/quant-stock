@@ -12,6 +12,8 @@ def render(model: RunHistoryViewModel) -> None:
 
     st.header("Run History")
     st.info("READ-ONLY — operational history only; no operation can be started here.")
+    if model.warning:
+        st.warning(model.warning)
     st.subheader("Latest Operational Run")
     if model.latest is None:
         st.caption("No operational runs recorded.")
@@ -38,7 +40,7 @@ def render(model: RunHistoryViewModel) -> None:
                     }
                     for item in model.latest.steps
                 ),
-                use_container_width=True,
+                width="stretch",
                 hide_index=True,
             )
         else:
@@ -60,7 +62,7 @@ def render(model: RunHistoryViewModel) -> None:
             }
             for item in model.recent
         ),
-        use_container_width=True,
+        width="stretch",
         hide_index=True,
     )
     selected = st.selectbox("Inspect run", tuple(item.summary.run_id for item in model.recent))
@@ -82,7 +84,7 @@ def render(model: RunHistoryViewModel) -> None:
                         }
                         for item in detail.steps
                     ),
-                    use_container_width=True,
+                    width="stretch",
                     hide_index=True,
                 )
             if run.error_message:

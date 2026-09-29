@@ -3,7 +3,16 @@ from __future__ import annotations
 from pathlib import Path
 
 from quantctl.registry import PROJECT_ROOT
-from quantctl.run_history import OperationHistoryStore, RunDetail, RunSummary, history_path
+from quantctl.run_history import (
+    HistoryReadError,
+    OperationHistoryStore,
+    RunDetail,
+    RunSummary,
+    history_path,
+)
+
+
+_UNAVAILABLE = "Operation history is unavailable or malformed."
 
 
 def _duration(value: int | None) -> str:
@@ -27,7 +36,10 @@ def _summary_lines(run: RunSummary) -> list[str]:
 
 
 def render_list(*, root: Path = PROJECT_ROOT, limit: int = 20) -> str:
-    runs = OperationHistoryStore(history_path(root=root)).list_runs(limit)
+    try:
+        runs = OperationHistoryStore(history_path(root=root)).list_runs(limit)
+    except HistoryReadError:
+        return f"RUN HISTORY\n\n{_UNAVAILABLE}"
     lines = ["RUN HISTORY", ""]
     if not runs:
         lines.append("No operational runs recorded.")
@@ -74,18 +86,22 @@ def _detail_lines(detail: RunDetail) -> list[str]:
 
 
 def render_show(run_id: str, *, root: Path = PROJECT_ROOT) -> str:
-    detail = OperationHistoryStore(history_path(root=root)).get_run(run_id)
+    try:
+        detail = OperationHistoryStore(history_path(root=root)).get_run(run_id)
+    except HistoryReadError:
+        return f"RUN DETAIL\n\n{_UNAVAILABLE}"
     if detail is None:
         return f"RUN DETAIL\n\nRun not found: {run_id}"
     return "\n".join(_detail_lines(detail))
 
 
 def run_list(*, root: Path = PROJECT_ROOT, limit: int = 20) -> int:
-    print(render_list(root=root, limit=limit))
-    return 0
+    rendered = render_list(root=root, limit=limit)
+    print(rendered)
+    return 1 if _UNAVAILABLE in rendered else 0
 
 
 def run_show(run_id: str, *, root: Path = PROJECT_ROOT) -> int:
-    detail = OperationHistoryStore(history_path(root=root)).get_run(run_id)
-    print(render_show(run_id, root=root))
-    return 0 if detail is not None else 1
+    rendered = render_show(run_id, root=root)
+    print(rendered)
+    return 1 if _UNAVAILABLE in rendered or "Run not found:" in rendered else 0

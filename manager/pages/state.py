@@ -47,7 +47,7 @@ def _paper_store(store: PaperStoreSnapshot) -> None:
                 }
                 for item in store.positions
             ),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
     for warning in store.warnings:
@@ -99,7 +99,7 @@ def _forward(snapshot: ForwardSystemSnapshot) -> None:
                 }
                 for item in snapshot.protocols
             ),
-            use_container_width=True,
+            width="stretch",
             hide_index=True,
         )
     for warning in snapshot.warnings:

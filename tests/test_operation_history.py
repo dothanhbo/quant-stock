@@ -18,6 +18,7 @@ from quantctl.run_history import (
     RunStatus,
     record_daily_pipeline_steps,
     run_tracked_entrypoint,
+    sanitize_captured_output,
     sanitize_diagnostic,
 )
 
@@ -77,7 +78,8 @@ def test_failure_is_recorded_and_sensitive_error_is_redacted(tmp_path: Path) -> 
     assert detail.summary.error_type == "SubprocessExit"
     assert secret not in (detail.summary.error_message or "")
     assert "[REDACTED]" in (detail.summary.error_message or "")
-    assert secret in result.stderr  # persistence sanitization does not alter subprocess behavior
+    assert secret not in result.stderr
+    assert "[REDACTED]" in result.stderr
 
 
 def test_exit_130_is_recorded_as_cancelled(tmp_path: Path) -> None:
@@ -197,6 +199,16 @@ def test_error_sanitizer_is_bounded_and_redacts_common_secret_shapes() -> None:
     assert value.count("[REDACTED]") == 4
 
 
+def test_captured_operation_output_is_redacted_and_bounded() -> None:
+    secret = "never-render-this-token"
+    value = sanitize_captured_output(f"TOKEN={secret}\n" + "x" * 30_000)
+
+    assert secret not in value
+    assert "TOKEN=[REDACTED]" in value
+    assert len(value) == 20_000
+    assert value.endswith("[OUTPUT TRUNCATED]")
+
+
 def test_manager_dashboard_and_history_page_share_persisted_layer(
     tmp_path: Path, monkeypatch: pytest.MonkeyPatch
 ) -> None:
@@ -228,3 +240,22 @@ def test_temporary_history_does_not_touch_canonical_path(tmp_path: Path) -> None
     execute_operation("update", root=PROJECT_ROOT, process_runner=_completed(), history_path=tmp_path / "history.db")
     assert (tmp_path / "history.db").is_file()
     assert canonical.exists() is existed
+
+
+def test_malformed_history_degrades_without_traceback_or_manager_crash(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    data = tmp_path / "data"
+    data.mkdir()
+    (tmp_path / "research").mkdir()
+    (data / "operation_history.db").write_text("not a sqlite database", encoding="utf-8")
+
+    assert history.run_list(root=tmp_path) == 1
+    assert "unavailable or malformed" in capsys.readouterr().out
+    assert "Traceback" not in history.render_list(root=tmp_path)
+    dashboard = build_dashboard_model(root=tmp_path, environ={})
+    manager_history = build_run_history_model(root=tmp_path)
+    assert dashboard.latest_run is None
+    assert dashboard.history_warning == "Operation history is unavailable or malformed."
+    assert manager_history.recent == ()
+    assert manager_history.warning == dashboard.history_warning

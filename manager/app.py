@@ -32,7 +32,7 @@ def main() -> None:
         "Page",
         ("Dashboard", "Operations", "Run History", "State", "Research", "System / Doctor"),
     )
-    if st.sidebar.button("Refresh", type="secondary", use_container_width=True):
+    if st.sidebar.button("Refresh", type="secondary", width="stretch"):
         st.rerun()
     st.sidebar.caption("Refresh re-reads local state only.")
 

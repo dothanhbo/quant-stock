@@ -19,6 +19,7 @@ from quantctl.run_history import (
     OperationHistoryStore,
     RunStatus,
     history_path as resolve_history_path,
+    sanitize_captured_output,
     sanitize_diagnostic,
 )
 
@@ -290,8 +291,8 @@ def execute_operation(
         started,
         finished,
         MappingProxyType({"module_target": spec.module_target}),
-        completed.stdout or "",
-        completed.stderr or "",
+        sanitize_captured_output(completed.stdout),
+        sanitize_captured_output(completed.stderr),
         run_id,
         duration_ms,
         final_status.value,

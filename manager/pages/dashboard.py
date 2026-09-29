@@ -65,6 +65,8 @@ def render(model: DashboardViewModel) -> None:
     st.caption("Counts reflect persisted state, not strategy health or current market valuation.")
 
     st.subheader("Last Run")
+    if model.history_warning:
+        st.warning(model.history_warning)
     latest = model.latest_run
     if latest is None:
         st.caption("No operational runs recorded.")

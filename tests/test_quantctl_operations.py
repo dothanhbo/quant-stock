@@ -17,6 +17,7 @@ from quantctl.operations import (
     get_operation,
     list_operations,
 )
+from quantctl.run_history import HISTORY_PATH_ENV, RUN_ID_ENV, OperationHistoryStore, RunStatus
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -142,6 +143,49 @@ def test_wrapper_failure_propagates_clearly(tmp_path: Path) -> None:
     assert result.exit_code == 7
     assert result.stderr == "canonical failure"
     assert "failed with exit code 7" in result.message
+
+
+def test_wrapper_propagates_tracking_environment_without_duplicate_run(tmp_path: Path) -> None:
+    database = tmp_path / "operation_history.db"
+    captured: dict[str, str] = {}
+
+    def runner(command: tuple[str, ...], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        environment = kwargs["env"]
+        assert isinstance(environment, dict)
+        captured[RUN_ID_ENV] = str(environment[RUN_ID_ENV])
+        captured[HISTORY_PATH_ENV] = str(environment[HISTORY_PATH_ENV])
+        return subprocess.CompletedProcess(command, 0, "ok", "")
+
+    result = execute_operation(
+        "daily",
+        root=PROJECT_ROOT,
+        process_runner=runner,
+        history_path=database,
+    )
+
+    assert captured[RUN_ID_ENV] == result.run_id
+    assert Path(captured[HISTORY_PATH_ENV]) == database
+    assert len(OperationHistoryStore(database).list_runs()) == 1
+
+
+def test_keyboard_interrupt_is_recorded_as_cancelled_and_reraised(tmp_path: Path) -> None:
+    database = tmp_path / "operation_history.db"
+
+    def interrupted(command: tuple[str, ...], **kwargs: object) -> subprocess.CompletedProcess[str]:
+        raise KeyboardInterrupt
+
+    with pytest.raises(KeyboardInterrupt):
+        execute_operation(
+            "scan",
+            root=PROJECT_ROOT,
+            process_runner=interrupted,
+            history_path=database,
+        )
+
+    runs = OperationHistoryStore(database).list_runs()
+    assert len(runs) == 1
+    assert runs[0].status is RunStatus.CANCELLED
+    assert runs[0].exit_code == 130
 
 
 def test_wrapper_contains_no_provider_or_business_logic() -> None:
