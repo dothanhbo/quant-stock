@@ -9,6 +9,7 @@ if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
 from manager.pages import dashboard, operations, research, run_history, state, system
+from manager.theme import apply_manager_theme, sidebar_metadata_html
 from manager.view_models import (
     build_dashboard_model,
     build_operations_model,
@@ -34,18 +35,28 @@ def main() -> None:
     import streamlit as st
 
     st.set_page_config(page_title="Quant Manager", layout="wide")
+    apply_manager_theme(st)
     st.title("Quant Manager")
     st.caption("Canonical Management & Research Console")
-    st.info("Read-only inspection with explicit, controlled operations.")
+    st.markdown(
+        '<div class="qm-console-mode">READ-ONLY BY DEFAULT &nbsp;·&nbsp; '
+        "State-changing operations require explicit confirmation.</div>",
+        unsafe_allow_html=True,
+    )
 
     git = inspect_git()
-    st.sidebar.caption("Environment: LOCAL")
-    st.sidebar.caption(f"Repository: {git.tag or git.head or 'UNKNOWN'}")
-    st.sidebar.header("Navigation")
+    st.sidebar.markdown(
+        sidebar_metadata_html(
+            environment="LOCAL",
+            repository=git.tag or git.head or "UNKNOWN",
+        ),
+        unsafe_allow_html=True,
+    )
     page = st.sidebar.radio(
         "Page",
         ("Dashboard", "Operations", "Run History", "State", "Research", "System / Doctor"),
         format_func=_NAVIGATION_LABELS.__getitem__,
+        label_visibility="collapsed",
     )
     if st.sidebar.button("Refresh", type="secondary", width="stretch"):
         st.rerun()

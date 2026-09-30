@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from manager.view_models import OperationsViewModel
+from manager.theme import status_badge_html
 from quantctl.operations import OperationResult, execute_operation
 
 
@@ -93,43 +94,52 @@ def render(model: OperationsViewModel) -> None:
     def render_operation(item) -> None:
         spec = item.spec
         title, purpose, effects = _PRESENTATION[spec.name]
-        st.markdown(f"### {title}")
-        st.write(purpose)
-        st.write("**Will:**")
-        for effect in effects:
-            st.write(f"- {effect}")
-        human_capabilities = ", ".join(
-            _CAPABILITY_LABELS[capability.value] for capability in spec.capabilities
-        )
-        st.caption(f"Capabilities: {human_capabilities}")
-        st.write(f"Availability: **{'AVAILABLE' if item.available else 'UNAVAILABLE'}**")
-
-        confirmed = True
-        if spec.confirmation_required:
-            confirmed = st.checkbox(
-                f"I understand that {title} may modify state or contact external services.",
-                key=f"confirm_{spec.name}",
+        with st.container(border=True):
+            st.markdown(f"### {title}")
+            st.write(purpose)
+            st.markdown(
+                status_badge_html(
+                    "AVAILABLE" if item.available else "UNAVAILABLE",
+                    label="Availability",
+                ),
+                unsafe_allow_html=True,
             )
-        clicked = st.button(
-            f"Run {spec.name.replace('-', ' ').title()}",
-            key=f"run_{spec.name}",
-            disabled=not item.available or not confirmed,
-        )
-        if clicked:
-            with st.spinner(f"Running {title}…"):
-                st.session_state[_RESULT_KEY] = execute_operation(spec.name)
-            st.rerun()
-        st.divider()
+            st.write("**Operational effects**")
+            for effect in effects:
+                st.write(f"- {effect}")
+            human_capabilities = ", ".join(
+                _CAPABILITY_LABELS[capability.value] for capability in spec.capabilities
+            )
+            st.caption(f"Capabilities: {human_capabilities}")
+
+            confirmed = True
+            if spec.confirmation_required:
+                confirmed = st.checkbox(
+                    f"I understand that {title} may modify state or contact external services.",
+                    key=f"confirm_{spec.name}",
+                )
+            clicked = st.button(
+                f"Run {spec.name.replace('-', ' ').title()}",
+                key=f"run_{spec.name}",
+                disabled=not item.available or not confirmed,
+                type="primary" if spec.confirmation_required else "secondary",
+            )
+            if clicked:
+                with st.spinner(f"Running {title}…"):
+                    st.session_state[_RESULT_KEY] = execute_operation(spec.name)
+                st.rerun()
 
     read_only = tuple(item for item in model.operations if not item.spec.confirmation_required)
     mutating = tuple(item for item in model.operations if item.spec.confirmation_required)
 
     st.subheader("Read-only inspection")
+    st.markdown(status_badge_html("READ ONLY", label="Surface"), unsafe_allow_html=True)
     st.caption("These actions inspect local state and do not require a mutation confirmation.")
     for item in read_only:
         render_operation(item)
 
     st.subheader("State-changing operations")
+    st.markdown(status_badge_html("WARNING", label="Confirmation required"), unsafe_allow_html=True)
     st.warning(
         "These state-changing actions may write local state, contact external providers, or send Telegram. "
         "Review each action's effects before confirming."

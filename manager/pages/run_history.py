@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from manager.view_models import RunHistoryViewModel
+from manager.theme import status_badge_html
 from quantctl.run_history import RunDisplayStatus, classify_run_for_display
 
 
@@ -42,11 +43,16 @@ def render(model: RunHistoryViewModel) -> None:
     else:
         run = model.latest.summary
         display_status = classify_run_for_display(run)
-        columns = st.columns(4)
+        st.markdown(
+            status_badge_html(display_status.value, label="Latest status"),
+            unsafe_allow_html=True,
+        )
+        columns = st.columns(2)
         columns[0].metric("Operation", run.operation.upper())
         columns[1].metric("Status", display_status.value)
-        columns[2].metric("Duration", _duration(run.duration_ms))
-        columns[3].metric("Exit code", run.exit_code if run.exit_code is not None else "UNKNOWN")
+        columns = st.columns(2)
+        columns[0].metric("Duration", _duration(run.duration_ms))
+        columns[1].metric("Exit code", run.exit_code if run.exit_code is not None else "UNKNOWN")
         st.caption(f"Attention: {_attention(display_status)}")
         st.caption(f"Started: {run.started_at_utc} · Finished: {run.finished_at_utc or 'UNKNOWN'}")
         st.caption(f"Run ID: {_short_id(run.run_id)}")

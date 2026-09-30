@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from manager.view_models import ResearchViewModel
+from manager.theme import compact_status_label, status_badge_row_html
 
 
 def render(model: ResearchViewModel) -> None:
@@ -10,18 +11,27 @@ def render(model: ResearchViewModel) -> None:
     st.caption("Read-only conclusions from canonical Quant Lab evidence. No research runner is executed.")
     frontier = model.frontier
     st.subheader("Research Frontier")
-    columns = st.columns(3)
+    columns = st.columns(2)
     columns[0].metric("Framework", frontier.framework)
-    columns[1].metric("Current stage", frontier.latest_stage)
-    columns[2].metric("As of", frontier.as_of or "UNKNOWN")
+    columns[1].metric("As of", frontier.as_of or "UNKNOWN")
+    st.metric("Current stage", frontier.latest_stage)
     st.subheader("Current Decision and Production Readiness")
-    readiness_columns = st.columns(4)
-    readiness_columns[0].metric(
-        "Production replacement", frontier.production_replacement.decision.value
+    st.markdown(
+        status_badge_row_html(
+            ("Replacement", frontier.production_replacement.decision.value),
+            ("Readiness", frontier.readiness.readiness),
+        ),
+        unsafe_allow_html=True,
     )
-    readiness_columns[1].metric("Readiness", frontier.readiness.readiness)
-    readiness_columns[2].metric("Gap conclusion", frontier.readiness.conclusion)
-    readiness_columns[3].metric(
+    readiness_columns = st.columns(2)
+    readiness_columns[0].metric(
+        "Production replacement",
+        compact_status_label(frontier.production_replacement.decision.value),
+    )
+    readiness_columns[1].metric("Readiness", compact_status_label(frontier.readiness.readiness))
+    readiness_columns = st.columns(2)
+    readiness_columns[0].metric("Gap conclusion", frontier.readiness.conclusion)
+    readiness_columns[1].metric(
         "Open gaps",
         frontier.readiness.open_gap_count
         if frontier.readiness.open_gap_count is not None

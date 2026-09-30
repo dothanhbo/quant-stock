@@ -168,6 +168,19 @@ def test_manager_uses_current_streamlit_width_api() -> None:
     assert "showSidebarNavigation = false" in configuration
 
 
+def test_manager_theme_preserves_readability_and_non_color_status_meaning() -> None:
+    from manager.theme import MANAGER_CSS, status_badge_html
+
+    assert '[data-testid="stMetricValue"]' in MANAGER_CSS
+    assert '[data-testid="stMetricLabel"]' in MANAGER_CSS
+    assert "text-overflow: clip" in MANAGER_CSS
+    assert '[data-selected="true"]' in MANAGER_CSS
+    assert "STALE RUNNING" in status_badge_html("STALE_RUNNING")
+    assert "FAILED" in status_badge_html("FAILED")
+    assert "WARNING" in status_badge_html("WARNING")
+    assert "<script" not in MANAGER_CSS.lower()
+
+
 def test_every_manager_page_exposes_the_operator_ux_contract() -> None:
     from streamlit.testing.v1 import AppTest
 

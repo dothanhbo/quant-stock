@@ -3,6 +3,7 @@ from __future__ import annotations
 from itertools import groupby
 
 from manager.view_models import SystemViewModel
+from manager.theme import status_badge_html
 
 
 def _show_status(status: str, text: str) -> None:
@@ -23,7 +24,10 @@ def render(model: SystemViewModel) -> None:
 
     st.header("System / Doctor")
     st.caption("Read-only health checks. Secret values are never displayed and no repair is attempted.")
-    _show_status(model.overall_status, f"OVERALL: {model.overall_status}")
+    st.markdown(
+        status_badge_html(model.overall_status, label="Overall"),
+        unsafe_allow_html=True,
+    )
     passed = sum(item.status == "PASS" for item in model.checks)
     warnings = sum(item.status == "WARN" for item in model.checks)
     failures = sum(item.status == "FAIL" for item in model.checks)

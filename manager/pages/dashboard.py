@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from manager.view_models import DashboardViewModel
+from manager.theme import compact_status_label, status_badge_html, status_badge_row_html
 from quantctl.run_history import RunDisplayStatus, classify_run_for_display
 
 
@@ -11,8 +12,9 @@ def render(model: DashboardViewModel) -> None:
     st.header("Dashboard")
     st.caption("Operational health, deployed state, and current research direction at a glance.")
 
+    st.markdown(status_badge_html(model.doctor_status, label="System"), unsafe_allow_html=True)
     if model.doctor_status == "PASS":
-        st.success("System checks are passing.")
+        st.caption("All represented system checks are passing.")
     elif model.doctor_status == "WARN":
         st.warning("System is usable with warnings. Open Doctor for details.")
     else:
@@ -24,12 +26,24 @@ def render(model: DashboardViewModel) -> None:
         classify_run_for_display(latest.summary).value if latest is not None else "NOT STARTED"
     )
     st.subheader("At a Glance")
-    overview_columns = st.columns(5)
+    overview_columns = st.columns(3)
     overview_columns[0].metric("System health", model.doctor_status)
     overview_columns[1].metric("Latest market session", snapshot.market.latest_session or "UNKNOWN")
-    overview_columns[2].metric("Paper policy", model.production.deployed_strategy_identity)
-    overview_columns[3].metric("Latest operation", latest_run_status)
-    overview_columns[4].metric("Research readiness", model.research.readiness.readiness)
+    overview_columns[2].metric("Latest operation", compact_status_label(latest_run_status))
+    overview_columns = st.columns(3)
+    overview_columns[0].metric("Paper policy", model.production.deployed_strategy_identity)
+    overview_columns[1].metric(
+        "Prospective evidence",
+        "AVAILABLE" if active and active.evidence_schema_status == "OK" else "UNAVAILABLE",
+    )
+    overview_columns[2].metric(
+        "Research readiness",
+        compact_status_label(model.research.readiness.readiness),
+    )
+    st.caption(
+        f"Active store: {active.display_name if active else 'UNKNOWN'} · "
+        f"Readiness contract: {model.research.readiness.readiness}"
+    )
 
     attention: list[str] = []
     if latest_run_status in {RunDisplayStatus.FAILED.value, RunDisplayStatus.STALE_RUNNING.value}:
@@ -63,30 +77,40 @@ def render(model: DashboardViewModel) -> None:
     market_columns[3].metric("Symbols", snapshot.market.symbol_count if snapshot.market.symbol_count is not None else "UNKNOWN")
 
     st.subheader("Production")
-    state_columns = st.columns(4)
+    state_columns = st.columns(2)
     if active is None:
         state_columns[0].metric("Deployed paper policy", model.production.deployed_strategy_identity)
         state_columns[1].metric("Active store", "UNKNOWN")
-        state_columns[2].metric("Open positions", "UNKNOWN")
-        state_columns[3].metric("Pending signals", "UNKNOWN")
+        state_columns = st.columns(2)
+        state_columns[0].metric("Open positions", "UNKNOWN")
+        state_columns[1].metric("Pending signals", "UNKNOWN")
     else:
         state_columns[0].metric("Deployed paper policy", model.production.deployed_strategy_identity)
         state_columns[1].metric("Active store", active.display_name)
-        state_columns[2].metric(
+        state_columns = st.columns(2)
+        state_columns[0].metric(
             "Open positions",
             active.open_position_count if active.open_position_count is not None else "UNKNOWN",
         )
-        state_columns[3].metric(
+        state_columns[1].metric(
             "Pending signals",
             active.pending_signal_count if active.pending_signal_count is not None else "UNKNOWN",
         )
         evidence_status = "AVAILABLE" if active.evidence_schema_status == "OK" else "UNAVAILABLE"
-        st.caption(
-            "Prospective evidence: "
-            f"{evidence_status} · latest session: {active.latest_evidence_date or 'UNKNOWN'} · "
-            f"continuity: {active.evidence_continuity_state or 'UNKNOWN'} · "
-            f"capture: {'NOT STARTED' if active.evidence_capture_state == 'MISSING' else active.evidence_capture_state}"
+        st.markdown(
+            status_badge_row_html(
+                ("Evidence", evidence_status),
+                ("Continuity", active.evidence_continuity_state or "UNKNOWN"),
+                (
+                    "Capture",
+                    "NOT STARTED"
+                    if active.evidence_capture_state == "MISSING"
+                    else active.evidence_capture_state,
+                ),
+            ),
+            unsafe_allow_html=True,
         )
+        st.caption(f"Latest evidence session: {active.latest_evidence_date or 'UNKNOWN'}")
 
     st.subheader("Forward")
     forward = model.forward
@@ -123,11 +147,12 @@ def render(model: DashboardViewModel) -> None:
     else:
         run = latest.summary
         display_status = classify_run_for_display(run)
-        run_columns = st.columns(4)
+        run_columns = st.columns(2)
         run_columns[0].metric("Operation", run.operation.upper())
         run_columns[1].metric("Status", display_status.value)
-        run_columns[2].metric("Started", run.started_at_utc.replace("T", " ")[:19])
-        run_columns[3].metric(
+        run_columns = st.columns(2)
+        run_columns[0].metric("Started", run.started_at_utc.replace("T", " ")[:19])
+        run_columns[1].metric(
             "Duration",
             "UNKNOWN" if run.duration_ms is None else f"{run.duration_ms / 1000:.1f}s",
         )
@@ -138,12 +163,13 @@ def render(model: DashboardViewModel) -> None:
         st.caption(f"Run ID: {run.run_id[:8]}… · Open Run History for full details.")
 
     st.subheader("Research")
-    research_columns = st.columns(4)
+    research_columns = st.columns(2)
     research_columns[0].metric("Current stage", model.research.latest_stage)
     research_columns[1].metric("Evidence as of", model.research.as_of or "UNKNOWN")
     replacement = model.research.production_replacement.decision.value
-    research_columns[2].metric("Production replacement", replacement)
-    research_columns[3].metric(
+    research_columns = st.columns(2)
+    research_columns[0].metric("Production replacement", compact_status_label(replacement))
+    research_columns[1].metric(
         "Open readiness gaps",
         model.research.readiness.open_gap_count
         if model.research.readiness.open_gap_count is not None

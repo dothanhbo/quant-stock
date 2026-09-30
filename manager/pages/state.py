@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from manager.view_models import StateViewModel
+from manager.theme import status_badge_row_html
 from quantctl.state import ForwardSystemSnapshot, PaperStoreSnapshot
 
 
@@ -13,17 +14,18 @@ def _availability(*, exists: bool, readable: bool) -> str:
 def _paper_store(store: PaperStoreSnapshot, *, active: bool = False) -> None:
     import streamlit as st
 
-    columns = st.columns(4)
+    columns = st.columns(2)
     columns[0].metric("Policy", store.strategy_identity)
     columns[1].metric(
         "Open positions",
         store.open_position_count if store.open_position_count is not None else "UNKNOWN",
     )
-    columns[2].metric(
+    columns = st.columns(2)
+    columns[0].metric(
         "Pending signals",
         store.pending_signal_count if store.pending_signal_count is not None else "UNKNOWN",
     )
-    columns[3].metric("Latest activity", store.latest_activity or "UNKNOWN")
+    columns[1].metric("Latest activity", store.latest_activity or "UNKNOWN")
     if not store.exists:
         st.info("This optional paper store has not been created.")
     elif not store.readable:
@@ -35,29 +37,32 @@ def _paper_store(store: PaperStoreSnapshot, *, active: bool = False) -> None:
 
     st.markdown("#### Prospective Portfolio Evidence")
     evidence_available = store.evidence_schema_status == "OK"
-    evidence_columns = st.columns(5)
+    capture_state = (
+        "NOT STARTED" if store.evidence_capture_state == "MISSING" else store.evidence_capture_state
+    )
+    st.markdown(
+        status_badge_row_html(
+            ("Evidence", "AVAILABLE" if evidence_available else "UNAVAILABLE"),
+            ("Continuity", store.evidence_continuity_state or "UNKNOWN"),
+            ("Capture", capture_state),
+        ),
+        unsafe_allow_html=True,
+    )
+    evidence_columns = st.columns(3)
     evidence_columns[0].metric(
         "Evidence status",
         "AVAILABLE" if evidence_available else "UNAVAILABLE",
     )
-    evidence_columns[1].metric(
-        "Latest session",
-        store.latest_evidence_date or "UNKNOWN",
-    )
+    evidence_columns[1].metric("Latest session", store.latest_evidence_date or "UNKNOWN")
     evidence_columns[2].metric(
-        "Continuity",
-        store.evidence_continuity_state or "UNKNOWN",
-    )
-    evidence_columns[3].metric(
-        "Capture",
-        "NOT STARTED" if store.evidence_capture_state == "MISSING" else store.evidence_capture_state,
-    )
-    evidence_columns[4].metric(
         "Records",
         store.evidence_observation_count
         if store.evidence_observation_count is not None
         else "UNKNOWN",
     )
+    evidence_columns = st.columns(2)
+    evidence_columns[0].metric("Continuity", store.evidence_continuity_state or "UNKNOWN")
+    evidence_columns[1].metric("Capture", capture_state)
     if not evidence_available:
         st.caption("No compatible prospective portfolio evidence is available for this store.")
     for warning in store.evidence_warnings:
@@ -151,17 +156,18 @@ def render(model: StateViewModel) -> None:
     st.caption("Read-only persisted production and prospective-validation state.")
     active = model.paper.active_store
     st.subheader("Current State")
-    summary_columns = st.columns(4)
+    summary_columns = st.columns(2)
     summary_columns[0].metric("Active paper store", active.display_name if active else "UNKNOWN")
     summary_columns[1].metric(
         "Paper positions",
         active.open_position_count if active and active.open_position_count is not None else "UNKNOWN",
     )
-    summary_columns[2].metric(
+    summary_columns = st.columns(2)
+    summary_columns[0].metric(
         "Evidence continuity",
         active.evidence_continuity_state if active else "UNKNOWN",
     )
-    summary_columns[3].metric(
+    summary_columns[1].metric(
         "Forward protocols",
         model.forward.active_protocol_count
         if model.forward.active_protocol_count is not None
