@@ -75,6 +75,11 @@ class PaperBroker(BrokerInterface):
             and restore_state
             and self._store.has_state()
         ):
+            # Existing stores created before account-generation provenance was
+            # introduced receive it once on their next normal broker startup.
+            # The marker is bookkeeping only and does not alter portfolio
+            # accounting or execution behavior.
+            self._store.ensure_account_epoch()
             self.portfolio = (
                 self._store.load_portfolio_state(
                     fallback_initial_cash=(

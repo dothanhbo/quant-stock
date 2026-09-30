@@ -12,8 +12,14 @@ from manager.pages import dashboard as dashboard_page
 from manager.pages import state as state_page
 from manager.view_models import build_dashboard_model, build_state_model
 from quantctl.cli import build_parser, main
+from quantctl.commands.state import render_paper_status
 from quantctl.registry import CommandSafety
 from quantctl.state import inspect_forward_system, inspect_paper_system
+from quantlab.evidence import (
+    ProspectivePortfolioEvidenceLedger,
+    ProspectivePortfolioEvidenceRecord,
+    paper_store_identity,
+)
 
 
 PROJECT_ROOT = Path(__file__).resolve().parent.parent
@@ -200,6 +206,58 @@ def test_fixture_databases_are_inspected_without_mutation(tmp_path: Path) -> Non
     assert {path.name: _digest(path) for path in paths} == before
     assert not tuple((root / "data").glob("*.db-wal"))
     assert not tuple((root / "data").glob("*.db-shm"))
+
+
+def test_paper_status_exposes_persisted_prospective_evidence_read_only(tmp_path: Path) -> None:
+    root = _state_root(tmp_path)
+    paper_path = root / "data" / "paper_trading_v2.db"
+    evidence_path = root / "data" / "prospective_portfolio_evidence.db"
+    source_identity = paper_store_identity(
+        store_id="q70-frozen",
+        strategy_identity="Q70_FROZEN",
+        database_path=paper_path,
+    )
+    record = ProspectivePortfolioEvidenceRecord(
+        evidence_version="v1",
+        strategy_identity="Q70_FROZEN",
+        source_store_id="q70-frozen",
+        source_store_identity=source_identity,
+        source_account_epoch_id=None,
+        runtime_configuration_fingerprint="persisted-config-fingerprint",
+        observation_date="2026-09-27",
+        captured_at_utc="2026-09-27T18:00:00+00:00",
+        paper_database_path=str(paper_path.resolve()),
+        market_database_path=str((root / "data" / "market.db").resolve()),
+        market_database_sha256=None,
+        market_data_reference_session=None,
+        benchmark_symbol="VNINDEX",
+        benchmark_close=None,
+        market_regime_label="UNKNOWN",
+        regime_computation_identity="test-regime",
+        cash=100.0,
+        positions_value=0.0,
+        equity=100.0,
+        realized_pnl=0.0,
+        unrealized_pnl=0.0,
+        gross_exposure_pct=0.0,
+        open_position_count=0,
+    )
+    ProspectivePortfolioEvidenceLedger(evidence_path).append(record)
+    before = {path.name: _digest(path) for path in (root / "data").glob("*.db")}
+
+    snapshot = inspect_paper_system(root=root, environ={})
+    active = snapshot.active_store
+    assert active is not None
+    assert active.evidence_schema_status == "OK"
+    assert active.evidence_observation_count == 1
+    assert active.latest_evidence_date == "2026-09-27"
+    assert active.latest_evidence_strategy_identity == "Q70_FROZEN"
+    assert active.latest_evidence_configuration_fingerprint == "persisted-config-fingerprint"
+    assert active.evidence_capture_state == "SUCCEEDED"
+    rendered = render_paper_status(root=root)
+    assert "Prospective evidence" in rendered
+    assert "persisted-config-fingerprint" in rendered
+    assert {path.name: _digest(path) for path in (root / "data").glob("*.db")} == before
 
 
 def test_schema_mismatch_is_reported_without_crashing(tmp_path: Path) -> None:

@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
 from datetime import date, datetime, timezone
+import json
 import sqlite3
 from pathlib import Path
 from threading import Barrier
@@ -139,12 +140,18 @@ def test_exit_commits_once_and_identical_retry_is_already_executed(tmp_path: Pat
         sell_net = float(connection.execute(
             "SELECT net_cash_flow FROM paper_fills WHERE side='SELL'"
         ).fetchone()[0])
+        exit_context = json.loads(connection.execute(
+            "SELECT execution_context FROM paper_orders WHERE side='SELL'"
+        ).fetchone()[0])["exit"]
     # Closed economics preserve the pre-exit average-cost basis; the position
     # is removed atomically, so the close record is the authoritative basis.
     assert float(trade[0]) == pytest.approx(sell_net - float(trade[1]) * int(trade[2]))
     sell_order = next(row for row in state["orders"] if row[1] == "SELL")
     source = sell_order[3]
     assert source.startswith("paper_exit:")
+    assert exit_context["entry_order_id"]
+    assert exit_context["strategy_version"] == "paper-v2-test"
+    assert exit_context["policy_fingerprint"] == "frozen-policy-test"
     assert broker.consume_execution_disposition(source) == "EXECUTED"
 
     restarted = PaperBroker(database_path=paper_db, initial_cash=INITIAL_CASH, slippage_bps=0)

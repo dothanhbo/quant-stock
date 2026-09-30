@@ -143,7 +143,8 @@ def test_lifecycle_passes_canonical_market_path_to_pending_execution(
         def __init__(self, **kwargs):
             captured["manager_market_path"] = kwargs["market_database_path"]
 
-        def run(self):
+        def run(self, **kwargs):
+            captured["manager_valuation_date"] = kwargs["valuation_date"]
             return SimpleNamespace(
                 valuation_date="2026-09-21",
                 held=[],
@@ -160,6 +161,7 @@ def test_lifecycle_passes_canonical_market_path_to_pending_execution(
 
     monkeypatch.setenv("MARKET_DATABASE_PATH", str(configured))
     monkeypatch.setattr(run_paper_lifecycle, "load_dotenv", lambda: None)
+    monkeypatch.setattr(run_paper_lifecycle, "require_market_data_integrity", lambda **_kwargs: None)
     monkeypatch.setattr(
         run_paper_lifecycle.sqlite3,
         "connect",
@@ -185,12 +187,47 @@ def test_lifecycle_passes_canonical_market_path_to_pending_execution(
         "PaperLifecycleManager",
         FakeLifecycleManager,
     )
+    # The lifecycle now records a post-commit evidence observation.  This
+    # path test intentionally isolates pending execution and must not invoke
+    # the source-store reader or evidence writer.
+    monkeypatch.setattr(
+        run_paper_lifecycle,
+        "PaperTradingStore",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            get_or_create_prospective_evidence_baseline=lambda _date: (0, 0)
+        ),
+    )
+    monkeypatch.setattr(
+        run_paper_lifecycle,
+        "resolve_runtime_configuration",
+        lambda: SimpleNamespace(
+            strategy_identity=(
+                run_paper_lifecycle.resolve_active_paper_store().strategy_identity
+            ),
+            paper_store_id=(
+                run_paper_lifecycle.resolve_active_paper_store().store_id
+            ),
+            fingerprint="test-runtime-configuration",
+        ),
+    )
+    monkeypatch.setattr(
+        run_paper_lifecycle,
+        "capture_prospective_portfolio_evidence",
+        lambda **_kwargs: SimpleNamespace(
+            created=True,
+            record=SimpleNamespace(
+                observation_date="2026-09-21",
+                record_identity="test-evidence-record",
+            ),
+        ),
+    )
 
     run_paper_lifecycle.main()
 
     expected = configured.resolve()
     assert captured["pending_market_path"] == expected
     assert captured["manager_market_path"] == expected
+    assert captured["manager_valuation_date"] == "2026-09-21"
 
 
 def test_v2_and_v3_paper_paths_remain_isolated_with_shared_market_path(

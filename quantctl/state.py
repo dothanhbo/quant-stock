@@ -7,6 +7,7 @@ from pathlib import Path
 import sqlite3
 
 from quantctl.registry import PROJECT_ROOT, sqlite_read_only
+from quantlab.evidence import inspect_prospective_portfolio_evidence
 from config.paper_store import (
     KNOWN_PAPER_STORES,
     configured_paper_environment,
@@ -78,6 +79,15 @@ class PaperStoreSnapshot:
     pending_signal_count: int | None = None
     warnings: tuple[str, ...] = ()
     error: str | None = None
+    evidence_schema_status: str = "MISSING"
+    evidence_observation_count: int | None = None
+    latest_evidence_date: str | None = None
+    latest_evidence_strategy_identity: str | None = None
+    latest_evidence_configuration_fingerprint: str | None = None
+    evidence_capture_state: str = "MISSING"
+    evidence_continuity_state: str = "NOT_STARTED"
+    evidence_missing_session_count: int | None = None
+    evidence_warnings: tuple[str, ...] = ()
 
 
 @dataclass(frozen=True, slots=True)
@@ -165,8 +175,36 @@ def inspect_paper_store(
     display_name: str | None = None,
     strategy_identity: str = "UNKNOWN",
     writable_by_current_pipeline: bool = False,
+    evidence_database_path: Path | None = None,
+    market_database_path: Path | None = None,
 ) -> PaperStoreSnapshot:
     path = path.resolve()
+    evidence = (
+        inspect_prospective_portfolio_evidence(
+            evidence_database_path=evidence_database_path,
+            market_database_path=market_database_path,
+            source_store_id=store_id,
+            strategy_identity=strategy_identity,
+            paper_database_path=path,
+        )
+        if evidence_database_path is not None
+        else None
+    )
+    evidence_fields = (
+        {
+            "evidence_schema_status": evidence.schema_status,
+            "evidence_observation_count": evidence.observation_count,
+            "latest_evidence_date": evidence.latest_observation_date,
+            "latest_evidence_strategy_identity": evidence.latest_strategy_identity,
+            "latest_evidence_configuration_fingerprint": evidence.latest_configuration_fingerprint,
+            "evidence_capture_state": evidence.capture_state,
+            "evidence_continuity_state": evidence.continuity_state,
+            "evidence_missing_session_count": len(evidence.missing_sessions),
+            "evidence_warnings": evidence.warnings,
+        }
+        if evidence is not None
+        else {}
+    )
     if not path.is_file():
         return PaperStoreSnapshot(
             name,
@@ -180,6 +218,7 @@ def inspect_paper_store(
             False,
             "MISSING",
             error="database file is missing",
+            **evidence_fields,
         )
 
     try:
@@ -277,6 +316,7 @@ def inspect_paper_store(
             closed_count,
             pending_count,
             warnings,
+            **evidence_fields,
         )
     except (OSError, sqlite3.Error, ValueError, TypeError) as exc:
         return PaperStoreSnapshot(
@@ -291,6 +331,7 @@ def inspect_paper_store(
             False,
             "UNREADABLE",
             error=f"{type(exc).__name__}: {exc}",
+            **evidence_fields,
         )
 
 
@@ -304,6 +345,13 @@ def inspect_paper_system(
     environ: dict[str, str] | None = None,
 ) -> PaperSystemSnapshot:
     configured = configured_paper_environment(root=root, environ=environ)
+    # Diagnostic snapshots may target a temporary/alternate repository root.
+    # Convert relative overrides to that inspection root before passing them to
+    # the runtime resolver, whose production contract is repository-anchored.
+    for name in ("PAPER_DATABASE_PATH", "PAPER_V2_DATABASE_PATH", "PAPER_V3_DATABASE_PATH"):
+        value = str(configured.get(name, "")).strip()
+        if value and not Path(value).expanduser().is_absolute():
+            configured[name] = str((root / value).resolve())
     active = resolve_active_paper_store(configured)
     inspected: list[PaperStoreSnapshot] = []
     technical_names = {
@@ -325,6 +373,8 @@ def inspect_paper_system(
             display_name=resolved.display_name,
             strategy_identity=resolved.strategy_identity,
             writable_by_current_pipeline=writable,
+            evidence_database_path=(root / "data" / "prospective_portfolio_evidence.db"),
+            market_database_path=(root / "data" / "market.db"),
         )
         if writable:
             role = PaperStoreRole.ACTIVE
@@ -406,6 +456,22 @@ def inspect_forward_system(*, root: Path = PROJECT_ROOT) -> ForwardSystemSnapsho
                     ("forward_audit_events", "recorded_at_utc"),
                 ),
             )
+            audit_columns = (
+                _columns(connection, "forward_audit_events")
+                if "forward_audit_events" in tables
+                else frozenset()
+            )
+            if "event_type" in audit_columns:
+                missing_gap_count = int(connection.execute(
+                    "SELECT COUNT(*) FROM forward_audit_events "
+                    "WHERE event_type='MISSING_FORMATION'"
+                ).fetchone()[0])
+                if missing_gap_count:
+                    warnings.append(
+                        f"Forward reconciliation: {missing_gap_count} "
+                        "formation gap(s) acknowledged as unrecoverable; "
+                        "historical backfill is prohibited."
+                    )
             formation_count = (
                 _count(connection, "forward_formations")
                 if "forward_formations" in tables

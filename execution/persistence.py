@@ -3,9 +3,10 @@ from __future__ import annotations
 import json
 import sqlite3
 from contextlib import contextmanager
-from datetime import datetime
+from datetime import date, datetime
 from pathlib import Path
 from typing import Iterator
+from uuid import uuid4
 
 from execution.models import (
     Fill,
@@ -25,6 +26,9 @@ from execution.lifecycle_models import (
 
 class PaperTradingStore:
     """SQLite persistence for paper-trading state and audit history."""
+
+    _ACCOUNT_EPOCH_METADATA_KEY = "account_epoch_id"
+    _PROSPECTIVE_EVIDENCE_BASELINE_PREFIX = "prospective_evidence_baseline:"
 
     def __init__(
         self,
@@ -544,10 +548,71 @@ class PaperTradingStore:
         self,
         initial_cash: float,
     ) -> None:
-        self._upsert_metadata(
-            "initial_cash",
-            initial_cash,
-        )
+        with self._connection() as connection:
+            self._upsert_metadata_in_connection(
+                connection,
+                "initial_cash",
+                initial_cash,
+            )
+            self._ensure_account_epoch_in_connection(connection)
+
+    def ensure_account_epoch(self) -> str:
+        """Return the durable paper-account generation, creating one if absent.
+
+        This metadata is bookkeeping only: it distinguishes a reset paper
+        account from an earlier account at the same database path for
+        append-only evidence.  It does not affect orders or accounting.
+        """
+        with self._connection() as connection:
+            return self._ensure_account_epoch_in_connection(connection)
+
+    def get_or_create_prospective_evidence_baseline(
+        self,
+        observation_date: str | date,
+    ) -> tuple[int, int]:
+        """Return a durable pre-lifecycle event cursor for one account/session.
+
+        The marker is deliberately kept with the paper account rather than in
+        the append-only evidence ledger.  If evidence persistence fails after
+        a lifecycle has committed, an exact retry can still use the original
+        pre-lifecycle cursor and retain that lifecycle's fills and exits.  It
+        has no effect on orders, positions, cash, or execution decisions.
+        """
+        raw_date = observation_date.isoformat() if isinstance(observation_date, date) else str(observation_date)
+        resolved_date = date.fromisoformat(raw_date[:10]).isoformat()
+        with self._connection() as connection:
+            epoch = self._ensure_account_epoch_in_connection(connection)
+            key = f"{self._PROSPECTIVE_EVIDENCE_BASELINE_PREFIX}{epoch}:{resolved_date}"
+            row = connection.execute(
+                "SELECT value FROM paper_metadata WHERE key=?",
+                (key,),
+            ).fetchone()
+            if row is not None:
+                try:
+                    payload = json.loads(str(row[0]))
+                    fill_id = int(payload["fill_id"])
+                    closed_trade_id = int(payload["closed_trade_id"])
+                except (KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+                    raise ValueError("prospective evidence baseline metadata is invalid") from exc
+                if fill_id < 0 or closed_trade_id < 0:
+                    raise ValueError("prospective evidence baseline metadata is invalid")
+                return fill_id, closed_trade_id
+            fill_id = int(
+                connection.execute(
+                    "SELECT COALESCE(MAX(id),0) FROM paper_fills"
+                ).fetchone()[0]
+            )
+            closed_trade_id = int(
+                connection.execute(
+                    "SELECT COALESCE(MAX(id),0) FROM paper_closed_trades"
+                ).fetchone()[0]
+            )
+            self._upsert_metadata_in_connection(
+                connection,
+                key,
+                {"fill_id": fill_id, "closed_trade_id": closed_trade_id},
+            )
+        return fill_id, closed_trade_id
 
     def save_order(
         self,
@@ -1038,6 +1103,7 @@ class PaperTradingStore:
                 DELETE FROM paper_metadata;
                 """
             )
+            self._ensure_account_epoch_in_connection(connection)
 
     def _upsert_metadata(
         self,
@@ -1045,18 +1111,51 @@ class PaperTradingStore:
         value: object,
     ) -> None:
         with self._connection() as connection:
-            connection.execute(
-                """
-                INSERT INTO paper_metadata(key, value)
-                VALUES (?, ?)
-                ON CONFLICT(key)
-                DO UPDATE SET value = excluded.value
-                """,
-                (
-                    key,
-                    json.dumps(value),
-                ),
-            )
+            self._upsert_metadata_in_connection(connection, key, value)
+
+    @staticmethod
+    def _upsert_metadata_in_connection(
+        connection: sqlite3.Connection,
+        key: str,
+        value: object,
+    ) -> None:
+        connection.execute(
+            """
+            INSERT INTO paper_metadata(key, value)
+            VALUES (?, ?)
+            ON CONFLICT(key)
+            DO UPDATE SET value = excluded.value
+            """,
+            (
+                key,
+                json.dumps(value),
+            ),
+        )
+
+    def _ensure_account_epoch_in_connection(
+        self,
+        connection: sqlite3.Connection,
+    ) -> str:
+        row = connection.execute(
+            "SELECT value FROM paper_metadata WHERE key=?",
+            (self._ACCOUNT_EPOCH_METADATA_KEY,),
+        ).fetchone()
+        if row is not None:
+            try:
+                value = json.loads(str(row[0]))
+            except (TypeError, ValueError, json.JSONDecodeError):
+                value = row[0]
+            epoch = str(value).strip()
+            if epoch:
+                return epoch
+            raise ValueError("paper account epoch metadata is invalid")
+        epoch = uuid4().hex
+        self._upsert_metadata_in_connection(
+            connection,
+            self._ACCOUNT_EPOCH_METADATA_KEY,
+            epoch,
+        )
+        return epoch
 
     def _get_metadata(
         self,

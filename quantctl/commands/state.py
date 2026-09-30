@@ -37,6 +37,17 @@ def _paper_store_lines(store: PaperStoreSnapshot, *, include_role: bool) -> list
         f"  Orders: {_known(store.order_count)}",
         f"  Closed trades: {_known(store.closed_trade_count)}",
         f"  Pending signals: {_known(store.pending_signal_count)}",
+        "  Prospective evidence",
+        f"    Schema: {store.evidence_schema_status}",
+        f"    Capture: {store.evidence_capture_state}",
+        f"    Observations: {_known(store.evidence_observation_count)}",
+        f"    Latest date: {store.latest_evidence_date or 'UNKNOWN'}",
+        "    Latest strategy: "
+        + (store.latest_evidence_strategy_identity or "UNKNOWN"),
+        "    Latest configuration: "
+        + (store.latest_evidence_configuration_fingerprint or "UNKNOWN"),
+        f"    Continuity: {store.evidence_continuity_state}",
+        f"    Missing sessions: {_known(store.evidence_missing_session_count)}",
     ]
     if store.positions:
         lines.extend(("  Positions", "    Symbol  Quantity  Average price  Opened  Status"))
@@ -47,6 +58,7 @@ def _paper_store_lines(store: PaperStoreSnapshot, *, include_role: bool) -> list
             for item in store.positions
         )
     lines.extend(f"  Warning: {warning}" for warning in store.warnings)
+    lines.extend(f"  Evidence warning: {warning}" for warning in store.evidence_warnings)
     if store.error:
         lines.append(f"  Error: {store.error}")
     return lines

@@ -6,6 +6,12 @@ import sqlite3
 from dotenv import load_dotenv
 from config.paper_store import resolve_active_paper_store
 from core.paths import resolve_market_database_path
+from core.market_data_integrity import require_market_data_integrity
+from quantctl.runtime_configuration import resolve_runtime_configuration
+from quantlab.evidence import (
+    capture_prospective_portfolio_evidence,
+    PaperEventCursor,
+)
 
 from execution.exit_engine import (
     ExitEngine,
@@ -20,6 +26,7 @@ from execution.order_manager import (
 from execution.paper_broker import (
     PaperBroker,
 )
+from execution.persistence import PaperTradingStore
 from execution.risk_guard import (
     RiskGuard,
     RiskLimits,
@@ -59,10 +66,23 @@ def main() -> PaperExecutionBatchResult | None:
     load_dotenv()
 
     market_database_path = resolve_market_database_path()
+    require_market_data_integrity(database_path=market_database_path)
+    active_store = resolve_active_paper_store()
     with sqlite3.connect(market_database_path) as connection:
         latest_value = connection.execute(
-            "SELECT MAX(date(time)) FROM prices WHERE symbol = 'VNINDEX'"
+            "SELECT MAX(date(time)) FROM prices WHERE UPPER(TRIM(symbol)) = 'VNINDEX'"
         ).fetchone()[0]
+    if latest_value is None:
+        raise RuntimeError("canonical market database has no VNINDEX session")
+    # Keep the original pre-lifecycle cursor in the paper account.  If the
+    # separate evidence ledger is unavailable after this lifecycle commits, a
+    # retry still captures this run's events instead of treating them as
+    # pre-activation history.  This metadata never participates in order,
+    # fill, position, cash, or risk decisions.
+    baseline = PaperTradingStore(
+        active_store.database_path
+    ).get_or_create_prospective_evidence_baseline(str(latest_value))
+    pre_lifecycle_event_cursor = PaperEventCursor(*baseline)
     pending_result = None
     if latest_value:
         pending_result = PaperSignalExecutor.from_env().execute_pending_signals(
@@ -92,7 +112,7 @@ def main() -> PaperExecutionBatchResult | None:
             5.0,
         ),
         sell_tax_rate=policy.sell_tax_rate,
-        database_path=resolve_active_paper_store().database_path,
+        database_path=active_store.database_path,
         restore_state=True,
     )
 
@@ -145,7 +165,42 @@ def main() -> PaperExecutionBatchResult | None:
         ),
     )
 
-    result = manager.run()
+    # Pending fills already use the latest completed VNINDEX session.  Give
+    # the lifecycle that exact session too, so exits, portfolio marks, and the
+    # post-commit evidence observation share one causal market-date anchor.
+    result = manager.run(valuation_date=str(latest_value))
+
+    runtime_configuration = resolve_runtime_configuration()
+    if (
+        runtime_configuration.strategy_identity
+        != active_store.strategy_identity
+        or runtime_configuration.paper_store_id
+        != active_store.store_id
+    ):
+        raise RuntimeError(
+            "Effective runtime configuration does not match the active "
+            "paper store used by lifecycle."
+        )
+    evidence = capture_prospective_portfolio_evidence(
+        observation_date=result.valuation_date,
+        paper_database_path=active_store.database_path,
+        source_store_id=active_store.store_id,
+        strategy_identity=active_store.strategy_identity,
+        runtime_configuration_fingerprint=runtime_configuration.fingerprint,
+        market_database_path=market_database_path,
+        baseline_event_cursor=pre_lifecycle_event_cursor,
+        lifecycle_warnings=(
+            *(f"MISSING_PRICE:{symbol}" for symbol in result.missing_prices),
+            *(f"MISSING_LIFECYCLE_STATE:{symbol}" for symbol in result.missing_states),
+            *(f"REJECTED_EXIT:{symbol}" for symbol in result.rejected_exits),
+        ),
+    )
+    print(
+        "Prospective evidence: "
+        f"{'created' if evidence.created else 'existing'} "
+        f"for {evidence.record.observation_date} "
+        f"({evidence.record.record_identity[:12]})."
+    )
 
     print("\n" + "=" * 64)
     print("PAPER POSITION LIFECYCLE")

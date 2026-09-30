@@ -262,7 +262,7 @@ def test_paper_disable_trailing_alone_is_not_the_operational_contract(
         def __init__(self, **kwargs):
             captured["manager_kwargs"] = kwargs
 
-        def run(self):
+        def run(self, **_kwargs):
             return SimpleNamespace(
                 valuation_date="2026-09-21",
                 held=[],
@@ -280,6 +280,7 @@ def test_paper_disable_trailing_alone_is_not_the_operational_contract(
     monkeypatch.setenv("PAPER_DISABLE_TRAILING", "true")
     monkeypatch.delenv("PAPER_V2_DISABLE_TRAILING", raising=False)
     monkeypatch.setattr(run_paper_lifecycle, "load_dotenv", lambda: None)
+    monkeypatch.setattr(run_paper_lifecycle, "require_market_data_integrity", lambda **_kwargs: None)
     monkeypatch.setattr(run_paper_lifecycle.sqlite3, "connect", lambda *_args: FakeConnection())
     monkeypatch.setattr(run_paper_lifecycle, "PaperSignalExecutor", FakeExecutor)
     monkeypatch.setattr(
@@ -292,6 +293,33 @@ def test_paper_disable_trailing_alone_is_not_the_operational_contract(
     monkeypatch.setattr(run_paper_lifecycle, "RiskGuard", lambda *_args, **_kwargs: object())
     monkeypatch.setattr(run_paper_lifecycle, "RiskLimits", lambda **_kwargs: object())
     monkeypatch.setattr(run_paper_lifecycle, "PaperLifecycleManager", FakeLifecycleManager)
+    monkeypatch.setattr(
+        run_paper_lifecycle,
+        "PaperTradingStore",
+        lambda *_args, **_kwargs: SimpleNamespace(
+            get_or_create_prospective_evidence_baseline=lambda _date: (0, 0)
+        ),
+    )
+    monkeypatch.setattr(
+        run_paper_lifecycle,
+        "resolve_runtime_configuration",
+        lambda: SimpleNamespace(
+            strategy_identity=run_paper_lifecycle.resolve_active_paper_store().strategy_identity,
+            paper_store_id=run_paper_lifecycle.resolve_active_paper_store().store_id,
+            fingerprint="test-runtime-configuration",
+        ),
+    )
+    monkeypatch.setattr(
+        run_paper_lifecycle,
+        "capture_prospective_portfolio_evidence",
+        lambda **_kwargs: SimpleNamespace(
+            created=True,
+            record=SimpleNamespace(
+                observation_date="2026-09-21",
+                record_identity="test-evidence-record",
+            ),
+        ),
+    )
 
     run_paper_lifecycle.main()
 

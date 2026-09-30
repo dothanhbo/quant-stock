@@ -470,6 +470,13 @@ class PaperLifecycleManager:
                         "exit_date": resolved_date.isoformat(),
                         "holding_days": decision.holding_days,
                         "exit_reason": decision.reason.value,
+                        # The lifecycle row is deleted atomically with a
+                        # completed exit. Preserve its source-linked entry
+                        # provenance in the immutable SELL order context for
+                        # later read-only evidence capture.
+                        "entry_order_id": lifecycle.entry_order_id,
+                        "strategy_version": lifecycle.strategy_version,
+                        "policy_fingerprint": lifecycle.policy_fingerprint,
                     },
                 },
             )

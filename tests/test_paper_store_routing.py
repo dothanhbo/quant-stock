@@ -13,6 +13,7 @@ from config.paper_store import (
     V3_STRATEGY_IDENTITY,
     resolve_active_paper_store,
 )
+from core.paths import PROJECT_ROOT
 from execution.signal_executor import PaperExecutionConfig
 from quantctl.commands.state import render_paper_status
 from quantctl.state import PaperStoreRole, inspect_paper_system
@@ -85,6 +86,40 @@ def test_strategy_specific_path_overrides_are_respected(tmp_path: Path) -> None:
             "PAPER_V3_DATABASE_PATH": str(v3),
         }
     ).database_path == v3
+
+
+def test_relative_paper_path_is_anchored_to_repository_root_not_cwd(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    resolved = resolve_active_paper_store(
+        {"PAPER_V2_DATABASE_PATH": "data/custom-v2.db"},
+    )
+
+    assert resolved.database_path == (PROJECT_ROOT / "data/custom-v2.db").resolve()
+
+
+def test_absolute_paper_path_remains_absolute_and_store_isolation_is_preserved(
+    tmp_path: Path,
+) -> None:
+    v2 = tmp_path / "v2.db"
+    v3 = tmp_path / "v3.db"
+
+    resolved_v2 = resolve_active_paper_store(
+        {"PAPER_V2_DATABASE_PATH": str(v2)},
+    )
+    resolved_v3 = resolve_active_paper_store(
+        {
+            "PAPER_STRATEGY_VERSION": V3_STRATEGY_IDENTITY,
+            "PAPER_V3_DATABASE_PATH": str(v3),
+        },
+    )
+
+    assert resolved_v2.database_path == v2.resolve()
+    assert resolved_v3.database_path == v3.resolve()
+    assert resolved_v2.database_path != resolved_v3.database_path
 
 
 @pytest.mark.parametrize(
