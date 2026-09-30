@@ -239,8 +239,60 @@ def check_market_data_integrity(
     )
 
 
+def require_market_data_integrity(
+    *,
+    required_symbols: tuple[str, ...] | list[str] | None = None,
+    database_path: str | Path | None = None,
+    as_of_date: date | str | None = None,
+) -> MarketDataIntegrityResult:
+    """Enforce the canonical integrity contract for direct operations.
+
+    Unlike the daily pipeline, direct operational entrypoints have no stage
+    object in which to represent a failed gate.  They therefore require a
+    strict PASS and raise before creating or mutating operational state.  An
+    omitted universe is resolved from the already-local latest VNINDEX
+    session; direct lifecycle checks must not make a fresh VN100 provider
+    request merely to validate local state.
+    """
+    if required_symbols is None:
+        path = resolve_market_database_path(database_path)
+        try:
+            connection = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
+            with connection:
+                rows = connection.execute(
+                    """
+                    SELECT DISTINCT UPPER(TRIM(symbol))
+                    FROM prices
+                    WHERE date(time)=(
+                        SELECT MAX(date(time)) FROM prices
+                        WHERE UPPER(TRIM(symbol))='VNINDEX'
+                    )
+                    ORDER BY UPPER(TRIM(symbol))
+                    """
+                ).fetchall()
+            required_symbols = tuple(str(row[0]) for row in rows if row[0])
+        except sqlite3.Error:
+            required_symbols = ()
+        finally:
+            if "connection" in locals():
+                connection.close()
+
+    result = check_market_data_integrity(
+        required_symbols=required_symbols,
+        database_path=database_path,
+        as_of_date=as_of_date,
+    )
+    if result.state is not MarketDataIntegrityState.PASS:
+        detail = result.message or result.state.value
+        raise RuntimeError(
+            "Market-data integrity gate failed closed: " + detail
+        )
+    return result
+
+
 __all__ = (
     "MarketDataIntegrityResult",
     "MarketDataIntegrityState",
     "check_market_data_integrity",
+    "require_market_data_integrity",
 )

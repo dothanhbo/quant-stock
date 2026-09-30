@@ -54,31 +54,27 @@ def test_closed_paper_gap_cannot_reopen_without_new_regression_evidence() -> Non
     assert reopened.reopening_evidence
 
 
-def test_import_and_data_gate_are_distinct_open_material_gaps() -> None:
+def test_import_and_data_gate_are_historical_closed_findings() -> None:
     by_id = {gap.identifier: gap for gap in _audit().gaps}
-    assert by_id["13A-M1-import-time-database-initialization"].state is LifecycleState.OPEN
+    assert by_id["13A-M1-import-time-database-initialization"].state is LifecycleState.CLOSED
     assert by_id["13A-M1-import-time-database-initialization"].current_severity is Severity.MATERIAL
-    assert by_id["13A-M2-post-update-integrity-gate"].state is LifecycleState.OPEN
-    assert "not an all-symbol data-integrity result" in by_id["13A-M2-post-update-integrity-gate"].consequence
-    assert "duplicate keys" in by_id["13A-M2-post-update-integrity-gate"].consequence
+    assert by_id["13A-M2-post-update-integrity-gate"].state is LifecycleState.CLOSED
+    assert by_id["13A-M2-post-update-integrity-gate"].closure_evidence
 
 
 def test_workflow_path_mismatch_is_supported_by_current_path_contract() -> None:
     gap = next(gap for gap in _audit().gaps if gap.identifier.endswith("database-path-mismatch"))
-    assert gap.current_severity is Severity.MATERIAL
-    assert "data/market.db" in gap.consequence
-    assert "root market.db" in gap.consequence
-    assert gap.decision is Decision.FIX_BEFORE_V1_CONSOLIDATION
+    assert gap.state is LifecycleState.SUPERSEDED
+    assert gap.decision is Decision.DEFER_WITH_DOCUMENTATION
 
 
 def test_fix_before_requires_concrete_open_gap_and_informationals_do_not_force_fix() -> None:
     informational = next(gap for gap in PHASE_13E_GAPS if gap.current_severity is Severity.INFORMATIONAL)
     with pytest.raises(ValueError, match="informational"):
         replace(informational, decision=Decision.FIX_BEFORE_V1_CONSOLIDATION)
-    material = next(gap for gap in PHASE_13E_GAPS if gap.decision is Decision.FIX_BEFORE_V1_CONSOLIDATION)
-    assert material.consequence and material.evidence
-    with pytest.raises(ValueError, match="open or partially"):
-        replace(material, state=LifecycleState.CLOSED, closure_evidence=("closed",))
+    closed = next(gap for gap in PHASE_13E_GAPS if gap.state is LifecycleState.CLOSED)
+    assert closed.closure_evidence
+    assert all(gap.decision is not Decision.FIX_BEFORE_V1_CONSOLIDATION for gap in PHASE_13E_GAPS)
 
 
 def test_minor_and_informational_gaps_are_deferred_not_promoted() -> None:
@@ -86,13 +82,22 @@ def test_minor_and_informational_gaps_are_deferred_not_promoted() -> None:
     residual = [gap for gap in result.gaps if gap.original_severity in {Severity.MINOR, Severity.INFORMATIONAL}]
     assert len(residual) == 5
     assert all(gap.current_severity is gap.original_severity for gap in residual)
-    assert all(gap.decision is Decision.DEFER_WITH_DOCUMENTATION for gap in residual)
+    assert all(
+        gap.decision is Decision.DEFER_WITH_DOCUMENTATION
+        for gap in residual
+        if gap.state is LifecycleState.OPEN
+    )
+    assert all(
+        gap.decision is Decision.NO_ACTION_REQUIRED
+        for gap in residual
+        if gap.state is LifecycleState.CLOSED
+    )
 
 
 def test_bundle_and_readiness_are_deterministic_and_paper_is_excluded() -> None:
     result = _audit()
-    assert result.bundling_decision is BundleDecision.ONE_BOUNDED_HARDENING_PACKAGE
-    assert result.readiness is Readiness.ONE_HARDENING_PACKAGE_REMAINS
+    assert result.bundling_decision is BundleDecision.NO_FURTHER_HARDENING_REQUIRED
+    assert result.readiness is Readiness.ENGINEERING_CLOSED_EVIDENCE_PENDING
     assert all(gap.decision is not Decision.FIX_BEFORE_V1_CONSOLIDATION for gap in result.gaps if gap.component == "PAPER_RECOVERY")
     assert result.audit_complete and result.no_production_mutation and result.no_network_or_provider_calls
 

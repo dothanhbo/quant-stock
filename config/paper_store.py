@@ -7,6 +7,8 @@ from typing import Mapping, MutableMapping
 
 from dotenv import dotenv_values
 
+from core.paths import PROJECT_ROOT
+
 
 Q70_STRATEGY_IDENTITY = "Q70_FROZEN"
 V3_STRATEGY_IDENTITY = "V3_BREADTH_40_60"
@@ -73,11 +75,18 @@ def resolve_store_definition(
 ) -> ResolvedPaperStore:
     values = os.environ if environ is None else environ
     configured = str(values.get(definition.override_variable, "")).strip()
+    if configured:
+        database_path = Path(configured).expanduser()
+        if not database_path.is_absolute():
+            database_path = PROJECT_ROOT / database_path
+        database_path = database_path.resolve()
+    else:
+        database_path = definition.default_path
     return ResolvedPaperStore(
         definition.store_id,
         definition.display_name,
         definition.strategy_identity,
-        Path(configured) if configured else definition.default_path,
+        database_path,
         definition.override_variable,
         writable_by_current_pipeline,
     )

@@ -13,6 +13,17 @@ def render(*, root: Path = PROJECT_ROOT) -> str:
     snapshot = inspect_system(root=root)
     git = snapshot.git
     market = snapshot.market
+    try:
+        from quantctl.runtime_configuration import resolve_runtime_configuration
+
+        configuration = resolve_runtime_configuration()
+        configuration_lines = (
+            f"  Strategy: {configuration.strategy_identity}",
+            f"  Store: {configuration.paper_store_id}",
+            f"  Fingerprint: {configuration.fingerprint}",
+        )
+    except Exception as error:
+        configuration_lines = (f"  ERROR: {type(error).__name__}: {error}",)
 
     lines = [
         "QUANT SYSTEM STATUS",
@@ -28,9 +39,12 @@ def render(*, root: Path = PROJECT_ROOT) -> str:
         f"  Sessions: {market.session_count if market.session_count is not None else 'UNKNOWN'}",
         f"  Symbols: {market.symbol_count if market.symbol_count is not None else 'UNKNOWN'}",
         f"  Latest-session symbols: {market.latest_session_symbol_count if market.latest_session_symbol_count is not None else 'UNKNOWN'}",
-        "  Status: " + ("AVAILABLE" if market.readable else "UNKNOWN"),
-        "",
-        "Persistent State",
+            "  Status: " + ("AVAILABLE" if market.readable else "UNKNOWN"),
+            "",
+            "Runtime Configuration",
+            *configuration_lines,
+            "",
+            "Persistent State",
     ]
     lines.extend(
         f"  {state.label}: {'AVAILABLE' if state.exists else 'MISSING'}"

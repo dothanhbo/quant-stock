@@ -96,6 +96,14 @@ def collect_checks(
     checks.append(Check("Research", "PASS" if not archive_importers else "FAIL", "archive isolation", "no active runner imports research.archive" if not archive_importers else ", ".join(archive_importers)))
 
     checks.append(Check("Telegram", "PASS" if snapshot.telegram_module_available else "WARN", "module surface", "available; not imported" if snapshot.telegram_module_available else "missing"))
+    try:
+        from quantctl.runtime_configuration import resolve_runtime_configuration
+
+        configuration = resolve_runtime_configuration()
+        checks.append(Check("Runtime", "PASS", "effective configuration", configuration.fingerprint))
+        checks.append(Check("Runtime", "PASS", "active strategy/store", f"{configuration.strategy_identity} / {configuration.paper_store_id}"))
+    except Exception as error:
+        checks.append(Check("Runtime", "FAIL", "effective configuration", f"{type(error).__name__}: {error}"))
     return tuple(checks)
 
 

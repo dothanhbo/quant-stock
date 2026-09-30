@@ -13,6 +13,8 @@ from config.paper_store import apply_active_paper_store_environment
 from config.strategy_loader import COMMON_CONFIG
 from config.trading_policy import TradingPolicy
 from core.database import engine, get_reference_market_date, get_symbol_latest_dates, load_price_data
+from core.market_data_integrity import require_market_data_integrity
+from core.paths import resolve_market_database_path
 from core.signal_database import save_signal
 from core.scan_telemetry import (
     persist_scan_telemetry,
@@ -47,6 +49,26 @@ strategy = TRADING_POLICY.build_entry_model()
 
 telegram_client = TelegramClient.from_env()
 paper_signal_executor: PaperSignalExecutor | None = None
+
+
+def _resolve_scanner_symbols() -> tuple[str, ...]:
+    symbols = tuple(
+        dict.fromkeys(
+            str(symbol).strip().upper()
+            for symbol in get_vn100_symbols()
+            if str(symbol).strip()
+        )
+    )
+    if not symbols:
+        raise RuntimeError("Không lấy được snapshot VN100; dừng scan để tránh sai universe.")
+    return symbols
+
+
+def _require_scanner_integrity(symbols: tuple[str, ...]) -> None:
+    require_market_data_integrity(
+        required_symbols=tuple(dict.fromkeys((*symbols, "VNINDEX"))),
+        database_path=resolve_market_database_path(),
+    )
 
 
 def initialize_scanner_runtime() -> PaperSignalExecutor:
@@ -388,11 +410,11 @@ def check_signal(
     return None
 
 
-def scan_all_symbols(market_config=None):
+def scan_all_symbols(market_config=None, *, _validated_symbols=None):
+    symbols = tuple(_validated_symbols or _resolve_scanner_symbols())
+    if _validated_symbols is None:
+        _require_scanner_integrity(symbols)
     market_config = market_config or get_market_regime()
-    symbols = [str(symbol).strip().upper() for symbol in get_vn100_symbols()]
-    if not symbols:
-        raise RuntimeError("Không lấy được snapshot VN100; dừng scan để tránh sai universe.")
     reference_date = get_reference_market_date()
     market_state = get_market_state(reference_date, symbols=symbols)
     latest_dates = get_symbol_latest_dates()
@@ -468,6 +490,8 @@ def run_scan(
     result_processor=None,
 ) -> tuple[list[dict], dict]:
     """Run the production scan, persist passed signals and notify Telegram."""
+    symbols = _resolve_scanner_symbols()
+    _require_scanner_integrity(symbols)
     executor = initialize_scanner_runtime()
     market_config = get_market_regime()
     print("\n" + "=" * 65)
@@ -479,7 +503,10 @@ def run_scan(
     print(f"Volume tối thiểu: {market_config['min_volume_ratio']:.2f}x MA20")
     print(f"RS tối thiểu: {market_config['min_relative_strength']:+.2f}%")
 
-    results, scan_stats = scan_all_symbols(market_config=market_config)
+    results, scan_stats = scan_all_symbols(
+        market_config=market_config,
+        _validated_symbols=symbols,
+    )
 
     if result_processor is not None:
         results, scan_stats = result_processor(results, scan_stats)
