@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from manager.view_models import RunHistoryViewModel
+from quantctl.run_history import RunDisplayStatus, classify_run_for_display
 
 
 def _duration(value: int | None) -> str:
@@ -11,11 +12,28 @@ def _short_id(value: str) -> str:
     return f"{value[:8]}…" if len(value) > 8 else value
 
 
+def _attention(status: RunDisplayStatus) -> str:
+    if status is RunDisplayStatus.STALE_RUNNING:
+        return "INSPECT BEFORE RETRY"
+    if status is RunDisplayStatus.FAILED:
+        return "REVIEW FAILURE"
+    if status is RunDisplayStatus.RUNNING:
+        return "IN PROGRESS"
+    return "NONE"
+
+
 def render(model: RunHistoryViewModel) -> None:
     import streamlit as st
 
     st.header("Run History")
     st.caption("Read-only audit trail for controlled operations.")
+    with st.expander("Status meanings", expanded=False):
+        st.write("**COMPLETED** — operation finished successfully.")
+        st.write("**FAILED** — operation finished with an error; review its failed step.")
+        st.write("**RUNNING** — persisted as active and started on the current UTC date.")
+        st.write(
+            "**STALE_RUNNING** — persisted as active from a prior UTC date; history is not auto-repaired."
+        )
     if model.warning:
         st.warning(model.warning)
     st.subheader("Latest Operational Run")
@@ -23,13 +41,20 @@ def render(model: RunHistoryViewModel) -> None:
         st.caption("No operational runs recorded.")
     else:
         run = model.latest.summary
+        display_status = classify_run_for_display(run)
         columns = st.columns(4)
         columns[0].metric("Operation", run.operation.upper())
-        columns[1].metric("Status", run.status.value)
+        columns[1].metric("Status", display_status.value)
         columns[2].metric("Duration", _duration(run.duration_ms))
         columns[3].metric("Exit code", run.exit_code if run.exit_code is not None else "UNKNOWN")
+        st.caption(f"Attention: {_attention(display_status)}")
         st.caption(f"Started: {run.started_at_utc} · Finished: {run.finished_at_utc or 'UNKNOWN'}")
         st.caption(f"Run ID: {_short_id(run.run_id)}")
+        if display_status is RunDisplayStatus.STALE_RUNNING:
+            st.warning(
+                "This run is still persisted as RUNNING but began on a prior UTC date. "
+                "History was not modified; inspect the operation before retrying."
+            )
         if run.error_message:
             st.error(run.error_message)
         if model.latest.steps:
@@ -59,7 +84,8 @@ def render(model: RunHistoryViewModel) -> None:
             {
                 "Time": item.summary.started_at_utc,
                 "Operation": item.summary.operation.upper(),
-                "Status": item.summary.status.value,
+                "Status": classify_run_for_display(item.summary).value,
+                "Attention": _attention(classify_run_for_display(item.summary)),
                 "Duration": _duration(item.summary.duration_ms),
                 "Failed step": item.summary.failed_step or "",
                 "Run ID": _short_id(item.summary.run_id),
@@ -77,9 +103,11 @@ def render(model: RunHistoryViewModel) -> None:
     detail = next((item for item in model.recent if item.summary.run_id == selected), None)
     if detail is not None:
         run = detail.summary
+        display_status = classify_run_for_display(run)
         with st.expander(f"Run {_short_id(run.run_id)} details", expanded=False):
             st.markdown("**Overview**")
-            st.write(f"Status: **{run.status.value}**")
+            st.write(f"Status: **{display_status.value}**")
+            st.write(f"Persisted status: **{run.status.value}**")
             st.write(f"Full run ID: `{run.run_id}`")
             st.write(f"Capabilities: {', '.join(run.capabilities) or 'NONE'}")
             if detail.steps:

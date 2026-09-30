@@ -32,6 +32,36 @@ def _paper_store(store: PaperStoreSnapshot, *, active: bool = False) -> None:
         st.caption("The active store currently has no open positions.")
     elif store.open_position_count == 0:
         st.caption("No persisted open positions in this store.")
+
+    st.markdown("#### Prospective Portfolio Evidence")
+    evidence_available = store.evidence_schema_status == "OK"
+    evidence_columns = st.columns(5)
+    evidence_columns[0].metric(
+        "Evidence status",
+        "AVAILABLE" if evidence_available else "UNAVAILABLE",
+    )
+    evidence_columns[1].metric(
+        "Latest session",
+        store.latest_evidence_date or "UNKNOWN",
+    )
+    evidence_columns[2].metric(
+        "Continuity",
+        store.evidence_continuity_state or "UNKNOWN",
+    )
+    evidence_columns[3].metric(
+        "Capture",
+        "NOT STARTED" if store.evidence_capture_state == "MISSING" else store.evidence_capture_state,
+    )
+    evidence_columns[4].metric(
+        "Records",
+        store.evidence_observation_count
+        if store.evidence_observation_count is not None
+        else "UNKNOWN",
+    )
+    if not evidence_available:
+        st.caption("No compatible prospective portfolio evidence is available for this store.")
+    for warning in store.evidence_warnings:
+        st.warning(f"Prospective evidence: {warning}")
     with st.expander("Store technical details", expanded=False):
         st.write(f"Database: {_availability(exists=store.exists, readable=store.readable)}")
         st.write(f"Schema: {store.schema_status}")
@@ -119,8 +149,32 @@ def render(model: StateViewModel) -> None:
 
     st.header("Paper & Forward")
     st.caption("Read-only persisted production and prospective-validation state.")
-    st.subheader("Active Paper")
     active = model.paper.active_store
+    st.subheader("Current State")
+    summary_columns = st.columns(4)
+    summary_columns[0].metric("Active paper store", active.display_name if active else "UNKNOWN")
+    summary_columns[1].metric(
+        "Paper positions",
+        active.open_position_count if active and active.open_position_count is not None else "UNKNOWN",
+    )
+    summary_columns[2].metric(
+        "Evidence continuity",
+        active.evidence_continuity_state if active else "UNKNOWN",
+    )
+    summary_columns[3].metric(
+        "Forward protocols",
+        model.forward.active_protocol_count
+        if model.forward.active_protocol_count is not None
+        else "UNKNOWN",
+    )
+    if active is not None:
+        st.caption(
+            f"Evidence session: {active.latest_evidence_date or 'UNKNOWN'} · "
+            f"Capture: {'NOT STARTED' if active.evidence_capture_state == 'MISSING' else active.evidence_capture_state} · "
+            f"Forward pending maturities: {model.forward.pending_maturity_count if model.forward.pending_maturity_count is not None else 'UNKNOWN'}"
+        )
+
+    st.subheader("Active Paper")
     st.markdown("### Active Paper Store")
     if active is None:
         st.warning("Active paper store could not be resolved.")

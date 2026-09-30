@@ -60,6 +60,18 @@ def render_status(*, root: Path = PROJECT_ROOT) -> str:
         f"  {snapshot.production_replacement.decision.value}",
         f"  {snapshot.production_replacement.note}",
         "",
+        "Production Readiness",
+        f"  State: {snapshot.readiness.readiness}",
+        f"  Conclusion: {snapshot.readiness.conclusion}",
+        "  Open gaps: "
+        + (
+            str(snapshot.readiness.open_gap_count)
+            if snapshot.readiness.open_gap_count is not None
+            else "UNKNOWN"
+        ),
+        f"  Evidence identity: {snapshot.readiness.evidence_identity}",
+        f"  Source: {snapshot.readiness.source_reference}",
+        "",
         "As of",
         f"  {snapshot.as_of or 'UNKNOWN'}",
         "",
@@ -71,6 +83,15 @@ def render_status(*, root: Path = PROJECT_ROOT) -> str:
     if snapshot.warnings:
         lines.extend(("", "Warnings"))
         lines.extend(f"  {warning}" for warning in snapshot.warnings)
+    if snapshot.readiness.open_gaps:
+        lines.extend(("", "Open Readiness Gaps"))
+        lines.extend(
+            f"  {gap.identifier}: {gap.severity}/{gap.state} — {gap.decision} — {gap.reason}"
+            for gap in snapshot.readiness.open_gaps
+        )
+    if snapshot.readiness.limitations:
+        lines.extend(("", "Readiness Limitations"))
+        lines.extend(f"  {item}" for item in snapshot.readiness.limitations)
     return "\n".join(lines)
 
 

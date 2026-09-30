@@ -1,6 +1,6 @@
 from __future__ import annotations
 
-from datetime import datetime
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 import subprocess
 
@@ -15,8 +15,10 @@ from quantctl.run_history import (
     HISTORY_PATH_ENV,
     RUN_ID_ENV,
     OperationHistoryStore,
+    RunDisplayStatus,
     RunStep,
     RunStatus,
+    classify_run_for_display,
     record_daily_pipeline_steps,
     run_tracked_entrypoint,
     sanitize_captured_output,
@@ -113,6 +115,65 @@ def test_run_ids_are_unique_and_history_is_newest_first(tmp_path: Path) -> None:
     assert tuple(item.run_id for item in runs) == (second.run_id, first.run_id)
     assert OperationHistoryStore(database).get_run(first.run_id or "") is not None
     assert OperationHistoryStore(database).get_run("missing") is None
+
+
+def test_running_display_classification_is_day_based_and_read_only(tmp_path: Path) -> None:
+    database = tmp_path / "history.db"
+    store = OperationHistoryStore(database)
+    reference = date(2026, 9, 30)
+    stale_id = store.begin_run(
+        "daily",
+        ("LOCAL_WRITE",),
+        started_at_utc="2026-09-29T23:59:59+00:00",
+    )
+    current_id = store.begin_run(
+        "scan",
+        ("LOCAL_WRITE",),
+        started_at_utc="2026-09-30T00:00:00+00:00",
+    )
+    before = database.read_bytes()
+
+    stale = store.get_run(stale_id)
+    current = store.get_run(current_id)
+    assert stale is not None and current is not None
+    assert classify_run_for_display(stale.summary, as_of_date=reference) is RunDisplayStatus.STALE_RUNNING
+    assert classify_run_for_display(current.summary, as_of_date=reference) is RunDisplayStatus.RUNNING
+    assert database.read_bytes() == before
+
+
+def test_terminal_display_classification_preserves_failure_and_cancellation(tmp_path: Path) -> None:
+    database = tmp_path / "history.db"
+    store = OperationHistoryStore(database)
+    statuses = (
+        (RunStatus.SUCCESS, RunDisplayStatus.COMPLETED),
+        (RunStatus.FAILED, RunDisplayStatus.FAILED),
+        (RunStatus.CANCELLED, RunDisplayStatus.CANCELLED),
+    )
+    for persisted, expected in statuses:
+        run_id = store.begin_run(persisted.value.lower(), ())
+        store.finish_run(run_id, status=persisted, exit_code=0, duration_ms=1)
+        detail = store.get_run(run_id)
+        assert detail is not None
+        assert classify_run_for_display(detail.summary) is expected
+
+
+def test_cli_marks_prior_date_running_record_stale_without_repair(tmp_path: Path) -> None:
+    database = tmp_path / "data" / "operation_history.db"
+    yesterday = datetime.now(timezone.utc).date() - timedelta(days=1)
+    store = OperationHistoryStore(database)
+    run_id = store.begin_run(
+        "daily",
+        ("LOCAL_WRITE",),
+        started_at_utc=f"{yesterday.isoformat()}T12:00:00+00:00",
+    )
+    before = database.read_bytes()
+
+    rendered = history.render_show(run_id, root=tmp_path)
+
+    assert "Status: STALE_RUNNING" in rendered
+    assert "Persisted status: RUNNING" in rendered
+    assert "no repair was attempted" in rendered
+    assert database.read_bytes() == before
 
 
 def test_daily_steps_use_only_canonical_pipeline_stage_results(

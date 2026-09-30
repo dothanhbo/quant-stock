@@ -200,10 +200,10 @@ python -m scripts.report_paper_performance --database data/paper_trading.db
 # Read-only Telegram query service (separate VPS process)
 python -m services.telegram_bot.app
 
-# Paper dashboard
+# Legacy paper presentation dashboard (retained; not the management console)
 python -m streamlit run dashboard/app.py
 
-# Read-only management/control dashboard
+# Canonical management and research console
 python -m streamlit run manager/app.py
 
 # Persist one monitoring snapshot under research_results/

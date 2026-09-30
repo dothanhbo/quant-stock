@@ -89,10 +89,11 @@ def render(model: OperationsViewModel) -> None:
         st.subheader("Latest operation result")
         _display_result(result)
         st.divider()
-    for item in model.operations:
+
+    def render_operation(item) -> None:
         spec = item.spec
         title, purpose, effects = _PRESENTATION[spec.name]
-        st.subheader(title)
+        st.markdown(f"### {title}")
         st.write(purpose)
         st.write("**Will:**")
         for effect in effects:
@@ -119,3 +120,19 @@ def render(model: OperationsViewModel) -> None:
                 st.session_state[_RESULT_KEY] = execute_operation(spec.name)
             st.rerun()
         st.divider()
+
+    read_only = tuple(item for item in model.operations if not item.spec.confirmation_required)
+    mutating = tuple(item for item in model.operations if item.spec.confirmation_required)
+
+    st.subheader("Read-only inspection")
+    st.caption("These actions inspect local state and do not require a mutation confirmation.")
+    for item in read_only:
+        render_operation(item)
+
+    st.subheader("State-changing operations")
+    st.warning(
+        "These state-changing actions may write local state, contact external providers, or send Telegram. "
+        "Review each action's effects before confirming."
+    )
+    for item in mutating:
+        render_operation(item)

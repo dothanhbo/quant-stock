@@ -12,8 +12,10 @@ from quantctl.commands import research
 from quantctl.research_status import (
     ResearchDecision,
     inspect_production_policy,
+    inspect_production_readiness,
     inspect_research_frontier,
 )
+from quantctl.registry import GitInfo
 
 
 def _artifact(
@@ -104,6 +106,45 @@ def test_cli_research_status_and_existing_list(capsys: pytest.CaptureFixture[str
     assert "RESEARCH STATUS" in capsys.readouterr().out
 
 
+def test_readiness_adapts_existing_gap_gate_without_runtime_inference(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "quantctl.research_status.inspect_git",
+        lambda **_kwargs: GitInfo("abcdef1", None, "CLEAN", True),
+    )
+
+    readiness = inspect_production_readiness(root=tmp_path)
+    rendered = research.render_status(root=tmp_path)
+
+    assert readiness.available
+    assert readiness.readiness == "ENGINEERING_CLOSED_EVIDENCE_PENDING"
+    assert readiness.open_gap_count == len(readiness.open_gaps) == 4
+    assert readiness.source_reference == "quantlab/operations/production_gap_gate.py"
+    assert "Production Readiness" in rendered
+    assert "Open Readiness Gaps" in rendered
+    assert readiness.evidence_identity in rendered
+
+
+def test_missing_git_identity_keeps_readiness_unavailable_without_fabrication(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(
+        "quantctl.research_status.inspect_git",
+        lambda **_kwargs: GitInfo(None, None, "UNKNOWN", False),
+    )
+
+    readiness = inspect_production_readiness(root=tmp_path)
+
+    assert not readiness.available
+    assert readiness.readiness == "UNAVAILABLE"
+    assert readiness.open_gap_count is None
+    assert readiness.open_gaps == ()
+    assert readiness.evidence_identity == "UNKNOWN"
+
+
 def test_manager_models_keep_production_and_research_distinct(tmp_path: Path) -> None:
     (tmp_path / "research").mkdir()
     dashboard = build_dashboard_model(root=tmp_path, environ={})
@@ -120,5 +161,19 @@ def test_manager_pages_use_deployed_and_research_terminology() -> None:
     assert "Deployed paper policy" in dashboard
     assert "Production replacement" in dashboard
     assert "Research Frontier" in research_page
+    assert "Current Decision and Production Readiness" in research_page
+    assert "Canonical artifact sources" in research_page
     assert "Active Quant Lab Runners" in research_page
     assert "winner" not in dashboard.lower()
+
+
+def test_manager_and_legacy_dashboard_ownership_is_explicit() -> None:
+    root = Path(__file__).resolve().parent.parent
+    manager_app = (root / "manager" / "app.py").read_text(encoding="utf-8")
+    legacy_dashboard = (root / "dashboard" / "app.py").read_text(encoding="utf-8")
+    readme = (root / "README.md").read_text(encoding="utf-8")
+
+    assert "Canonical Management & Research Console" in manager_app
+    assert "Legacy Paper Dashboard" in legacy_dashboard
+    assert "Legacy paper presentation dashboard" in readme
+    assert "Canonical management and research console" in readme

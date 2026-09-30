@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from manager.view_models import DashboardViewModel
+from quantctl.run_history import RunDisplayStatus, classify_run_for_display
 
 
 def render(model: DashboardViewModel) -> None:
@@ -17,12 +18,39 @@ def render(model: DashboardViewModel) -> None:
     else:
         st.error("System checks require attention. Open Doctor for details.")
 
-    st.subheader("System")
-    columns = st.columns(4)
-    columns[0].metric("Overall", model.doctor_status)
-    columns[1].metric("Version", snapshot.git.tag or model.quantctl_version)
-    columns[2].metric("Git HEAD", snapshot.git.head or "UNKNOWN")
-    columns[3].metric("Working tree", snapshot.git.working_tree)
+    active = model.paper.active_store
+    latest = model.latest_run
+    latest_run_status = (
+        classify_run_for_display(latest.summary).value if latest is not None else "NOT STARTED"
+    )
+    st.subheader("At a Glance")
+    overview_columns = st.columns(5)
+    overview_columns[0].metric("System health", model.doctor_status)
+    overview_columns[1].metric("Latest market session", snapshot.market.latest_session or "UNKNOWN")
+    overview_columns[2].metric("Paper policy", model.production.deployed_strategy_identity)
+    overview_columns[3].metric("Latest operation", latest_run_status)
+    overview_columns[4].metric("Research readiness", model.research.readiness.readiness)
+
+    attention: list[str] = []
+    if latest_run_status in {RunDisplayStatus.FAILED.value, RunDisplayStatus.STALE_RUNNING.value}:
+        attention.append(f"latest operation is {latest_run_status}")
+    if active is None:
+        attention.append("active paper store is unresolved")
+    elif active.evidence_schema_status != "OK":
+        attention.append("prospective portfolio evidence is unavailable")
+    if model.research.readiness.open_gap_count:
+        attention.append(f"research readiness has {model.research.readiness.open_gap_count} open gaps")
+    if attention:
+        st.warning("Needs attention: " + "; ".join(attention) + ".")
+    else:
+        st.caption("No Manager-visible attention items are currently represented.")
+
+    with st.expander("System identity and runtime", expanded=False):
+        columns = st.columns(4)
+        columns[0].metric("Overall", model.doctor_status)
+        columns[1].metric("Version", snapshot.git.tag or model.quantctl_version)
+        columns[2].metric("Git HEAD", snapshot.git.head or "UNKNOWN")
+        columns[3].metric("Working tree", snapshot.git.working_tree)
 
     st.subheader("Market Data")
     market_columns = st.columns(4)
@@ -36,7 +64,6 @@ def render(model: DashboardViewModel) -> None:
 
     st.subheader("Production")
     state_columns = st.columns(4)
-    active = model.paper.active_store
     if active is None:
         state_columns[0].metric("Deployed paper policy", model.production.deployed_strategy_identity)
         state_columns[1].metric("Active store", "UNKNOWN")
@@ -52,6 +79,13 @@ def render(model: DashboardViewModel) -> None:
         state_columns[3].metric(
             "Pending signals",
             active.pending_signal_count if active.pending_signal_count is not None else "UNKNOWN",
+        )
+        evidence_status = "AVAILABLE" if active.evidence_schema_status == "OK" else "UNAVAILABLE"
+        st.caption(
+            "Prospective evidence: "
+            f"{evidence_status} · latest session: {active.latest_evidence_date or 'UNKNOWN'} · "
+            f"continuity: {active.evidence_continuity_state or 'UNKNOWN'} · "
+            f"capture: {'NOT STARTED' if active.evidence_capture_state == 'MISSING' else active.evidence_capture_state}"
         )
 
     st.subheader("Forward")
@@ -84,14 +118,14 @@ def render(model: DashboardViewModel) -> None:
     st.subheader("Last Run")
     if model.history_warning:
         st.warning(model.history_warning)
-    latest = model.latest_run
     if latest is None:
         st.caption("No operational runs recorded.")
     else:
         run = latest.summary
+        display_status = classify_run_for_display(run)
         run_columns = st.columns(4)
         run_columns[0].metric("Operation", run.operation.upper())
-        run_columns[1].metric("Status", run.status.value)
+        run_columns[1].metric("Status", display_status.value)
         run_columns[2].metric("Started", run.started_at_utc.replace("T", " ")[:19])
         run_columns[3].metric(
             "Duration",
@@ -99,16 +133,24 @@ def render(model: DashboardViewModel) -> None:
         )
         if run.failed_step:
             st.error(f"Failed step: {run.failed_step}")
+        if display_status is RunDisplayStatus.STALE_RUNNING:
+            st.warning("The latest operation is still persisted as RUNNING from a prior UTC date.")
         st.caption(f"Run ID: {run.run_id[:8]}… · Open Run History for full details.")
 
     st.subheader("Research")
     research_columns = st.columns(4)
-    research_columns[0].metric("Framework", model.research.framework)
-    research_columns[1].metric("Current stage", model.research.latest_stage)
-    research_columns[2].metric("Evidence as of", model.research.as_of or "UNKNOWN")
+    research_columns[0].metric("Current stage", model.research.latest_stage)
+    research_columns[1].metric("Evidence as of", model.research.as_of or "UNKNOWN")
     replacement = model.research.production_replacement.decision.value
-    research_columns[3].metric("Production replacement", replacement)
+    research_columns[2].metric("Production replacement", replacement)
+    research_columns[3].metric(
+        "Open readiness gaps",
+        model.research.readiness.open_gap_count
+        if model.research.readiness.open_gap_count is not None
+        else "UNKNOWN",
+    )
     st.caption(
+        f"Framework: {model.research.framework} · Readiness: {model.research.readiness.readiness} · "
         f"Active runners: {len(snapshot.runners)} · Archive isolation: "
         f"{'OK' if snapshot.archive_isolated else 'UNKNOWN'} · Open Research for artifact-backed detail."
     )

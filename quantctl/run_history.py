@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime, timedelta, timezone
+from datetime import date, datetime, timedelta, timezone
 from enum import Enum
 import json
 import os
@@ -30,6 +30,14 @@ _SECRET_PATTERNS = (
 class RunStatus(str, Enum):
     RUNNING = "RUNNING"
     SUCCESS = "SUCCESS"
+    FAILED = "FAILED"
+    CANCELLED = "CANCELLED"
+
+
+class RunDisplayStatus(str, Enum):
+    RUNNING = "RUNNING"
+    STALE_RUNNING = "STALE_RUNNING"
+    COMPLETED = "COMPLETED"
     FAILED = "FAILED"
     CANCELLED = "CANCELLED"
 
@@ -72,6 +80,34 @@ class RunDetail:
     summary: RunSummary
     steps: tuple[RunStep, ...]
     metadata: Mapping[str, Any]
+
+
+def classify_run_for_display(
+    run: RunSummary,
+    *,
+    as_of_date: date | None = None,
+) -> RunDisplayStatus:
+    """Classify persisted run state without changing operation history."""
+
+    if run.status is RunStatus.SUCCESS:
+        return RunDisplayStatus.COMPLETED
+    if run.status is RunStatus.FAILED:
+        return RunDisplayStatus.FAILED
+    if run.status is RunStatus.CANCELLED:
+        return RunDisplayStatus.CANCELLED
+    try:
+        started = datetime.fromisoformat(run.started_at_utc.replace("Z", "+00:00"))
+        if started.tzinfo is None:
+            started = started.replace(tzinfo=timezone.utc)
+        started_date = started.astimezone(timezone.utc).date()
+    except ValueError:
+        return RunDisplayStatus.RUNNING
+    reference = as_of_date or datetime.now(timezone.utc).date()
+    return (
+        RunDisplayStatus.STALE_RUNNING
+        if started_date < reference
+        else RunDisplayStatus.RUNNING
+    )
 
 
 def history_path(*, root: Path = PROJECT_ROOT, path: Path | None = None) -> Path:

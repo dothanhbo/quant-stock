@@ -12,7 +12,11 @@ from config.paper_store import (
     configured_paper_environment,
     resolve_active_paper_store,
 )
-from quantctl.registry import PROJECT_ROOT
+from quantctl.registry import PROJECT_ROOT, inspect_git
+from quantlab.operations.production_gap_gate import (
+    LifecycleState,
+    build_production_hardening_gate,
+)
 
 
 FRAMEWORK_NAME = "Neutral Quant Lab"
@@ -50,6 +54,28 @@ class ResearchDecisionStatus:
 
 
 @dataclass(frozen=True, slots=True)
+class ReadinessGapStatus:
+    identifier: str
+    component: str
+    severity: str
+    state: str
+    decision: str
+    reason: str
+
+
+@dataclass(frozen=True, slots=True)
+class ProductionReadinessStatus:
+    available: bool
+    readiness: str
+    conclusion: str
+    open_gap_count: int | None
+    open_gaps: tuple[ReadinessGapStatus, ...]
+    limitations: tuple[str, ...]
+    evidence_identity: str
+    source_reference: str
+
+
+@dataclass(frozen=True, slots=True)
 class ResearchFrontierSnapshot:
     framework: str
     generation_identity: str
@@ -61,6 +87,7 @@ class ResearchFrontierSnapshot:
     source_artifacts: tuple[Path, ...]
     as_of: str | None
     warnings: tuple[str, ...]
+    readiness: ProductionReadinessStatus
 
 
 @dataclass(frozen=True, slots=True)
@@ -221,6 +248,56 @@ def _read_artifact(
     return ordered, manifest_path, as_of, tuple(warnings), generation
 
 
+def inspect_production_readiness(*, root: Path = PROJECT_ROOT) -> ProductionReadinessStatus:
+    git = inspect_git(root=root)
+    if not git.head:
+        return ProductionReadinessStatus(
+            False,
+            "UNAVAILABLE",
+            "Repository identity is unavailable; canonical readiness was not inferred.",
+            None,
+            (),
+            (),
+            "UNKNOWN",
+            "quantlab/operations/production_gap_gate.py",
+        )
+    try:
+        result = build_production_hardening_gate(git.head)
+    except (TypeError, ValueError) as error:
+        return ProductionReadinessStatus(
+            False,
+            "UNAVAILABLE",
+            f"Canonical readiness could not be resolved: {type(error).__name__}.",
+            None,
+            (),
+            (),
+            "UNKNOWN",
+            "quantlab/operations/production_gap_gate.py",
+        )
+    open_gaps = tuple(
+        ReadinessGapStatus(
+            gap.identifier,
+            gap.component,
+            gap.current_severity.value,
+            gap.state.value,
+            gap.decision.value,
+            gap.decision_reason,
+        )
+        for gap in result.gaps
+        if gap.state in {LifecycleState.OPEN, LifecycleState.PARTIALLY_CLOSED}
+    )
+    return ProductionReadinessStatus(
+        True,
+        result.readiness.value,
+        result.bundling_decision.value,
+        len(open_gaps),
+        open_gaps,
+        result.bundling_evidence,
+        result.identity,
+        "quantlab/operations/production_gap_gate.py",
+    )
+
+
 def inspect_research_frontier(*, root: Path = PROJECT_ROOT) -> ResearchFrontierSnapshot:
     decisions: list[ResearchDecisionStatus] = []
     sources: list[Path] = []
@@ -280,6 +357,7 @@ def inspect_research_frontier(*, root: Path = PROJECT_ROOT) -> ResearchFrontierS
         source_artifacts=tuple(sources),
         as_of=max(as_of_dates, default=None),
         warnings=tuple(warnings),
+        readiness=inspect_production_readiness(root=root),
     )
 
 

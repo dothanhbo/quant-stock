@@ -181,11 +181,16 @@ def test_every_manager_page_exposes_the_operator_ux_contract() -> None:
         "SYSTEM  /  Doctor",
     )
     expected_sections = {
-        pages[0]: {"System", "Market Data", "Production", "Forward", "Last Run", "Research"},
-        pages[1]: {"Data Status", "Update Market Data", "Run Scanner", "Run Daily Pipeline"},
+        pages[0]: {"At a Glance", "Market Data", "Production", "Forward", "Last Run", "Research"},
+        pages[1]: {"Read-only inspection", "State-changing operations"},
         pages[2]: {"Latest Operational Run", "Recent Runs"},
-        pages[3]: {"Active Paper", "Forward Validation"},
-        pages[4]: {"Research Frontier", "Production Replacement Status", "Factor Decisions"},
+        pages[3]: {"Current State", "Active Paper", "Forward Validation"},
+        pages[4]: {
+            "Research Frontier",
+            "Current Decision and Production Readiness",
+            "Supporting Evidence",
+            "Limitations and Open Gaps",
+        },
         pages[5]: {"Repository", "Python", "Environment", "Data", "Paper / Forward"},
     }
 
@@ -195,6 +200,19 @@ def test_every_manager_page_exposes_the_operator_ux_contract() -> None:
         app.run()
         assert not app.exception
         assert expected_sections[page].issubset({item.value for item in app.subheader})
+
+    app.sidebar.radio[0].set_value(pages[0])
+    app.run()
+    dashboard_metrics = {item.label for item in app.metric}
+    assert {
+        "System health",
+        "Latest market session",
+        "Paper policy",
+        "Latest operation",
+        "Research readiness",
+        "Open readiness gaps",
+    }.issubset(dashboard_metrics)
+    assert "System identity and runtime" in {item.label for item in app.expander}
 
     app.sidebar.radio[0].set_value(pages[1])
     app.run()
@@ -206,6 +224,7 @@ def test_every_manager_page_exposes_the_operator_ux_contract() -> None:
         "Run Daily": True,
     }
     assert len(app.checkbox) == 3
+    assert any("state-changing" in item.value.lower() for item in app.warning)
 
     app.button[0].click()
     app.run()
@@ -213,3 +232,30 @@ def test_every_manager_page_exposes_the_operator_ux_contract() -> None:
     assert "Latest operation result" in {item.value for item in app.subheader}
     assert any("completed successfully" in item.value for item in app.success)
     assert "Technical details" in {item.label for item in app.expander}
+
+    app.sidebar.radio[0].set_value(pages[2])
+    app.run()
+    assert "Status meanings" in {item.label for item in app.expander}
+
+    app.sidebar.radio[0].set_value(pages[3])
+    app.run()
+    state_metrics = {item.label for item in app.metric}
+    assert {"Active paper store", "Evidence continuity", "Forward protocols"}.issubset(
+        state_metrics
+    )
+
+    app.sidebar.radio[0].set_value(pages[4])
+    app.run()
+    research_expanders = {item.label for item in app.expander}
+    assert {
+        "Factor Decisions",
+        "Policy Decisions",
+        "Portfolio / Risk / Decision Gate",
+        "Artifact provenance and Active Quant Lab Runners",
+    }.issubset(research_expanders)
+
+    app.sidebar.radio[0].set_value(pages[5])
+    app.run()
+    assert {"Passed", "Warnings", "Failed", "Unknown"}.issubset(
+        {item.label for item in app.metric}
+    )

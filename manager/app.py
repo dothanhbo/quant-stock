@@ -35,7 +35,7 @@ def main() -> None:
 
     st.set_page_config(page_title="Quant Manager", layout="wide")
     st.title("Quant Manager")
-    st.caption("System Control & Research Console")
+    st.caption("Canonical Management & Research Console")
     st.info("Read-only inspection with explicit, controlled operations.")
 
     git = inspect_git()

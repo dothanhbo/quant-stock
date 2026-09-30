@@ -49,7 +49,7 @@ DEFAULT_PAPER_DATABASE = str(
 
 
 st.set_page_config(
-    page_title="Quant Stock Dashboard",
+    page_title="Legacy Paper Dashboard",
     page_icon="📊",
     layout="wide",
     initial_sidebar_state="expanded",
@@ -137,7 +137,7 @@ def sidebar() -> str:
           <div class="brand-logo">Q</div>
           <div>
             <div class="brand-title">QUANT STOCK</div>
-            <div class="brand-subtitle">DASHBOARD</div>
+            <div class="brand-subtitle">LEGACY PAPER DASHBOARD</div>
           </div>
         </div>
         """,

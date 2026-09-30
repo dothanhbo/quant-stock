@@ -260,6 +260,58 @@ def test_paper_status_exposes_persisted_prospective_evidence_read_only(tmp_path:
     assert {path.name: _digest(path) for path in (root / "data").glob("*.db")} == before
 
 
+def test_manager_state_renders_prospective_evidence_summary(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    root = _state_root(tmp_path)
+    paper_path = root / "data" / "paper_trading_v2.db"
+    evidence_path = root / "data" / "prospective_portfolio_evidence.db"
+    record = ProspectivePortfolioEvidenceRecord(
+        evidence_version="v1",
+        strategy_identity="Q70_FROZEN",
+        source_store_id="q70-frozen",
+        source_store_identity=paper_store_identity(
+            store_id="q70-frozen",
+            strategy_identity="Q70_FROZEN",
+            database_path=paper_path,
+        ),
+        source_account_epoch_id=None,
+        runtime_configuration_fingerprint="manager-evidence-config",
+        observation_date="2026-09-27",
+        captured_at_utc="2026-09-27T18:00:00+00:00",
+        paper_database_path=str(paper_path.resolve()),
+        market_database_path=str((root / "data" / "market.db").resolve()),
+        market_database_sha256=None,
+        market_data_reference_session=None,
+        benchmark_symbol="VNINDEX",
+        benchmark_close=None,
+        market_regime_label="UNKNOWN",
+        regime_computation_identity="test-regime",
+        cash=100.0,
+        positions_value=0.0,
+        equity=100.0,
+        realized_pnl=0.0,
+        unrealized_pnl=0.0,
+        gross_exposure_pct=0.0,
+        open_position_count=0,
+    )
+    ProspectivePortfolioEvidenceLedger(evidence_path).append(record)
+    model = build_state_model(root=root, environ={})
+    active = model.paper.active_store
+    assert active is not None
+    fake = _FakeStreamlit()
+    monkeypatch.setitem(sys.modules, "streamlit", fake)
+
+    state_page.render(model)
+
+    assert ("Evidence status", "AVAILABLE") in fake.metrics
+    assert ("Latest session", "2026-09-27") in fake.metrics
+    assert ("Continuity", active.evidence_continuity_state) in fake.metrics
+    assert ("Capture", "SUCCEEDED") in fake.metrics
+    assert ("Records", 1) in fake.metrics
+
+
 def test_schema_mismatch_is_reported_without_crashing(tmp_path: Path) -> None:
     data = tmp_path / "data"
     data.mkdir()
@@ -335,6 +387,8 @@ def test_state_page_renders_without_actions_or_sqlite(
     state_page.render(model)
 
     source = (PROJECT_ROOT / "manager" / "pages" / "state.py").read_text(encoding="utf-8")
+    assert ("Evidence status", "UNAVAILABLE") in fake.metrics
+    assert ("Capture", "NOT STARTED") in fake.metrics
     assert "sqlite3" not in source
     assert "st.button" not in source
     for forbidden in (

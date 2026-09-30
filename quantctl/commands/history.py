@@ -7,7 +7,9 @@ from quantctl.run_history import (
     HistoryReadError,
     OperationHistoryStore,
     RunDetail,
+    RunDisplayStatus,
     RunSummary,
+    classify_run_for_display,
     history_path,
 )
 
@@ -23,12 +25,15 @@ def _duration(value: int | None) -> str:
 
 
 def _summary_lines(run: RunSummary) -> list[str]:
+    display_status = classify_run_for_display(run)
     lines = [
         run.started_at_utc,
         run.operation.upper(),
-        run.status.value,
+        display_status.value,
         f"Duration: {_duration(run.duration_ms)}",
     ]
+    if display_status is RunDisplayStatus.STALE_RUNNING:
+        lines.append("Warning: persisted RUNNING state is from a prior UTC date; no repair was attempted.")
     if run.failed_step:
         lines.append(f"Failed step: {run.failed_step}")
     lines.append(f"Run: {run.run_id}")
@@ -53,12 +58,14 @@ def render_list(*, root: Path = PROJECT_ROOT, limit: int = 20) -> str:
 
 def _detail_lines(detail: RunDetail) -> list[str]:
     run = detail.summary
+    display_status = classify_run_for_display(run)
     lines = [
         "RUN DETAIL",
         "",
         f"Run: {run.run_id}",
         f"Operation: {run.operation.upper()}",
-        f"Status: {run.status.value}",
+        f"Status: {display_status.value}",
+        f"Persisted status: {run.status.value}",
         f"Started: {run.started_at_utc}",
         f"Finished: {run.finished_at_utc or 'UNKNOWN'}",
         f"Duration: {_duration(run.duration_ms)}",
@@ -67,6 +74,11 @@ def _detail_lines(detail: RunDetail) -> list[str]:
         "",
         "Steps",
     ]
+    if display_status is RunDisplayStatus.STALE_RUNNING:
+        lines.insert(
+            7,
+            "Warning: persisted RUNNING state is from a prior UTC date; no repair was attempted.",
+        )
     if detail.steps:
         lines.extend(
             f"  {item.sequence}. {item.step_name}: {item.status.value} ({_duration(item.duration_ms)})"
