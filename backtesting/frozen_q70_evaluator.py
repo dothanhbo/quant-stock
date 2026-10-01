@@ -36,6 +36,7 @@ from quantlab.ranking import (
     CandidateRankingPolicy,
     FROZEN_Q70_VOLUME_RATIO_RANK_V1,
 )
+from quantlab.research_provenance import build_research_provenance
 
 
 UniverseMode = Literal["current_vn100", "database_coverage"]
@@ -693,6 +694,13 @@ def run_frozen_q70_backtest(
             },
         }
     )
+    research_provenance = build_research_provenance(effective_universe_mode)
+    metrics["research_provenance"] = research_provenance.as_dict()
+    metrics["research_provenance_identity"] = research_provenance.identity
+    metrics["universe_methodology"] = research_provenance.universe.methodology.value
+    metrics["historical_bias_status"] = research_provenance.universe.bias_status.value
+    metrics["pit_membership_capability"] = research_provenance.universe.pit_membership_capability.value
+    metrics["research_warnings"] = tuple(item.value for item in research_provenance.warnings)
     if allowed_states is not None:
         metrics.update(
             {

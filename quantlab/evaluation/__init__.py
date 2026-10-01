@@ -77,6 +77,21 @@ _EXPORT_MODULES = {
     "NEUTRAL_RESEARCH_DECISION_GATE_V1": ".research_decision_gate",
     "load_phase59b_decision_evidence": ".research_decision_gate",
     "evaluate_research_decision_gate": ".research_decision_gate",
+    "EvidenceSourceStatus": ".portfolio_risk_evidence",
+    "EvidenceStrength": ".portfolio_risk_evidence",
+    "EvidenceMetricSummary": ".portfolio_risk_evidence",
+    "EvidenceCostSummary": ".portfolio_risk_evidence",
+    "DrawdownAssociation": ".portfolio_risk_evidence",
+    "RegimeEvidenceSummary": ".portfolio_risk_evidence",
+    "PolicyImplication": ".portfolio_risk_evidence",
+    "PortfolioRiskEvidenceSourceResult": ".portfolio_risk_evidence",
+    "PortfolioRiskEvidenceResult": ".portfolio_risk_evidence",
+    "evaluate_portfolio_risk_evidence": ".portfolio_risk_evidence",
+    "evaluate_portfolio_risk_evidence_sources": ".portfolio_risk_evidence",
+    "PersistedEvidenceSourceClassification": ".portfolio_risk_evidence_sources",
+    "PersistedPortfolioEvidenceSource": ".portfolio_risk_evidence_sources",
+    "load_phase6_portfolio_evidence": ".portfolio_risk_evidence_sources",
+    "load_frozen_q70_cost_evidence": ".portfolio_risk_evidence_sources",
 }
 
 __all__ = tuple(_EXPORT_MODULES)

@@ -145,6 +145,8 @@ def test_multiple_elapsed_sessions_record_latest_only_and_surface_gaps(tmp_path:
     assert tuple(item.formation_session for item in ledger.formations(protocol.protocol_id)) == (latest,)
     assert result.missing_formation_sessions == sessions[117:120]
     assert tuple(item.market_session for item in ledger.audit_events(protocol.protocol_id)) == sessions[117:120]
+    assert tuple(item.market_session for item in result.gap_reconciliation) == sessions[117:120]
+    assert all(item.resolution.value == "ACKNOWLEDGED_UNRECOVERABLE" for item in result.gap_reconciliation)
 
 
 @pytest.mark.parametrize(

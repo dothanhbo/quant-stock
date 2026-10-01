@@ -8,6 +8,8 @@ from typing import Mapping, Sequence
 from .contracts import (
     AuditEventType,
     ForwardAuditEvent,
+    ForwardGapReconciliation,
+    ForwardGapResolution,
     ForwardFormation,
     ForwardMaturity,
     ForwardOutcome,
@@ -176,6 +178,29 @@ def detect_missing_formations(
             identity({"protocol": activation.protocol_id, "event": "MISSING_FORMATION", "session": session}),
         )
         for session in expected if session not in recorded
+    )
+
+
+def reconcile_missing_formations(
+    events: Sequence[ForwardAuditEvent],
+) -> tuple[ForwardGapReconciliation, ...]:
+    """Classify persisted gaps without fabricating prospective evidence.
+
+    A missed formation cannot be backfilled after its session has passed.  The
+    existing append-only audit event is therefore the deterministic operator
+    acknowledgement; recovery means continuing from the next valid session.
+    """
+    return tuple(
+        ForwardGapReconciliation(
+            event.protocol_id,
+            event.market_session,
+            ForwardGapResolution.ACKNOWLEDGED_UNRECOVERABLE,
+            "DO_NOT_BACKFILL; continue at next valid session",
+            event.reason_code,
+            event.event_identity,
+        )
+        for event in sorted(events, key=lambda item: (item.market_session, item.event_identity))
+        if event.event_type is AuditEventType.MISSING_FORMATION
     )
 
 

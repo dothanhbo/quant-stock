@@ -185,6 +185,30 @@ class ForwardAuditEvent:
     event_identity: str
 
 
+class ForwardGapResolution(str, Enum):
+    ACKNOWLEDGED_UNRECOVERABLE = "ACKNOWLEDGED_UNRECOVERABLE"
+
+
+@dataclass(frozen=True, slots=True)
+class ForwardGapReconciliation:
+    protocol_id: str
+    market_session: str
+    resolution: ForwardGapResolution
+    action: str
+    reason: str
+    event_identity: str
+
+    def as_dict(self) -> dict[str, Any]:
+        return {
+            "protocol_id": self.protocol_id,
+            "market_session": self.market_session,
+            "resolution": self.resolution.value,
+            "action": self.action,
+            "reason": self.reason,
+            "event_identity": self.event_identity,
+        }
+
+
 @dataclass(frozen=True, slots=True)
 class ForwardValidationStatus:
     protocol_id: str
@@ -225,6 +249,7 @@ class ForwardDailyOperationResult:
     outcomes_created: int
     gap_events_created: int
     status_identity: str
+    gap_reconciliation: tuple[ForwardGapReconciliation, ...] = ()
 
     def __post_init__(self) -> None:
         object.__setattr__(
@@ -237,6 +262,7 @@ class ForwardDailyOperationResult:
             "missing_formation_sessions",
             tuple(self.missing_formation_sessions),
         )
+        object.__setattr__(self, "gap_reconciliation", tuple(self.gap_reconciliation))
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -258,6 +284,7 @@ class ForwardDailyOperationResult:
             "outcomes_created": self.outcomes_created,
             "gap_events_created": self.gap_events_created,
             "status_identity": self.status_identity,
+            "gap_reconciliation": [item.as_dict() for item in self.gap_reconciliation],
         }
 
 

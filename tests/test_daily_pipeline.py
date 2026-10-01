@@ -179,6 +179,10 @@ def test_run_daily_passes_pending_result_to_scanner(
 ) -> None:
     pending_result = object()
     scanner_inputs: list[object] = []
+    # This test exercises the V2 lifecycle handoff.  Keep that explicit so a
+    # machine-local .env cannot redirect it into the independently tested V3
+    # wrapper.
+    monkeypatch.setenv("PAPER_STRATEGY_VERSION", "Q70_FROZEN")
 
     monkeypatch.setattr(
         run_daily,

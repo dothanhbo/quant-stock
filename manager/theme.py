@@ -95,6 +95,12 @@ hr { border-color: var(--qm-line); margin: 1rem 0; }
 .qm-badge--neutral { color: #506071; border-color: #c7d0d9; background: #f3f5f7; }
 .qm-badge__key { color: #6d7885; font-weight: 500; }
 
+.qm-research-stage { display: grid; grid-template-columns: minmax(145px, 1.15fr) auto minmax(100px, .8fr) minmax(220px, 2fr); gap: .65rem; align-items: center; padding: .62rem .72rem; border: 1px solid var(--qm-line); border-radius: 5px; background: var(--qm-surface); margin: .32rem 0; }
+.qm-research-stage__name { font-size: .79rem; font-weight: 650; color: var(--qm-ink); }
+.qm-research-stage__date { font: 500 .72rem/1.35 ui-monospace, SFMono-Regular, Consolas, monospace; color: var(--qm-muted); }
+.qm-research-stage__detail { font-size: .74rem; color: var(--qm-muted); line-height: 1.35; }
+@media (max-width: 800px) { .qm-research-stage { grid-template-columns: 1fr auto; } .qm-research-stage__detail { grid-column: 1 / -1; } }
+
 [data-testid="stAlert"] { border-radius: 5px; padding: .65rem .75rem; }
 [data-testid="stExpander"] { border-color: var(--qm-line); border-radius: 5px; background: var(--qm-surface); }
 [data-testid="stDataFrame"] { border: 1px solid var(--qm-line); border-radius: 5px; overflow: hidden; }
@@ -130,7 +136,8 @@ def status_badge_html(value: object, *, label: str | None = None) -> str:
         tone = "success"
     elif normalized in {
         "WARN", "WARNING", "RUNNING", "STALE_RUNNING", "NOT_STARTED",
-        "NOT STARTED", "ENGINEERING_CLOSED_EVIDENCE_PENDING",
+        "NOT STARTED", "ENGINEERING_CLOSED_EVIDENCE_PENDING", "PARTIAL",
+        "INSUFFICIENT", "INSUFFICIENT_EVIDENCE",
     }:
         tone = "warning"
     elif normalized in {"FAIL", "FAILED", "ERROR", "UNAVAILABLE", "UNREADABLE"}:
@@ -147,6 +154,23 @@ def status_badge_html(value: object, *, label: str | None = None) -> str:
 def status_badge_row_html(*items: tuple[str, object]) -> str:
     badges = "".join(status_badge_html(value, label=label) for label, value in items)
     return f'<div class="qm-badge-row">{badges}</div>'
+
+
+def research_stage_row_html(
+    *,
+    name: str,
+    state: object,
+    as_of: str | None,
+    detail: str,
+) -> str:
+    return (
+        '<div class="qm-research-stage">'
+        f'<div class="qm-research-stage__name">{escape(name)}</div>'
+        f'<div>{status_badge_html(state)}</div>'
+        f'<div class="qm-research-stage__date">{escape(as_of or "AS OF UNKNOWN")}</div>'
+        f'<div class="qm-research-stage__detail">{escape(detail)}</div>'
+        '</div>'
+    )
 
 
 def sidebar_metadata_html(*, environment: str, repository: str) -> str:

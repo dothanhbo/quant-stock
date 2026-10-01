@@ -67,6 +67,7 @@ from strategy.scanner import (
 
 import pandas as pd
 from strategy.scanner import evaluate_symbol	
+from quantlab.research_provenance import build_research_provenance
 
 
 DEFAULT_DB_PATH = "market.db"
@@ -1053,6 +1054,14 @@ def run_backtest(
             "eligible_symbol_count_mean": eligible_symbol_count_mean,
         }
     )
+
+    research_provenance = build_research_provenance(effective_universe_mode)
+    metrics["research_provenance"] = research_provenance.as_dict()
+    metrics["research_provenance_identity"] = research_provenance.identity
+    metrics["universe_methodology"] = research_provenance.universe.methodology.value
+    metrics["historical_bias_status"] = research_provenance.universe.bias_status.value
+    metrics["pit_membership_capability"] = research_provenance.universe.pit_membership_capability.value
+    metrics["research_warnings"] = tuple(item.value for item in research_provenance.warnings)
 
     trade_distribution = calculate_trade_distribution(
         result.executed_trades

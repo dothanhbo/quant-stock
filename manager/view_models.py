@@ -9,11 +9,13 @@ from quantctl.operations import OperationSpec, list_operations, operation_availa
 from quantctl.registry import (
     PROJECT_ROOT,
     QUANTCTL_VERSION,
-    RunnerInfo,
     SystemSnapshot,
-    discover_active_runners,
     inspect_system,
 )
+from quantctl.evidence_compare import EvidenceComparisonCatalog, inspect_evidence_comparison_catalog
+from quantctl.factor_explore import FactorExploreCatalog, inspect_factor_explore_catalog
+from quantctl.portfolio_risk import PortfolioRiskCatalog, inspect_portfolio_risk_catalog
+from quantctl.research_home import ResearchHomeCatalog, inspect_research_home_catalog
 from quantctl.state import (
     ForwardSystemSnapshot,
     PaperSystemSnapshot,
@@ -44,8 +46,25 @@ class DashboardViewModel:
 
 @dataclass(frozen=True, slots=True)
 class ResearchViewModel:
-    runners: tuple[RunnerInfo, ...]
     frontier: ResearchFrontierSnapshot
+    production: ProductionPolicySnapshot
+    forward: ForwardSystemSnapshot
+    catalog: ResearchHomeCatalog
+
+
+@dataclass(frozen=True, slots=True)
+class ExploreViewModel:
+    catalog: FactorExploreCatalog
+
+
+@dataclass(frozen=True, slots=True)
+class CompareViewModel:
+    catalog: EvidenceComparisonCatalog
+
+
+@dataclass(frozen=True, slots=True)
+class PortfolioRiskViewModel:
+    catalog: PortfolioRiskCatalog
 
 
 @dataclass(frozen=True, slots=True)
@@ -109,8 +128,29 @@ def build_dashboard_model(
     )
 
 
-def build_research_model(*, root: Path = PROJECT_ROOT) -> ResearchViewModel:
-    return ResearchViewModel(discover_active_runners(root=root), inspect_research_frontier(root=root))
+def build_research_model(
+    *,
+    root: Path = PROJECT_ROOT,
+    environ: Mapping[str, str] | None = None,
+) -> ResearchViewModel:
+    return ResearchViewModel(
+        inspect_research_frontier(root=root),
+        inspect_production_policy(root=root, environ=environ),
+        inspect_forward_system(root=root),
+        inspect_research_home_catalog(root=root),
+    )
+
+
+def build_explore_model(*, root: Path = PROJECT_ROOT) -> ExploreViewModel:
+    return ExploreViewModel(inspect_factor_explore_catalog(root=root))
+
+
+def build_compare_model(*, root: Path = PROJECT_ROOT) -> CompareViewModel:
+    return CompareViewModel(inspect_evidence_comparison_catalog(root=root))
+
+
+def build_portfolio_risk_model(*, root: Path = PROJECT_ROOT) -> PortfolioRiskViewModel:
+    return PortfolioRiskViewModel(inspect_portfolio_risk_catalog(root=root))
 
 
 def build_system_model(

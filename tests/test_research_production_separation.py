@@ -160,10 +160,12 @@ def test_manager_pages_use_deployed_and_research_terminology() -> None:
     research_page = (root / "manager/pages/research.py").read_text(encoding="utf-8")
     assert "Deployed paper policy" in dashboard
     assert "Production replacement" in dashboard
-    assert "Research Frontier" in research_page
-    assert "Current Decision and Production Readiness" in research_page
-    assert "Canonical artifact sources" in research_page
-    assert "Active Quant Lab Runners" in research_page
+    assert 'st.header("Quant Lab")' in research_page
+    assert "Q70_FROZEN is the deployed paper baseline" in research_page
+    assert "ADX_ONLY is the neutral research" in research_page
+    assert "Forward evidence is not paper execution" in research_page
+    assert "Provenance and limitations" in research_page
+    assert "Active Quant Lab Runners" not in research_page
     assert "winner" not in dashboard.lower()
 
 

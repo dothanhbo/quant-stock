@@ -52,17 +52,17 @@ def test_dashboard_model_is_read_only(tmp_path: Path) -> None:
     assert not tuple(data.glob("*.db-shm"))
 
 
-def test_research_model_lists_only_active_root_runners(tmp_path: Path) -> None:
+def test_research_model_uses_fixed_catalog_without_runner_discovery(tmp_path: Path) -> None:
     research = tmp_path / "research"
     archive = research / "archive"
     archive.mkdir(parents=True)
     (research / "run_quantlab_current.py").write_text("VALUE = 1\n", encoding="utf-8")
     (archive / "run_quantlab_old.py").write_text("VALUE = 1\n", encoding="utf-8")
 
-    model = build_research_model(root=tmp_path)
+    model = build_research_model(root=tmp_path, environ={})
 
-    assert tuple(item.short_name for item in model.runners) == ("current",)
-    assert all("archive" not in item.path.parts for item in model.runners)
+    assert all(item.state.value == "UNAVAILABLE" for item in model.catalog.artifacts)
+    assert not hasattr(model, "runners")
 
 
 def test_missing_databases_are_presented_gracefully(tmp_path: Path) -> None:
@@ -186,25 +186,37 @@ def test_every_manager_page_exposes_the_operator_ux_contract() -> None:
 
     app = AppTest.from_file(str(PROJECT_ROOT / "manager" / "app.py"), default_timeout=15).run()
     pages = (
-        "OVERVIEW  /  Dashboard",
-        "OPERATIONS  /  Operations",
-        "OPERATIONS  /  Run History",
-        "STATE  /  Paper & Forward",
-        "RESEARCH  /  Research",
-        "SYSTEM  /  Doctor",
+        "CONTROL  /  Dashboard",
+        "CONTROL  /  Operations",
+        "CONTROL  /  Run History",
+        "CONTROL  /  Paper State",
+        "CONTROL  /  System / Doctor",
+        "QUANT LAB  /  Research Home",
+        "QUANT LAB  /  Explore",
+        "QUANT LAB  /  Compare",
+        "QUANT LAB  /  Portfolio & Risk",
     )
     expected_sections = {
         pages[0]: {"At a Glance", "Market Data", "Production", "Forward", "Last Run", "Research"},
         pages[1]: {"Read-only inspection", "State-changing operations"},
         pages[2]: {"Latest Operational Run", "Recent Runs"},
         pages[3]: {"Current State", "Active Paper", "Forward Validation"},
-        pages[4]: {
-            "Research Frontier",
-            "Current Decision and Production Readiness",
-            "Supporting Evidence",
-            "Limitations and Open Gaps",
+        pages[4]: {"Repository", "Python", "Environment", "Data", "Paper / Forward"},
+        pages[5]: {
+            "Research Path",
+            "Candidate Decisions",
+            "Open Readiness Gaps",
+            "Recent Meaningful Change",
         },
-        pages[5]: {"Repository", "Python", "Environment", "Data", "Paper / Forward"},
+        pages[6]: {"Temporal Evidence Matrix", "Evidence by Horizon"},
+        pages[7]: {"Comparable Evidence Matrix", "Descriptive Differences"},
+        pages[8]: {
+            "Risk Profile by Budget",
+            "Portfolio Structure",
+            "Outcome and Hypothetical Cost Evidence",
+            "Execution Evidence",
+            "Evidence Availability",
+        },
     }
 
     assert tuple(app.sidebar.radio[0].options) == pages
@@ -257,18 +269,58 @@ def test_every_manager_page_exposes_the_operator_ux_contract() -> None:
         state_metrics
     )
 
-    app.sidebar.radio[0].set_value(pages[4])
+    app.sidebar.radio[0].set_value(pages[5])
     app.run()
     research_expanders = {item.label for item in app.expander}
+    assert "Provenance and limitations" in research_expanders
     assert {
-        "Factor Decisions",
-        "Policy Decisions",
-        "Portfolio / Risk / Decision Gate",
-        "Artifact provenance and Active Quant Lab Runners",
-    }.issubset(research_expanders)
+        "Deployed paper baseline",
+        "Canonical candidates",
+        "Latest research stage",
+        "Production readiness",
+        "Open evidence gaps",
+    }.issubset({item.label for item in app.metric})
+    assert not app.text_input
 
-    app.sidebar.radio[0].set_value(pages[5])
+    app.sidebar.radio[0].set_value(pages[4])
     app.run()
     assert {"Passed", "Warnings", "Failed", "Unknown"}.issubset(
         {item.label for item in app.metric}
     )
+
+    app.sidebar.radio[0].set_value(pages[6])
+    app.run()
+    assert not app.exception
+    assert {
+        "Current gate / disposition",
+        "Defined-date coverage",
+        "Mean daily rank IC",
+        "Positive spread-date rate",
+        "Temporal consistency",
+    }.issubset({item.label for item in app.metric})
+    assert "Load persisted daily IC and spread detail" in {
+        item.label for item in app.checkbox
+    }
+
+    app.sidebar.radio[0].set_value(pages[7])
+    app.run()
+    assert not app.exception
+    assert "Compare" in {item.value for item in app.header}
+    assert "Comparison family" in {item.label for item in app.selectbox}
+    from quantctl.evidence_compare import ComparisonFamily
+
+    app.selectbox[0].set_value(ComparisonFamily.FROZEN_POLICIES)
+    app.run()
+    assert not app.exception
+
+    app.sidebar.radio[0].set_value(pages[8])
+    app.run()
+    assert not app.exception
+    assert "Portfolio & Risk" in {item.value for item in app.header}
+    assert any("no persisted Phase 6 portfolio" in item.value for item in app.info)
+    assert {
+        "Selection policy",
+        "Budget",
+        "Horizon",
+        "Risk-policy variant",
+    }.issubset({item.label for item in app.selectbox})

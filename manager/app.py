@@ -8,11 +8,14 @@ PROJECT_ROOT = Path(__file__).resolve().parent.parent
 if str(PROJECT_ROOT) not in sys.path:
     sys.path.insert(0, str(PROJECT_ROOT))
 
-from manager.pages import dashboard, operations, research, run_history, state, system
+from manager.pages import compare, dashboard, explore, operations, portfolio_risk, research, run_history, state, system
 from manager.theme import apply_manager_theme, sidebar_metadata_html
 from manager.view_models import (
     build_dashboard_model,
+    build_compare_model,
+    build_explore_model,
     build_operations_model,
+    build_portfolio_risk_model,
     build_research_model,
     build_run_history_model,
     build_state_model,
@@ -22,12 +25,15 @@ from quantctl.registry import inspect_git
 
 
 _NAVIGATION_LABELS = {
-    "Dashboard": "OVERVIEW  /  Dashboard",
-    "Operations": "OPERATIONS  /  Operations",
-    "Run History": "OPERATIONS  /  Run History",
-    "State": "STATE  /  Paper & Forward",
-    "Research": "RESEARCH  /  Research",
-    "System / Doctor": "SYSTEM  /  Doctor",
+    "Dashboard": "CONTROL  /  Dashboard",
+    "Operations": "CONTROL  /  Operations",
+    "Run History": "CONTROL  /  Run History",
+    "Paper State": "CONTROL  /  Paper State",
+    "System / Doctor": "CONTROL  /  System / Doctor",
+    "Research Home": "QUANT LAB  /  Research Home",
+    "Explore": "QUANT LAB  /  Explore",
+    "Compare": "QUANT LAB  /  Compare",
+    "Portfolio & Risk": "QUANT LAB  /  Portfolio & Risk",
 }
 
 
@@ -54,7 +60,17 @@ def main() -> None:
     )
     page = st.sidebar.radio(
         "Page",
-        ("Dashboard", "Operations", "Run History", "State", "Research", "System / Doctor"),
+        (
+            "Dashboard",
+            "Operations",
+            "Run History",
+            "Paper State",
+            "System / Doctor",
+            "Research Home",
+            "Explore",
+            "Compare",
+            "Portfolio & Risk",
+        ),
         format_func=_NAVIGATION_LABELS.__getitem__,
         label_visibility="collapsed",
     )
@@ -68,11 +84,17 @@ def main() -> None:
         operations.render(build_operations_model())
     elif page == "Run History":
         run_history.render(build_run_history_model())
-    elif page == "State":
+    elif page == "Paper State":
         state.render(build_state_model())
-    elif page == "Research":
+    elif page == "Research Home":
         research.render(build_research_model())
-    else:
+    elif page == "Explore":
+        explore.render(build_explore_model())
+    elif page == "Compare":
+        compare.render(build_compare_model())
+    elif page == "Portfolio & Risk":
+        portfolio_risk.render(build_portfolio_risk_model())
+    elif page == "System / Doctor":
         system.render(build_system_model())
 
 

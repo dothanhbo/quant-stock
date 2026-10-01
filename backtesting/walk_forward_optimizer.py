@@ -18,6 +18,7 @@ from core.database_coverage import (
     CoverageUniverseIndex,
     build_database_coverage_index,
 )
+from quantlab.research_provenance import build_research_provenance
 
 
 @dataclass(slots=True, frozen=True)
@@ -354,6 +355,7 @@ def run_walk_forward_optimization(
         if explicit_symbols_supplied
         else universe_mode
     )
+    research_provenance = build_research_provenance(effective_universe_mode)
     shared_coverage_index: CoverageUniverseIndex | None = None
     coverage_backtest_kwargs: dict[str, Any] = {}
 
@@ -693,6 +695,11 @@ def run_walk_forward_optimization(
                 "effective_universe_mode": effective_universe_mode,
                 "minimum_history_sessions": minimum_history_sessions,
                 "maximum_staleness_sessions": maximum_staleness_sessions,
+                "universe_methodology": research_provenance.universe.methodology.value,
+                "historical_bias_status": research_provenance.universe.bias_status.value,
+                "pit_membership_capability": research_provenance.universe.pit_membership_capability.value,
+                "research_provenance_identity": research_provenance.identity,
+                "research_warnings": tuple(item.value for item in research_provenance.warnings),
                 "train_eligible_symbol_count_min": train_eligible_counts[0],
                 "train_eligible_symbol_count_max": train_eligible_counts[1],
                 "train_eligible_symbol_count_mean": train_eligible_counts[2],
@@ -877,6 +884,11 @@ def run_walk_forward_optimization(
         "effective_universe_mode": effective_universe_mode,
         "minimum_history_sessions": minimum_history_sessions,
         "maximum_staleness_sessions": maximum_staleness_sessions,
+        "universe_methodology": research_provenance.universe.methodology.value,
+        "historical_bias_status": research_provenance.universe.bias_status.value,
+        "pit_membership_capability": research_provenance.universe.pit_membership_capability.value,
+        "research_provenance": research_provenance.as_dict(),
+        "research_provenance_identity": research_provenance.identity,
         "eligible_symbol_count_min": overall_eligible_counts[0],
         "eligible_symbol_count_max": overall_eligible_counts[1],
         "eligible_symbol_count_mean": overall_eligible_counts[2],

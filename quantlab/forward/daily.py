@@ -35,6 +35,7 @@ from .semantics import (
     build_matured_outcomes,
     detect_missing_formations,
     evaluate_formation_maturities,
+    reconcile_missing_formations,
 )
 
 
@@ -294,6 +295,7 @@ def run_forward_validation_daily(
     )
     gap_events_created = ledger.record_audit_events(gaps)
     audit_events = ledger.audit_events(protocol.protocol_id)
+    gap_reconciliation = reconcile_missing_formations(audit_events)
     outcomes = ledger.outcomes(protocol.protocol_id)
     status = build_forward_status(
         activation,
@@ -319,4 +321,5 @@ def run_forward_validation_daily(
         outcomes_created=outcomes_created,
         gap_events_created=gap_events_created,
         status_identity=status.status_identity,
+        gap_reconciliation=gap_reconciliation,
     )
