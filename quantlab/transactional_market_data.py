@@ -18,9 +18,21 @@ import math
 from numbers import Real
 from pathlib import Path
 import re
+import shutil
 import sqlite3
 from typing import Any, Iterator
 
+from quantlab.operational_admission import (
+    IngestionIntent,
+    OPERATIONAL_ONLY,
+    POLICY,
+    UNKNOWN,
+    OperationalAdmission,
+    OperationalAdmissionResult,
+    OperationalReason,
+    SymbolIdentityState,
+    evaluate_operational_admission,
+)
 from quantlab.preupdate_market_data_guard import (
     AdjustmentBasis,
     BoundaryDiagnostic,
@@ -40,6 +52,7 @@ from quantlab.preupdate_market_data_guard import (
 
 
 SCHEMA_VERSION = "d4b1-v1"
+D4B2_MIGRATION_ID = "d4b2-operational-admission-v1"
 _SHA256 = re.compile(r"^[0-9a-f]{64}$")
 
 
@@ -142,6 +155,11 @@ class PreparedPriceBatch:
     archive: ImmutableArchiveIdentity | None = None
     revision_evidence: tuple[RevisionEvidence, ...] = ()
     boundary_evidence: tuple[BoundaryEvidence, ...] = ()
+    ingestion_intent: IngestionIntent = IngestionIntent.UNSPECIFIED
+    symbol_identity_state: SymbolIdentityState = SymbolIdentityState.UNCERTAIN
+    symbol_identity_references: tuple[str, ...] = ()
+    completed_through: date | None = None
+    corporate_action_verification_state: AttributionState = AttributionState.UNKNOWN
     normalized_content_sha256: str = field(init=False)
     batch_fingerprint: str = field(init=False)
 
@@ -174,6 +192,7 @@ class PreparedPriceBatch:
         source_references = _references(self.source_references)
         unit_references = _references(self.price_unit_references)
         adjustment_references = _references(self.adjustment_evidence_references)
+        identity_references = _references(self.symbol_identity_references)
         if self.source_verification_state is AttributionState.VERIFIED and not source_references:
             raise ValueError("verified provider source requires attributable references")
         if self.price_unit_verification_state is AttributionState.VERIFIED and not unit_references:
@@ -183,6 +202,16 @@ class PreparedPriceBatch:
             or not adjustment_references
         ):
             raise ValueError("verified adjustment basis requires attributable evidence")
+        if self.symbol_identity_state in {
+            SymbolIdentityState.VERIFIED_STABLE,
+            SymbolIdentityState.CONSISTENT_REQUEST_SYMBOL,
+        } and not identity_references:
+            raise ValueError("non-uncertain symbol identity requires attributable references")
+        if self.completed_through is not None and (
+            not isinstance(self.completed_through, date)
+            or isinstance(self.completed_through, datetime)
+        ):
+            raise ValueError("completed_through must be a date")
 
         revision_evidence = tuple(sorted(
             self.revision_evidence,
@@ -208,6 +237,7 @@ class PreparedPriceBatch:
         object.__setattr__(self, "price_unit", _text(self.price_unit, "price unit"))
         object.__setattr__(self, "price_unit_references", unit_references)
         object.__setattr__(self, "adjustment_evidence_references", adjustment_references)
+        object.__setattr__(self, "symbol_identity_references", identity_references)
         object.__setattr__(self, "revision_evidence", revision_evidence)
         object.__setattr__(self, "boundary_evidence", boundary_evidence)
 
@@ -220,6 +250,19 @@ class PreparedPriceBatch:
         if self.archive is None or self.archive.kind is not ArchiveKind.ORIGINAL_PROVIDER_PAYLOAD:
             return None
         return self.archive.content_sha256
+
+    @property
+    def source_attributable(self) -> bool:
+        return bool(
+            self.operation_id
+            and self.batch_fingerprint
+            and self.provider_identity
+            and self.endpoint_identity
+            and self.package_name
+            and self.package_version
+            and self.source_verification_state is AttributionState.VERIFIED
+            and self.source_references
+        )
 
     def guard_price_basis(self) -> PriceBasisMetadata:
         verified = (
@@ -284,6 +327,13 @@ class PreparedPriceBatch:
             },
             "revision_evidence": [_revision_evidence_dict(item) for item in self.revision_evidence],
             "boundary_evidence": [_boundary_evidence_dict(item) for item in self.boundary_evidence],
+            "operational_context": {
+                "ingestion_intent": self.ingestion_intent.value,
+                "symbol_identity_state": self.symbol_identity_state.value,
+                "symbol_identity_references": self.symbol_identity_references,
+                "completed_through": None if self.completed_through is None else self.completed_through.isoformat(),
+                "corporate_action_verification_state": self.corporate_action_verification_state.value,
+            },
         }
 
 
@@ -295,6 +345,32 @@ class CommitPriceBatchResult:
     guard_result: GuardResult
     rows_written: int
     idempotent_replay: bool
+
+
+@dataclass(frozen=True, slots=True)
+class ShadowCommitResult:
+    operation_id: str
+    batch_fingerprint: str
+    status: ReceiptStatus
+    guard_result: GuardResult
+    operational_result: OperationalAdmissionResult
+    rows_written: int
+    idempotent_replay: bool
+
+
+@dataclass(frozen=True, slots=True)
+class MigrationRehearsalResult:
+    source_sha256: str
+    clone_before_sha256: str
+    clone_migrated_sha256: str
+    clone_restored_sha256: str
+    migration_recorded: bool
+    unique_price_index_valid: bool
+    foreign_key_violations: tuple[tuple[object, ...], ...]
+
+    @property
+    def rollback_restored_bytes(self) -> bool:
+        return self.clone_before_sha256 == self.clone_restored_sha256
 
 
 def _text(value: object, name: str) -> str:
@@ -431,6 +507,185 @@ def initialize_transactional_ingestion_schema(connection: sqlite3.Connection) ->
         """
     )
     connection.commit()
+
+
+_RECEIPT_D4B2_COLUMNS = {
+    "operational_policy": "TEXT",
+    "operational_admission": "TEXT",
+    "operational_reason_codes_json": "TEXT",
+    "operational_result_json": "TEXT",
+    "data_class": "TEXT",
+    "research_eligible": "INTEGER",
+    "adjustment_mode": "TEXT",
+    "corporate_action_verification": "TEXT",
+    "historical_anchor_dates_json": "TEXT",
+}
+
+_MANIFEST_D4B2_COLUMNS = {
+    "data_class": "TEXT",
+    "research_eligible": "INTEGER",
+    "corporate_action_verification": "TEXT",
+    "symbol_identity_state": "TEXT",
+    "symbol_identity_references_json": "TEXT",
+    "ingestion_intent": "TEXT",
+    "completed_through": "TEXT",
+}
+
+
+def _table_columns(connection: sqlite3.Connection, table: str) -> set[str]:
+    return {str(row[1]) for row in connection.execute(f"PRAGMA table_info({table})")}
+
+
+def _has_unique_price_session_index(connection: sqlite3.Connection) -> bool:
+    for row in connection.execute("PRAGMA index_list(prices)"):
+        if not bool(row[2]):
+            continue
+        columns = tuple(
+            value[2] for value in connection.execute(f"PRAGMA index_info({row[1]})")
+        )
+        if columns == ("symbol", "time"):
+            return True
+    return False
+
+
+def migrate_operational_admission_schema(
+    connection: sqlite3.Connection,
+    *,
+    failure_injector: Callable[[str], None] | None = None,
+) -> bool:
+    """Apply the additive D4B2 schema on an explicit, idle SQLite connection."""
+    if connection.in_transaction:
+        raise ValueError("operational migration requires an idle SQLite connection")
+    inject = failure_injector or (lambda _stage: None)
+    connection.execute("PRAGMA foreign_keys = ON")
+    try:
+        connection.execute("BEGIN IMMEDIATE")
+        if not _has_unique_price_session_index(connection):
+            raise RuntimeError("prices requires a unique (symbol, time) index")
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS market_schema_migrations (
+                migration_id TEXT PRIMARY KEY,
+                applied_at_utc TEXT NOT NULL
+            )
+            """
+        )
+        already_applied = connection.execute(
+            "SELECT 1 FROM market_schema_migrations WHERE migration_id=?",
+            (D4B2_MIGRATION_ID,),
+        ).fetchone() is not None
+
+        receipt_columns = _table_columns(connection, "market_ingestion_receipts")
+        for name, definition in _RECEIPT_D4B2_COLUMNS.items():
+            if name not in receipt_columns:
+                connection.execute(
+                    f"ALTER TABLE market_ingestion_receipts ADD COLUMN {name} {definition}"
+                )
+        inject("after_receipt_columns")
+
+        manifest_columns = _table_columns(connection, "market_ingestion_manifests")
+        for name, definition in _MANIFEST_D4B2_COLUMNS.items():
+            if name not in manifest_columns:
+                connection.execute(
+                    f"ALTER TABLE market_ingestion_manifests ADD COLUMN {name} {definition}"
+                )
+        inject("after_manifest_columns")
+
+        connection.execute(
+            """
+            CREATE TABLE IF NOT EXISTS market_ingestion_staging (
+                operation_id TEXT PRIMARY KEY
+                    REFERENCES market_ingestion_receipts(operation_id) ON DELETE RESTRICT,
+                batch_fingerprint TEXT NOT NULL,
+                symbol TEXT NOT NULL,
+                ingestion_intent TEXT NOT NULL,
+                staging_outcome TEXT NOT NULL,
+                normalized_content_sha256 TEXT NOT NULL,
+                normalized_rows_json TEXT NOT NULL,
+                metadata_json TEXT NOT NULL,
+                data_class TEXT NOT NULL,
+                research_eligible INTEGER NOT NULL CHECK (research_eligible = 0),
+                created_at_utc TEXT NOT NULL
+            )
+            """
+        )
+        inject("after_staging_table")
+        if not already_applied:
+            connection.execute(
+                "INSERT INTO market_schema_migrations VALUES (?, ?)",
+                (
+                    D4B2_MIGRATION_ID,
+                    datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+                ),
+            )
+        violations = tuple(connection.execute("PRAGMA foreign_key_check"))
+        if violations:
+            raise RuntimeError(f"foreign-key violations after migration: {violations!r}")
+        inject("before_migration_commit")
+        connection.commit()
+        return not already_applied
+    except BaseException:
+        if connection.in_transaction:
+            connection.rollback()
+        raise
+
+
+def _file_sha256(path: Path) -> str:
+    digest = sha256()
+    with path.open("rb") as handle:
+        for chunk in iter(lambda: handle.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def rehearse_operational_migration(
+    source_database: str | Path,
+    rehearsal_directory: str | Path,
+) -> MigrationRehearsalResult:
+    """Migrate and byte-restore a disposable clone; never modifies the source."""
+    source = Path(source_database).resolve()
+    destination = Path(rehearsal_directory).resolve()
+    destination.mkdir(parents=True, exist_ok=True)
+    clone = destination / "market.shadow-migration.db"
+    backup = destination / "market.shadow-migration.pre-d4b2.db"
+    if clone.exists() or backup.exists():
+        raise FileExistsError("migration rehearsal outputs already exist")
+    shutil.copy2(source, clone)
+    shutil.copy2(source, backup)
+    source_hash = _file_sha256(source)
+    clone_before_hash = _file_sha256(clone)
+    connection = sqlite3.connect(clone)
+    try:
+        foundation_exists = connection.execute(
+            """
+            SELECT 1 FROM sqlite_master
+            WHERE type='table' AND name='market_ingestion_receipts'
+            """
+        ).fetchone() is not None
+        if not foundation_exists:
+            initialize_transactional_ingestion_schema(connection)
+        migrate_operational_admission_schema(connection)
+        migrate_operational_admission_schema(connection)
+        migration_recorded = connection.execute(
+            "SELECT COUNT(*) FROM market_schema_migrations WHERE migration_id=?",
+            (D4B2_MIGRATION_ID,),
+        ).fetchone()[0] == 1
+        unique_valid = _has_unique_price_session_index(connection)
+        violations = tuple(tuple(row) for row in connection.execute("PRAGMA foreign_key_check"))
+    finally:
+        connection.close()
+    migrated_hash = _file_sha256(clone)
+    shutil.copy2(backup, clone)
+    restored_hash = _file_sha256(clone)
+    return MigrationRehearsalResult(
+        source_hash,
+        clone_before_hash,
+        migrated_hash,
+        restored_hash,
+        migration_recorded,
+        unique_valid,
+        violations,
+    )
 
 
 @contextmanager
@@ -596,6 +851,41 @@ def _guard_result_from_json(payload: str) -> GuardResult:
     )
 
 
+def _operational_result_dict(result: OperationalAdmissionResult) -> dict[str, object]:
+    return {
+        "policy": result.policy,
+        "admission": result.admission.value,
+        "reasons": [reason.value for reason in result.reasons],
+        "guard_decision": result.guard_decision.value,
+        "guard_reasons": [reason.value for reason in result.guard_reasons],
+        "historical_anchor_dates": result.historical_anchor_dates,
+        "new_session_dates": result.new_session_dates,
+        "limitations": result.limitations,
+        "data_class": result.data_class,
+        "research_eligible": result.research_eligible,
+        "adjustment_mode": result.adjustment_mode,
+        "corporate_action_verification": result.corporate_action_verification,
+    }
+
+
+def _operational_result_from_json(payload: str) -> OperationalAdmissionResult:
+    value = json.loads(payload)
+    return OperationalAdmissionResult(
+        value["policy"],
+        OperationalAdmission(value["admission"]),
+        tuple(OperationalReason(item) for item in value["reasons"]),
+        GuardDecision(value["guard_decision"]),
+        tuple(GuardReason(item) for item in value["guard_reasons"]),
+        tuple(value["historical_anchor_dates"]),
+        tuple(value["new_session_dates"]),
+        tuple(value["limitations"]),
+        value["data_class"],
+        bool(value["research_eligible"]),
+        value["adjustment_mode"],
+        value["corporate_action_verification"],
+    )
+
+
 def _existing_receipt(
     connection: sqlite3.Connection,
     batch: PreparedPriceBatch,
@@ -619,6 +909,58 @@ def _existing_receipt(
         batch.batch_fingerprint,
         ReceiptStatus(row[1]),
         _guard_result_from_json(row[2]),
+        row[3],
+        True,
+    )
+
+
+def _existing_shadow_receipt(
+    connection: sqlite3.Connection,
+    batch: PreparedPriceBatch,
+) -> ShadowCommitResult | None:
+    row = connection.execute(
+        """
+        SELECT batch_fingerprint, status, guard_result_json, rows_written,
+               operational_result_json
+        FROM market_ingestion_receipts
+        WHERE operation_id = ?
+        """,
+        (batch.operation_id,),
+    ).fetchone()
+    if row is None:
+        return None
+    if row[0] != batch.batch_fingerprint:
+        raise OperationIdentityConflict(
+            f"operation id {batch.operation_id!r} already names fingerprint {row[0]}"
+        )
+    guard = _guard_result_from_json(row[2])
+    if row[4] is None:
+        operational = OperationalAdmissionResult(
+            POLICY,
+            (
+                OperationalAdmission.NOT_REQUIRED_GUARD_PASS
+                if guard.decision is GuardDecision.PASS
+                else OperationalAdmission.OPERATIONAL_REJECTED
+            ),
+            (
+                (OperationalReason.GUARD_PASS_CONTROLS_WRITE,)
+                if guard.decision is GuardDecision.PASS
+                else (OperationalReason.UNEXPECTED_GUARD_REASON,)
+            ),
+            guard.decision,
+            guard.reasons,
+            tuple(value.isoformat() for value in guard.overlap_dates),
+            tuple(value.isoformat() for value in guard.genuinely_new_dates),
+            ("PRE_D4B2_RECEIPT_NO_OPERATIONAL_DECISION",),
+        )
+    else:
+        operational = _operational_result_from_json(row[4])
+    return ShadowCommitResult(
+        batch.operation_id,
+        batch.batch_fingerprint,
+        ReceiptStatus(row[1]),
+        guard,
+        operational,
         row[3],
         True,
     )
@@ -652,6 +994,37 @@ def _insert_receipt(
             _json(result_payload),
             rows_written,
             datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
+        ),
+    )
+
+
+def _attach_operational_receipt(
+    connection: sqlite3.Connection,
+    batch: PreparedPriceBatch,
+    result: OperationalAdmissionResult,
+) -> None:
+    payload = _operational_result_dict(result)
+    connection.execute(
+        """
+        UPDATE market_ingestion_receipts
+        SET operational_policy=?, operational_admission=?,
+            operational_reason_codes_json=?, operational_result_json=?,
+            data_class=?, research_eligible=?, adjustment_mode=?,
+            corporate_action_verification=?, historical_anchor_dates_json=?
+        WHERE operation_id=? AND batch_fingerprint=?
+        """,
+        (
+            result.policy,
+            result.admission.value,
+            _json([reason.value for reason in result.reasons]),
+            _json(payload),
+            result.data_class,
+            int(result.research_eligible),
+            result.adjustment_mode,
+            result.corporate_action_verification,
+            _json(result.historical_anchor_dates),
+            batch.operation_id,
+            batch.batch_fingerprint,
         ),
     )
 
@@ -707,6 +1080,32 @@ def _insert_manifest(connection: sqlite3.Connection, batch: PreparedPriceBatch) 
     )
 
 
+def _attach_operational_manifest(
+    connection: sqlite3.Connection,
+    batch: PreparedPriceBatch,
+    result: OperationalAdmissionResult,
+) -> None:
+    connection.execute(
+        """
+        UPDATE market_ingestion_manifests
+        SET data_class=?, research_eligible=?, corporate_action_verification=?,
+            symbol_identity_state=?, symbol_identity_references_json=?,
+            ingestion_intent=?, completed_through=?
+        WHERE operation_id=?
+        """,
+        (
+            result.data_class,
+            int(result.research_eligible),
+            result.corporate_action_verification,
+            batch.symbol_identity_state.value,
+            _json(batch.symbol_identity_references),
+            batch.ingestion_intent.value,
+            None if batch.completed_through is None else batch.completed_through.isoformat(),
+            batch.operation_id,
+        ),
+    )
+
+
 def _upsert_prices(connection: sqlite3.Connection, batch: PreparedPriceBatch) -> None:
     connection.executemany(
         """
@@ -747,6 +1146,97 @@ def _link_prices(connection: sqlite3.Connection, batch: PreparedPriceBatch) -> N
         tuple(
             (row.symbol, row.session.isoformat(), batch.operation_id, batch.batch_fingerprint)
             for row in batch.rows
+        ),
+    )
+
+
+def _append_new_prices(
+    connection: sqlite3.Connection,
+    batch: PreparedPriceBatch,
+    new_dates: Sequence[str],
+) -> tuple[PreparedPriceRow, ...]:
+    allowed = set(new_dates)
+    rows = tuple(row for row in batch.rows if row.session.isoformat() in allowed)
+    if len(rows) != len(allowed):
+        raise RuntimeError("operational new-session set does not match prepared rows")
+    connection.executemany(
+        """
+        INSERT INTO prices (symbol, time, open, high, low, close, volume)
+        VALUES (?, ?, ?, ?, ?, ?, ?)
+        """,
+        tuple(
+            (
+                row.symbol,
+                row.session.isoformat(),
+                row.open,
+                row.high,
+                row.low,
+                row.close,
+                row.volume,
+            )
+            for row in rows
+        ),
+    )
+    return rows
+
+
+def _link_selected_prices(
+    connection: sqlite3.Connection,
+    batch: PreparedPriceBatch,
+    rows: Sequence[PreparedPriceRow],
+) -> None:
+    connection.executemany(
+        """
+        INSERT INTO market_price_provenance (
+            symbol, time, operation_id, batch_fingerprint
+        ) VALUES (?, ?, ?, ?)
+        """,
+        tuple(
+            (row.symbol, row.session.isoformat(), batch.operation_id, batch.batch_fingerprint)
+            for row in rows
+        ),
+    )
+
+
+def _insert_staging_candidate(
+    connection: sqlite3.Connection,
+    batch: PreparedPriceBatch,
+    result: OperationalAdmissionResult,
+) -> None:
+    metadata = {
+        "provider_identity": batch.provider_identity,
+        "endpoint_identity": batch.endpoint_identity,
+        "package_name": batch.package_name,
+        "package_version": batch.package_version,
+        "source_verification_state": batch.source_verification_state.value,
+        "claimed_adjustment_basis": batch.claimed_adjustment_basis.value,
+        "adjustment_verification_state": batch.adjustment_verification_state.value,
+        "archive": None if batch.archive is None else {
+            "reference": batch.archive.reference,
+            "content_sha256": batch.archive.content_sha256,
+            "kind": batch.archive.kind.value,
+        },
+        "raw_payload_sha256": batch.raw_payload_sha256,
+    }
+    connection.execute(
+        """
+        INSERT INTO market_ingestion_staging (
+            operation_id, batch_fingerprint, symbol, ingestion_intent,
+            staging_outcome, normalized_content_sha256, normalized_rows_json,
+            metadata_json, data_class, research_eligible, created_at_utc
+        ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, 0, ?)
+        """,
+        (
+            batch.operation_id,
+            batch.batch_fingerprint,
+            batch.symbol,
+            batch.ingestion_intent.value,
+            result.admission.value,
+            batch.normalized_content_sha256,
+            _json([row.as_identity_dict() for row in batch.rows]),
+            _json(metadata),
+            result.data_class,
+            datetime.now(timezone.utc).isoformat().replace("+00:00", "Z"),
         ),
     )
 
@@ -844,16 +1334,137 @@ def commit_price_batch(
             raise
 
 
+def commit_price_batch_shadow(
+    target: sqlite3.Connection | str | Path,
+    batch: PreparedPriceBatch,
+    *,
+    busy_timeout_seconds: float = 5.0,
+    failure_injector: Callable[[str], None] | None = None,
+) -> ShadowCommitResult:
+    """Evaluate D4A and D4B2 separately inside one reserved transaction.
+
+    The D4B2 additive migration must already be applied. Operational admission
+    appends only genuinely new sessions and never rewrites comparison anchors.
+    """
+    inject = failure_injector or (lambda _stage: None)
+    with _connection(target, busy_timeout_seconds=busy_timeout_seconds) as connection:
+        try:
+            connection.execute("BEGIN IMMEDIATE")
+            inject("after_begin_immediate")
+            replay = _existing_shadow_receipt(connection, batch)
+            if replay is not None:
+                connection.commit()
+                return replay
+
+            existing_rows = _persisted_rows(connection, batch.symbol)
+            incoming_rows = tuple(row.as_guard_row() for row in batch.rows)
+            relevant_sessions = _relevant_existing_sessions(existing_rows, incoming_rows)
+            persisted_basis = _persisted_price_basis(
+                connection,
+                batch.symbol,
+                relevant_sessions,
+            )
+            guard_result = evaluate_preupdate_market_data(
+                existing_rows,
+                incoming_rows,
+                symbol=batch.symbol,
+                requested_start=batch.requested_start,
+                requested_end=batch.requested_end,
+                coverage=batch.coverage,
+                existing_price_basis=persisted_basis,
+                incoming_price_basis=batch.guard_price_basis(),
+                revision_evidence=batch.revision_evidence,
+                boundary_evidence=batch.boundary_evidence,
+            )
+            operational_result = evaluate_operational_admission(
+                batch,
+                guard_result,
+                existing_rows,
+            )
+            inject("after_decisions")
+
+            guard_pass = guard_result.decision is GuardDecision.PASS
+            operational_append = operational_result.admitted
+            if guard_pass or operational_append:
+                new_session_dates = (
+                    tuple(value.isoformat() for value in guard_result.genuinely_new_dates)
+                    if guard_pass
+                    else operational_result.new_session_dates
+                )
+                rows_written = len(new_session_dates)
+                _insert_receipt(
+                    connection,
+                    batch,
+                    guard_result,
+                    ReceiptStatus.APPROVED,
+                    rows_written,
+                )
+                _attach_operational_receipt(connection, batch, operational_result)
+                inject("after_approval_receipt")
+                _insert_manifest(connection, batch)
+                _attach_operational_manifest(connection, batch, operational_result)
+                inject("after_manifest")
+                appended = _append_new_prices(
+                    connection,
+                    batch,
+                    new_session_dates,
+                )
+                _link_selected_prices(connection, batch, appended)
+                inject("after_prices_and_links")
+                connection.commit()
+                return ShadowCommitResult(
+                    batch.operation_id,
+                    batch.batch_fingerprint,
+                    ReceiptStatus.APPROVED,
+                    guard_result,
+                    operational_result,
+                    rows_written,
+                    False,
+                )
+
+            _insert_receipt(
+                connection,
+                batch,
+                guard_result,
+                ReceiptStatus.REJECTED,
+                0,
+            )
+            _attach_operational_receipt(connection, batch, operational_result)
+            if operational_result.requires_staging:
+                _insert_staging_candidate(connection, batch, operational_result)
+            inject("after_rejection_or_staging")
+            connection.commit()
+            return ShadowCommitResult(
+                batch.operation_id,
+                batch.batch_fingerprint,
+                ReceiptStatus.REJECTED,
+                guard_result,
+                operational_result,
+                0,
+                False,
+            )
+        except BaseException:
+            if connection.in_transaction:
+                connection.rollback()
+            raise
+
+
 __all__ = [
     "ArchiveKind",
     "AttributionState",
     "CommitPriceBatchResult",
+    "D4B2_MIGRATION_ID",
     "ImmutableArchiveIdentity",
+    "MigrationRehearsalResult",
     "OperationIdentityConflict",
     "PreparedPriceBatch",
     "PreparedPriceRow",
     "ReceiptStatus",
     "SCHEMA_VERSION",
+    "ShadowCommitResult",
     "commit_price_batch",
+    "commit_price_batch_shadow",
     "initialize_transactional_ingestion_schema",
+    "migrate_operational_admission_schema",
+    "rehearse_operational_migration",
 ]
