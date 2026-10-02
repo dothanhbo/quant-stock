@@ -1,0 +1,209 @@
+{
+  "contract_name": "quantlab.alpha_hypothesis_registry",
+  "contract_version": "v1",
+  "records": [
+    {
+      "hypothesis_id": "neutral-adx-directional-association-v1",
+      "registry_schema_version": "v1",
+      "created_at_utc": "2026-10-02T02:25:17Z",
+      "revision": 1,
+      "research_question": "Does higher same-date ADX have a positive association with subsequent stock and benchmark-relative returns in a prospectively frozen evaluation?",
+      "factor_policy_reference": "adx_14",
+      "factor_policy_version": "quantlab-feature-v1",
+      "expected_relationship": "Higher ADX is expected to be associated with higher forward returns.",
+      "expected_sign": "POSITIVE",
+      "universe_definition": "Point-in-time database-coverage universe with 50 observed-session history and five-VNINDEX-session staleness.",
+      "universe_limitations": [
+        "Database coverage is local data availability, not historical VN100 membership.",
+        "Historical listing, delisting and ticker-change provenance is incomplete."
+      ],
+      "feature_availability_timing": "ADX is available only after the completed signal-session OHLC is known.",
+      "outcome_definition": "Stock forward return and VNINDEX-relative forward return must remain separate outcomes.",
+      "evaluation_horizons_sessions": [],
+      "historical_discovery_cutoff": "2026-09-17",
+      "registration_timestamp_utc": null,
+      "evidence_references": [
+        {
+          "origin": "RETROSPECTIVE",
+          "source_path": "research_results/quantlab_neutral_panel_factor_evaluation_2018-08-07_2026-09-17/experiment_manifest.json",
+          "source_identity": "a707d250571c967bd11b033e470bc4241bf4f51d066435447c454e6001e7bad0",
+          "source_fingerprint": "4e85b178eec49034a41fef2cbc6a99797c1f1af59ccceae8ba19b45ffa2306ea",
+          "observed_through_date": "2026-09-17",
+          "evidence_started_at_utc": null
+        },
+        {
+          "origin": "RETROSPECTIVE",
+          "source_path": "research_results/quantlab_research_decision_gate_2018-08-07_2026-09-17/research_decision_manifest.json",
+          "source_identity": "4dee1003932bce029f2ddc7044c95fdf5e61f438c0001cd05a19a33ec78e9528",
+          "source_fingerprint": "aa74e316a15d7edf01976a1f964c90dfb233c8ee679542e4cdf46be721655a3d",
+          "observed_through_date": "2026-09-17",
+          "evidence_started_at_utc": null
+        }
+      ],
+      "evidence_family": null,
+      "prospective_evaluation_window": null,
+      "minimum_sample_count": null,
+      "minimum_coverage_pct": null,
+      "minimum_economic_effect": null,
+      "falsification_conditions": [],
+      "methodological_limitations": [
+        "Historical discovery and temporal review reuse the same dataset.",
+        "Forward horizons overlap and observations are not independent.",
+        "No multiple-testing correction or dependence-adjusted uncertainty is available.",
+        "Historical corporate-action and price-adjustment provenance is unresolved."
+      ],
+      "dependencies": [],
+      "status": "DRAFT",
+      "assessments": {
+        "research_gate_pass": "PASS",
+        "alpha_validated": "NOT_ASSESSED",
+        "production_ready": "NOT_ASSESSED"
+      },
+      "parent_revision_identity": null,
+      "lifecycle_history": [
+        {
+          "from_status": null,
+          "to_status": "DRAFT",
+          "occurred_at_utc": "2026-10-02T02:25:17Z",
+          "reason": "Draft created from prior retrospective evidence; prospective declarations remain unresolved."
+        }
+      ],
+      "specification_fingerprint": "af5caefcda3ee99e2e8a22d8251e5c2a2476eb7d6371f9cba21d2c39dfd604d9",
+      "identity": "5ec8b59508c1c1bcf4d5e6ce6d2a0d79015a3ecee4d7a59c3c04184ea520964f"
+    },
+    {
+      "hypothesis_id": "neutral-adx-only-portfolio-v1",
+      "registry_schema_version": "v1",
+      "created_at_utc": "2026-10-02T02:25:17Z",
+      "revision": 1,
+      "research_question": "Does an ADX-only equal-weight point-in-time portfolio produce positive benchmark-relative forward outcomes under a separately frozen prospective protocol?",
+      "factor_policy_reference": "ADX_ONLY/EQUAL_WEIGHT",
+      "factor_policy_version": "phase8-frozen-policy",
+      "expected_relationship": "ADX-ranked equal-weight selections are expected to have positive VNINDEX-relative forward returns.",
+      "expected_sign": "POSITIVE",
+      "universe_definition": "Point-in-time database-coverage universe with 50 observed-session history and five-VNINDEX-session staleness.",
+      "universe_limitations": [
+        "Database coverage is not historical VN100 membership.",
+        "The existing Forward V1 observations predate this registry and are not independent evidence for a newly registered revision."
+      ],
+      "feature_availability_timing": "Selection is formed only after the completed market session used to calculate ADX.",
+      "outcome_definition": "Portfolio stock return and VNINDEX-relative return are separate, non-compounded forward observations.",
+      "evaluation_horizons_sessions": [],
+      "historical_discovery_cutoff": "2026-09-17",
+      "registration_timestamp_utc": null,
+      "evidence_references": [
+        {
+          "origin": "RETROSPECTIVE",
+          "source_path": "research_results/quantlab_portfolio_research_synthesis_2018-08-07_2026-09-17/portfolio_research_synthesis_manifest.json",
+          "source_identity": "d433d139c27725421ab6a19fa28c62225040a816793bf63bfffee774b83f3ddc",
+          "source_fingerprint": "7469a23d0cbaf049aa43c73bd90d33eb717f098ca4543ae7cff7a0cc303413f1",
+          "observed_through_date": "2026-09-17",
+          "evidence_started_at_utc": null
+        }
+      ],
+      "evidence_family": null,
+      "prospective_evaluation_window": null,
+      "minimum_sample_count": null,
+      "minimum_coverage_pct": null,
+      "minimum_economic_effect": null,
+      "falsification_conditions": [],
+      "methodological_limitations": [
+        "Historical outcomes overlap and do not define an executable wealth path.",
+        "Historical friction evidence is hypothetical rather than a measured cost estimate.",
+        "Historical monetary capacity is not defensible.",
+        "Historical corporate-action and price-adjustment provenance is unresolved."
+      ],
+      "dependencies": [
+        "neutral-adx-directional-association-v1"
+      ],
+      "status": "DRAFT",
+      "assessments": {
+        "research_gate_pass": "PASS",
+        "alpha_validated": "NOT_ASSESSED",
+        "production_ready": "NOT_ASSESSED"
+      },
+      "parent_revision_identity": null,
+      "lifecycle_history": [
+        {
+          "from_status": null,
+          "to_status": "DRAFT",
+          "occurred_at_utc": "2026-10-02T02:25:17Z",
+          "reason": "Draft created from prior retrospective portfolio evidence; it does not alter Forward V1."
+        }
+      ],
+      "specification_fingerprint": "48868b16409f0e007b5a08a12b7633e6cb5098add9b57f56cce523eb47f7e0df",
+      "identity": "c7662361d7605d8e03844e523093f9bba7e68edbd2bc5ff84332f790a7580fb3"
+    },
+    {
+      "hypothesis_id": "frozen-q70-historical-policy-v1",
+      "registry_schema_version": "v1",
+      "created_at_utc": "2026-10-02T02:25:17Z",
+      "revision": 1,
+      "research_question": "Does the frozen Q70 Hybrid Trend/Donchian policy retain positive net portfolio performance in a future independently registered protocol?",
+      "factor_policy_reference": "Q70_FROZEN/hybrid_trend_donchian/ATR2x5/fixed",
+      "factor_policy_version": "historical-production-parity-v1",
+      "expected_relationship": "The frozen policy is expected to produce positive net portfolio performance after costs.",
+      "expected_sign": "POSITIVE",
+      "universe_definition": "Unresolved for a future registry protocol; historical evidence includes current-VN100-retroactive and database-coverage arms.",
+      "universe_limitations": [
+        "Neither historical arm reconstructs historical VN100 membership.",
+        "The paired historical arms were trade-identical under the available database and strategy warmup.",
+        "Historical listing, delisting and ticker-change provenance is incomplete."
+      ],
+      "feature_availability_timing": "Signals are formed after the completed daily session; historical simulation uses the frozen next-session execution contract.",
+      "outcome_definition": null,
+      "evaluation_horizons_sessions": [],
+      "historical_discovery_cutoff": "2026-09-17",
+      "registration_timestamp_utc": null,
+      "evidence_references": [
+        {
+          "origin": "RETROSPECTIVE",
+          "source_path": "research_results/frozen_q70_paired_full_2018_2026_v4_instrumented/experiment_manifest.json",
+          "source_identity": "Q70_FROZEN/hybrid_trend_donchian/ATR2x5/fixed",
+          "source_fingerprint": "7d53c52779df9b8040458d35a72162f0ae1a38d6f3029064040c96f485c2c3df",
+          "observed_through_date": "2026-09-17",
+          "evidence_started_at_utc": null
+        },
+        {
+          "origin": "RETROSPECTIVE",
+          "source_path": "research_results/frozen_q70_paired_full_2018_2026_v4_instrumented/comparison.csv",
+          "source_identity": "7cec2a2d16b2086604aac6ec41cc21011c582d1c41bc07b3584208eb2429be26",
+          "source_fingerprint": "7cec2a2d16b2086604aac6ec41cc21011c582d1c41bc07b3584208eb2429be26",
+          "observed_through_date": "2026-09-17",
+          "evidence_started_at_utc": null
+        }
+      ],
+      "evidence_family": null,
+      "prospective_evaluation_window": null,
+      "minimum_sample_count": null,
+      "minimum_coverage_pct": null,
+      "minimum_economic_effect": null,
+      "falsification_conditions": [],
+      "methodological_limitations": [
+        "The policy and related research choices were informed by previously observed historical results.",
+        "Historical execution remains simulated rather than broker-reconciled.",
+        "Historical adjustment and corporate-action provenance is unresolved.",
+        "Existing paper and Forward observations must not be relabeled as prospective evidence for this draft."
+      ],
+      "dependencies": [],
+      "status": "DRAFT",
+      "assessments": {
+        "research_gate_pass": "NOT_ASSESSED",
+        "alpha_validated": "NOT_ASSESSED",
+        "production_ready": "NOT_ASSESSED"
+      },
+      "parent_revision_identity": null,
+      "lifecycle_history": [
+        {
+          "from_status": null,
+          "to_status": "DRAFT",
+          "occurred_at_utc": "2026-10-02T02:25:17Z",
+          "reason": "Draft records historical Q70 evidence without promotion or retrospective preregistration."
+        }
+      ],
+      "specification_fingerprint": "4079fae35bdbf958ca348850043a6616620c80934b634d8d7b243269d79706f7",
+      "identity": "d2ea9357b214e898e7ae6063501f4b1be31bcc717c00f890a54b4732c5dcb81f"
+    }
+  ],
+  "registry_fingerprint": "84495ae781cc8e83232649dd7058e2e35ccaa25cdaad8b46dc301a03a6f42a11"
+}
