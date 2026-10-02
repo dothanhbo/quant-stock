@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
+from quantctl.historical_qualification import qualify_historical_limitations
 from quantctl.registry import PROJECT_ROOT
 
 
@@ -285,6 +286,7 @@ def _manifest_provenance(root: Path, family: str) -> ArtifactProvenance:
         as_of = str(period.get("end_date", "")).strip() if isinstance(period, Mapping) else None
         limitations = payload.get("limitations")
         normalized = tuple(str(item).strip() for item in limitations if str(item).strip()) if isinstance(limitations, list) else ()
+        normalized = qualify_historical_limitations(normalized)
         return ArtifactProvenance(
             family, PortfolioEvidenceState.AVAILABLE, path, identity,
             as_of or "2026-09-17", normalized, "Canonical persisted artifact family.",

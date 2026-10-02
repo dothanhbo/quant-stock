@@ -16,6 +16,7 @@ from quantctl.factor_explore import (
     inspect_factor_explore_catalog,
     select_factor_evidence,
 )
+from quantctl.historical_qualification import qualify_historical_limitations
 from quantctl.registry import PROJECT_ROOT
 
 
@@ -419,7 +420,8 @@ def _policy_catalog(root: Path) -> FrozenPolicyCatalog:
         tuple(sorted(contrasts, key=lambda item: (item.variant, item.reference, item.horizon_sessions, item.outcome_field, item.scope))),
         tuple(sorted(overlaps, key=lambda item: (item.budget, item.scope))),
         tuple(sorted(turnover, key=lambda item: (item.policy, item.budget, item.scope))),
-        _dispositions(root), paths, identities, _limitations(manifest),
+        _dispositions(root), paths, identities,
+        qualify_historical_limitations(_limitations(manifest)),
         "Only predeclared persisted policy contrasts are compatible.",
     )
 

@@ -8,6 +8,7 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
+from quantctl.historical_qualification import qualify_historical_limitations
 from quantctl.registry import PROJECT_ROOT
 
 
@@ -450,7 +451,7 @@ def _neutral_population(root: Path) -> FactorPopulationEvidence:
         _identity(manifest, "effective_bounds", "outcome_data_through_session")
         or _identity(manifest, "requested_bounds", "end_date"),
         _UNIVERSE,
-        _limitations(manifest),
+        qualify_historical_limitations(_limitations(manifest)),
         "Complete point-in-time neutral factor population.",
     )
 
@@ -575,7 +576,9 @@ def _candidate_population(root: Path) -> FactorPopulationEvidence:
         _identity(outcome_manifest, "effective_coverage_end_date")
         or _identity(outcome_manifest, "requested_signal_end_date"),
         _UNIVERSE,
-        _limitations(outcome_manifest, temporal_manifest, diagnostic_manifest),
+        qualify_historical_limitations(
+            _limitations(outcome_manifest, temporal_manifest, diagnostic_manifest)
+        ),
         "Selection-conditioned evidence for candidates accepted by Frozen-Q70.",
     )
 

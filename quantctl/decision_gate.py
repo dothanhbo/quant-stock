@@ -9,6 +9,7 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
+from quantctl.historical_qualification import qualify_historical_limitations
 from quantctl.registry import PROJECT_ROOT
 from quantctl.research_status import (
     ProductionPolicySnapshot,
@@ -188,8 +189,10 @@ def _bool(row: Mapping[str, str], field: str) -> bool | None:
 def _limitations(manifest: Mapping[str, Any]) -> tuple[str, ...]:
     values = manifest.get("limitations")
     if not isinstance(values, list):
-        return ()
-    return tuple(str(value).strip() for value in values if str(value).strip())
+        return qualify_historical_limitations(())
+    return qualify_historical_limitations(
+        str(value).strip() for value in values if str(value).strip()
+    )
 
 
 def _as_of(manifest: Mapping[str, Any]) -> str | None:

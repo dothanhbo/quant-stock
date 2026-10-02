@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from typing import Any, Mapping
 
+from quantctl.historical_qualification import qualify_historical_limitations
 from quantctl.registry import PROJECT_ROOT
 
 
@@ -223,7 +224,7 @@ def _inspect_artifact(root: Path, spec: _ArtifactSpec) -> CanonicalArtifactEvide
         artifact_root,
         manifest_path,
         summary_path,
-        _limitations(manifest),
+        qualify_historical_limitations(_limitations(manifest)),
         "Canonical persisted evidence is available.",
     )
 
