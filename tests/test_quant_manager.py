@@ -185,17 +185,14 @@ def test_every_manager_page_exposes_the_operator_ux_contract() -> None:
     from streamlit.testing.v1 import AppTest
 
     app = AppTest.from_file(str(PROJECT_ROOT / "manager" / "app.py"), default_timeout=15).run()
-    pages = (
-        "CONTROL  /  Dashboard",
-        "CONTROL  /  Operations",
-        "CONTROL  /  Run History",
-        "CONTROL  /  Paper State",
-        "CONTROL  /  System / Doctor",
-        "QUANT LAB  /  Research Home",
-        "QUANT LAB  /  Explore",
-        "QUANT LAB  /  Compare",
-        "QUANT LAB  /  Portfolio & Risk",
-    )
+    control_pages = ("Dashboard", "Operations", "Run History", "Paper State", "System / Doctor")
+    lab_pages = ("Research Home", "Explore", "Compare", "Portfolio & Risk", "Forward Evidence", "Decision Gate")
+    pages = control_pages + lab_pages
+
+    def navigate(page: str) -> None:
+        radio = app.sidebar.radio[0] if page in control_pages else app.sidebar.radio[1]
+        radio.set_value(page)
+        app.run()
     expected_sections = {
         pages[0]: {"At a Glance", "Market Data", "Production", "Forward", "Last Run", "Research"},
         pages[1]: {"Read-only inspection", "State-changing operations"},
@@ -203,13 +200,12 @@ def test_every_manager_page_exposes_the_operator_ux_contract() -> None:
         pages[3]: {"Current State", "Active Paper", "Forward Validation"},
         pages[4]: {"Repository", "Python", "Environment", "Data", "Paper / Forward"},
         pages[5]: {
-            "Research Path",
+            "Research Progression",
             "Candidate Decisions",
             "Open Readiness Gaps",
-            "Recent Meaningful Change",
         },
-        pages[6]: {"Temporal Evidence Matrix", "Evidence by Horizon"},
-        pages[7]: {"Comparable Evidence Matrix", "Descriptive Differences"},
+        pages[6]: {"Temporal Rank IC", "Spread, Incremental and Redundancy Evidence"},
+        pages[7]: {"Paired Temporal Evidence", "Descriptive Differences"},
         pages[8]: {
             "Risk Profile by Budget",
             "Portfolio Structure",
@@ -217,17 +213,25 @@ def test_every_manager_page_exposes_the_operator_ux_contract() -> None:
             "Execution Evidence",
             "Evidence Availability",
         },
+        pages[9]: set(),
+        pages[10]: {
+            "Canonical Disposition",
+            "Evidence State Summary",
+            "Evidence Dimension Matrix",
+            "Blockers and Limitations",
+            "Production Readiness — Separate Operational Gate",
+            "Supporting Evidence Navigation",
+        },
     }
 
-    assert tuple(app.sidebar.radio[0].options) == pages
+    assert tuple(app.sidebar.radio[0].options) == control_pages
+    assert tuple(app.sidebar.radio[1].options) == lab_pages
     for page in pages:
-        app.sidebar.radio[0].set_value(page)
-        app.run()
+        navigate(page)
         assert not app.exception
         assert expected_sections[page].issubset({item.value for item in app.subheader})
 
-    app.sidebar.radio[0].set_value(pages[0])
-    app.run()
+    navigate(pages[0])
     dashboard_metrics = {item.label for item in app.metric}
     assert {
         "System health",
@@ -239,8 +243,7 @@ def test_every_manager_page_exposes_the_operator_ux_contract() -> None:
     }.issubset(dashboard_metrics)
     assert "System identity and runtime" in {item.label for item in app.expander}
 
-    app.sidebar.radio[0].set_value(pages[1])
-    app.run()
+    navigate(pages[1])
     operation_buttons = {item.label: item.disabled for item in app.button if item.label.startswith("Run ")}
     assert operation_buttons == {
         "Run Data Status": False,
@@ -258,38 +261,28 @@ def test_every_manager_page_exposes_the_operator_ux_contract() -> None:
     assert any("completed successfully" in item.value for item in app.success)
     assert "Technical details" in {item.label for item in app.expander}
 
-    app.sidebar.radio[0].set_value(pages[2])
-    app.run()
+    navigate(pages[2])
     assert "Status meanings" in {item.label for item in app.expander}
 
-    app.sidebar.radio[0].set_value(pages[3])
-    app.run()
+    navigate(pages[3])
     state_metrics = {item.label for item in app.metric}
     assert {"Active paper store", "Evidence continuity", "Forward protocols"}.issubset(
         state_metrics
     )
 
-    app.sidebar.radio[0].set_value(pages[5])
-    app.run()
+    navigate(pages[5])
     research_expanders = {item.label for item in app.expander}
     assert "Provenance and limitations" in research_expanders
-    assert {
-        "Deployed paper baseline",
-        "Canonical candidates",
-        "Latest research stage",
-        "Production readiness",
-        "Open evidence gaps",
-    }.issubset({item.label for item in app.metric})
+    assert any("Current research frontier" in item.value for item in app.markdown)
+    assert any("Production readiness" in item.value for item in app.markdown)
     assert not app.text_input
 
-    app.sidebar.radio[0].set_value(pages[4])
-    app.run()
+    navigate(pages[4])
     assert {"Passed", "Warnings", "Failed", "Unknown"}.issubset(
         {item.label for item in app.metric}
     )
 
-    app.sidebar.radio[0].set_value(pages[6])
-    app.run()
+    navigate(pages[6])
     assert not app.exception
     assert {
         "Current gate / disposition",
@@ -302,8 +295,7 @@ def test_every_manager_page_exposes_the_operator_ux_contract() -> None:
         item.label for item in app.checkbox
     }
 
-    app.sidebar.radio[0].set_value(pages[7])
-    app.run()
+    navigate(pages[7])
     assert not app.exception
     assert "Compare" in {item.value for item in app.header}
     assert "Comparison family" in {item.label for item in app.selectbox}
@@ -313,8 +305,7 @@ def test_every_manager_page_exposes_the_operator_ux_contract() -> None:
     app.run()
     assert not app.exception
 
-    app.sidebar.radio[0].set_value(pages[8])
-    app.run()
+    navigate(pages[8])
     assert not app.exception
     assert "Portfolio & Risk" in {item.value for item in app.header}
     assert any("no persisted Phase 6 portfolio" in item.value for item in app.info)
@@ -324,3 +315,78 @@ def test_every_manager_page_exposes_the_operator_ux_contract() -> None:
         "Horizon",
         "Risk-policy variant",
     }.issubset({item.label for item in app.selectbox})
+
+    navigate(pages[9])
+    assert not app.exception
+    assert "Forward Evidence" in {item.value for item in app.header}
+    assert "Evidence source" in {item.label for item in app.radio}
+    assert any("separate evidence populations" in item.value for item in app.warning)
+    app.radio[0].set_value("Forward Protocol")
+    app.run()
+    assert not app.exception
+
+    navigate(pages[10])
+    assert not app.exception
+    assert "Decision Gate" in {item.value for item in app.header}
+    assert {"Candidate type", "Persisted candidate"}.issubset(
+        {item.label for item in app.selectbox}
+    )
+    assert any("no score, ranking, approval, or promotion" in item.value.lower() for item in app.caption)
+
+
+def test_quant_lab_cross_page_research_workflows_preserve_compatible_context() -> None:
+    from streamlit.testing.v1 import AppTest
+    from quantctl.evidence_compare import ComparisonFamily
+
+    app = AppTest.from_file(str(PROJECT_ROOT / "manager" / "app.py"), default_timeout=15).run()
+
+    def navigate(page: str) -> None:
+        options = tuple(app.sidebar.radio[0].options)
+        radio = app.sidebar.radio[0] if page in options else app.sidebar.radio[1]
+        radio.set_value(page)
+        app.run()
+
+    # Flow A: Research Home opens Explore, which carries the exact factor
+    # identity into Decision Gate.
+    navigate("Research Home")
+    next(item for item in app.button if item.label == "Explore factor evidence").click()
+    app.run()
+    assert "Explore" in {item.value for item in app.header}
+    factor = app.selectbox[1].options[2]
+    app.selectbox[1].set_value(factor)
+    app.run()
+    navigate("Decision Gate")
+    assert app.selectbox[1].value == f"factor:{factor}"
+
+    # Flow C: Decision Gate links back to the candidate's supporting page.
+    next(item for item in app.button if item.label == "Open Explore").click()
+    app.run()
+    assert "Explore" in {item.value for item in app.header}
+    assert app.selectbox[1].value == factor
+
+    # Flow B: a comparison preserves its separately compatible ADX_ONLY context
+    # for Portfolio & Risk, then carries exact budget/horizon through Forward.
+    navigate("Research Home")
+    next(item for item in app.button if item.label == "Compare candidates").click()
+    app.run()
+    assert "Compare" in {item.value for item in app.header}
+    app.selectbox[0].set_value(ComparisonFamily.FROZEN_POLICIES)
+    app.run()
+    assert app.selectbox[1].value == "ADX_RSI_EQUAL_WEIGHT"
+    assert app.selectbox[2].value == "ADX_ONLY"
+    navigate("Portfolio & Risk")
+    assert app.selectbox[0].value == "ADX_ONLY"
+    assert any("separately carried compatible" in item.value for item in app.info)
+    app.selectbox[1].set_value(5)
+    app.selectbox[2].set_value(5)
+    app.run()
+    navigate("Forward Evidence")
+    app.radio[0].set_value("Forward Protocol")
+    app.run()
+    assert not app.exception
+    if any(item.label == "Persisted horizon" for item in app.selectbox):
+        next(item for item in app.selectbox if item.label == "Persisted horizon").set_value(5)
+        app.run()
+        navigate("Decision Gate")
+        assert app.selectbox[0].value.value == "Portfolio configuration"
+        assert app.selectbox[1].value == "portfolio:5:5"

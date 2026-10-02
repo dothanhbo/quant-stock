@@ -1,6 +1,16 @@
 from __future__ import annotations
 
-from manager.theme import status_badge_row_html
+from manager.charts import bar_chart, line_chart
+from manager.formatting import (
+    format_basis_points,
+    format_count,
+    format_fraction_percent,
+    format_number,
+    format_percent,
+    format_percentage_points,
+    format_ratio,
+)
+from manager.theme import status_badge_row_html, summary_panel_html
 from manager.view_models import PortfolioRiskViewModel
 from quantctl.portfolio_risk import (
     PortfolioEvidenceState,
@@ -21,13 +31,37 @@ def _label(value: str) -> str:
 
 
 def _number(value: float | None, *, percentage: bool = False) -> str:
-    if value is None:
-        return "UNAVAILABLE"
-    return f"{value * 100.0:.2f}%" if percentage else f"{value:.4f}"
+    return format_fraction_percent(value) if percentage else format_number(value)
 
 
 def _percentage_points(value: float | None) -> str:
-    return "UNAVAILABLE" if value is None else f"{value:.4f} pp"
+    return format_percentage_points(value)
+
+
+def _risk_profile_rows(
+    profiles: tuple[object, ...],
+    *,
+    field: str,
+    label: str,
+    scale: float = 1.0,
+) -> tuple[dict[str, object], ...]:
+    return tuple(
+        {"Budget": f"Top {item.budget}", label: None if getattr(item, field) is None else getattr(item, field) * scale}
+        for item in profiles
+    )
+
+
+def _cost_chart_rows(points: tuple[object, ...]) -> tuple[dict[str, object], ...]:
+    rows: list[dict[str, object]] = []
+    for item in points:
+        rate = format_basis_points(item.cost_rate_bps)
+        rows.extend(
+            (
+                {"Hypothetical cost rate": rate, "Series": "Gross excess return", "Excess return (pp)": item.mean_gross_excess_return_pct_points},
+                {"Hypothetical cost rate": rate, "Series": "Net excess return", "Excess return (pp)": item.mean_net_excess_return_pct_points},
+            )
+        )
+    return tuple(rows)
 
 
 def _render_evidence(evidence: PortfolioRiskEvidence) -> None:
@@ -47,44 +81,75 @@ def _render_evidence(evidence: PortfolioRiskEvidence) -> None:
         return
 
     structure, risk, outcome = evidence.structure, evidence.risk, evidence.outcome
-    cards = st.columns(6)
-    cards[0].metric(
-        "Selected / fill ratio",
-        "UNAVAILABLE" if structure is None else f"{_number(structure.mean_selected_count)} / {_number(structure.mean_fill_ratio, percentage=True)}",
+    cards = st.columns(3)
+    cards[0].markdown(
+        summary_panel_html(
+            label="Structure",
+            value=(
+                "UNAVAILABLE"
+                if structure is None
+                else f"{format_count(structure.mean_selected_count)} selected · {format_fraction_percent(structure.mean_fill_ratio)} fill"
+            ),
+            detail=(
+                "Maximum single-name weight "
+                + format_fraction_percent(None if structure is None else structure.max_single_name_weight)
+                + " · effective holdings "
+                + format_count(None if structure is None else structure.effective_holdings)
+            ),
+        ),
+        unsafe_allow_html=True,
     )
-    cards[0].caption("Whole-period mean selected count and requested-budget fill.")
-    cards[1].metric("Max single-name weight", _number(None if structure is None else structure.max_single_name_weight, percentage=True))
-    cards[1].caption("Persisted mean maximum weight for the selected risk-policy variant.")
-    cards[2].metric("Effective holdings", _number(None if structure is None else structure.effective_holdings))
-    cards[2].caption("Inverse concentration measure; not a sector-diversification claim.")
-    cards[3].metric("Annualized volatility", _number(None if risk is None else risk.annualized_volatility, percentage=True))
-    cards[3].caption("Historical descriptive estimate, not a production limit.")
-    cards[4].metric("Benchmark beta", _number(None if risk is None else risk.benchmark_beta))
-    cards[4].caption("Unavailable after scaling unless directly persisted.")
-    cards[5].metric("Cost-adjusted excess evidence", "CURVE AVAILABLE" if evidence.cost_sensitivity else "UNAVAILABLE")
-    cards[5].caption("No single hypothetical cost rate is promoted as canonical.")
+    cards[1].markdown(
+        summary_panel_html(
+            label="Risk",
+            value=format_fraction_percent(None if risk is None else risk.annualized_volatility),
+            detail="Annualized volatility · beta " + format_ratio(None if risk is None else risk.benchmark_beta),
+        ),
+        unsafe_allow_html=True,
+    )
+    cards[2].markdown(
+        summary_panel_html(
+            label="Outcome",
+            value=format_percentage_points(None if outcome is None else outcome.mean_gross_excess_return_pct_points),
+            detail=(
+                "Mean excess return · coverage "
+                + format_percent(None if outcome is None else outcome.coverage_pct)
+            ),
+        ),
+        unsafe_allow_html=True,
+    )
 
     st.subheader("Risk Profile by Budget")
     if evidence.risk_profiles:
         rows = tuple(
             {
                 "Budget": item.budget,
-                "Annualized volatility": item.annualized_volatility,
-                "Aggregate correlation": item.aggregate_pairwise_correlation,
-                "Benchmark beta": item.benchmark_beta,
-                "Max component risk share": item.maximum_component_risk_share,
-                "Effective risk contributors": item.effective_risk_contributors,
+                "Annualized volatility": format_fraction_percent(item.annualized_volatility),
+                "Aggregate correlation": format_ratio(item.aggregate_pairwise_correlation),
+                "Benchmark beta": format_ratio(item.benchmark_beta),
+                "Max component risk share": format_fraction_percent(item.maximum_component_risk_share),
+                "Effective risk contributors": format_count(item.effective_risk_contributors),
             }
             for item in evidence.risk_profiles
         )
         st.dataframe(rows, hide_index=True, width="stretch")
-        charts = st.columns(2)
+        charts = st.columns(3)
         with charts[0]:
-            st.markdown("**Volatility, aggregate correlation, and beta**")
-            st.bar_chart(rows, x="Budget", y=("Annualized volatility", "Aggregate correlation", "Benchmark beta"))
+            st.markdown("**Annualized volatility by budget (%)**")
+            st.altair_chart(bar_chart(_risk_profile_rows(evidence.risk_profiles, field="annualized_volatility", label="Volatility (%)", scale=100.0), category="Budget", value="Volatility (%)", y_title="Volatility (%)", value_format=".2f"), width="stretch")
         with charts[1]:
-            st.markdown("**Risk concentration**")
-            st.bar_chart(rows, x="Budget", y=("Max component risk share", "Effective risk contributors"))
+            st.markdown("**Aggregate pairwise correlation by budget**")
+            st.altair_chart(bar_chart(_risk_profile_rows(evidence.risk_profiles, field="aggregate_pairwise_correlation", label="Correlation"), category="Budget", value="Correlation", y_title="Correlation", value_format=".3f"), width="stretch")
+        with charts[2]:
+            st.markdown("**Benchmark beta by budget**")
+            st.altair_chart(bar_chart(_risk_profile_rows(evidence.risk_profiles, field="benchmark_beta", label="Beta"), category="Budget", value="Beta", y_title="Beta", value_format=".3f"), width="stretch")
+        concentration = st.columns(2)
+        with concentration[0]:
+            st.markdown("**Maximum component risk share by budget (%)**")
+            st.altair_chart(bar_chart(_risk_profile_rows(evidence.risk_profiles, field="maximum_component_risk_share", label="Risk share (%)", scale=100.0), category="Budget", value="Risk share (%)", y_title="Risk share (%)", value_format=".2f"), width="stretch")
+        with concentration[1]:
+            st.markdown("**Effective risk contributors by budget (count)**")
+            st.altair_chart(bar_chart(_risk_profile_rows(evidence.risk_profiles, field="effective_risk_contributors", label="Contributors"), category="Budget", value="Contributors", y_title="Contributors", value_format=".2f"), width="stretch")
     else:
         st.warning("Risk-profile summaries are unavailable for this configuration.")
 
@@ -92,13 +157,13 @@ def _render_evidence(evidence: PortfolioRiskEvidence) -> None:
     st.dataframe(
         ({
             "Budget": evidence.budget,
-            "Mean selected count": _number(None if structure is None else structure.mean_selected_count),
-            "Mean fill ratio": _number(None if structure is None else structure.mean_fill_ratio, percentage=True),
-            "Max single-name weight": _number(None if structure is None else structure.max_single_name_weight, percentage=True),
-            "Effective holdings": _number(None if structure is None else structure.effective_holdings),
-            "Herfindahl concentration": _number(None if structure is None else structure.herfindahl_concentration),
-            "Portfolio one-way turnover": _number(None if structure is None else structure.one_way_turnover),
-            "Risk-policy transformation turnover": _number(None if structure is None else structure.risk_policy_transformation_turnover),
+            "Mean selected count": format_count(None if structure is None else structure.mean_selected_count),
+            "Mean fill ratio": format_fraction_percent(None if structure is None else structure.mean_fill_ratio),
+            "Max single-name weight": format_fraction_percent(None if structure is None else structure.max_single_name_weight),
+            "Effective holdings": format_count(None if structure is None else structure.effective_holdings),
+            "Herfindahl concentration": format_ratio(None if structure is None else structure.herfindahl_concentration),
+            "Portfolio one-way turnover": format_fraction_percent(None if structure is None else structure.one_way_turnover),
+            "Risk-policy transformation turnover": format_fraction_percent(None if structure is None else structure.risk_policy_transformation_turnover),
         },),
         hide_index=True,
         width="stretch",
@@ -112,10 +177,10 @@ def _render_evidence(evidence: PortfolioRiskEvidence) -> None:
         st.dataframe(
             ({
                 "Horizon": f"{evidence.horizon_sessions} sessions",
-                "Coverage": _number(outcome.coverage_pct),
-                "Mean gross portfolio return": _percentage_points(outcome.mean_gross_return_pct),
+                "Coverage": format_percent(outcome.coverage_pct),
+                "Mean gross portfolio return": format_percent(outcome.mean_gross_return_pct),
                 "Mean gross excess return": _percentage_points(outcome.mean_gross_excess_return_pct_points),
-                "Positive excess rate": _number(outcome.positive_excess_rate, percentage=True),
+                "Positive excess rate": format_fraction_percent(outcome.positive_excess_rate),
             },),
             hide_index=True,
             width="stretch",
@@ -126,10 +191,10 @@ def _render_evidence(evidence: PortfolioRiskEvidence) -> None:
             tuple(
                 {
                     "Risk policy": _label(item.risk_policy),
-                    "Coverage": _number(item.coverage_pct),
-                    "Mean gross return": _percentage_points(item.mean_gross_return_pct),
+                    "Coverage": format_percent(item.coverage_pct),
+                    "Mean gross return": format_percent(item.mean_gross_return_pct),
                     "Mean gross excess return": _percentage_points(item.mean_gross_excess_return_pct_points),
-                    "Positive excess rate": _number(item.positive_excess_rate, percentage=True),
+                    "Positive excess rate": format_fraction_percent(item.positive_excess_rate),
                 }
                 for item in evidence.risk_policy_outcomes
             ),
@@ -139,16 +204,29 @@ def _render_evidence(evidence: PortfolioRiskEvidence) -> None:
     if evidence.cost_sensitivity:
         cost_rows = tuple(
             {
-                "Hypothetical cost rate (bps)": item.cost_rate_bps,
+                "Hypothetical cost rate": format_basis_points(item.cost_rate_bps),
                 "Gross excess return (pp)": item.mean_gross_excess_return_pct_points,
                 "Net excess return (pp)": item.mean_net_excess_return_pct_points,
                 "Mean cost deduction (pp)": item.mean_cost_deduction_pct_points,
-                "Persisted sensitivity contract": item.label,
             }
             for item in evidence.cost_sensitivity
         )
-        st.line_chart(cost_rows, x="Hypothetical cost rate (bps)", y=("Gross excess return (pp)", "Net excess return (pp)"))
+        st.markdown("**Gross and net excess return at persisted hypothetical cost rates (pp)**")
+        st.altair_chart(
+            line_chart(
+                _cost_chart_rows(evidence.cost_sensitivity),
+                category="Hypothetical cost rate",
+                series="Series",
+                value="Excess return (pp)",
+                y_title="Excess return (pp)",
+                value_format=".3f",
+                zero=True,
+            ),
+            width="stretch",
+        )
         st.dataframe(cost_rows, hide_index=True, width="stretch")
+        contracts = tuple(dict.fromkeys(item.label for item in evidence.cost_sensitivity))
+        st.caption("Persisted sensitivity contract(s): " + "; ".join(contracts))
         st.warning("Hypothetical cost sensitivity is not a realized execution-cost estimate.")
     else:
         st.caption("Cost sensitivity: UNAVAILABLE for this exact configuration.")
@@ -160,12 +238,12 @@ def _render_evidence(evidence: PortfolioRiskEvidence) -> None:
     else:
         st.dataframe(
             ({
-                "Timing reference coverage": _number(execution.timing_coverage_pct),
-                "Normalized participation coverage": _number(execution.capacity_coverage_pct),
-                "Mean close-to-next-open reference gap": _number(execution.mean_reference_gap_decimal, percentage=True),
-                "Mean adverse-direction gap": _number(execution.mean_adverse_gap_decimal, percentage=True),
-                "Mean normalized participation": _number(execution.mean_normalized_participation_pct),
-                "P95 normalized participation": _number(execution.p95_normalized_participation_pct),
+                "Timing reference coverage": format_percent(execution.timing_coverage_pct),
+                "Normalized participation coverage": format_percent(execution.capacity_coverage_pct),
+                "Mean close-to-next-open reference gap": format_fraction_percent(execution.mean_reference_gap_decimal),
+                "Mean adverse-direction gap": format_fraction_percent(execution.mean_adverse_gap_decimal),
+                "Mean normalized participation": format_percent(execution.mean_normalized_participation_pct, digits=4),
+                "P95 normalized participation": format_percent(execution.p95_normalized_participation_pct, digits=4),
             },),
             hide_index=True,
             width="stretch",
@@ -235,17 +313,80 @@ def render(model: PortfolioRiskViewModel) -> None:
     carried = st.session_state.get("quantlab_portfolio_context", {})
     carried_policy = carried.get("selection_policy") if isinstance(carried, dict) else None
     if carried_policy and carried_policy not in catalog.selection_policies:
-        st.info(
-            f"The carried comparison policy `{carried_policy}` has no persisted Phase 6 portfolio. "
-            "That field was reset; no alternative policy was treated as equivalent."
+        comparison_candidates = (
+            tuple(carried.get("comparison_candidates", ())) if isinstance(carried, dict) else ()
         )
-        carried_policy = None
+        compatible = tuple(
+            item for item in comparison_candidates if item in catalog.selection_policies
+        )
+        if len(compatible) == 1:
+            st.info(
+                f"The carried comparison policy `{carried_policy}` has no persisted Phase 6 portfolio. "
+                f"The separately carried compatible comparison candidate `{compatible[0]}` was preserved; "
+                "the candidates were not treated as equivalent."
+            )
+            carried_policy = compatible[0]
+        else:
+            st.info(
+                f"The carried comparison policy `{carried_policy}` has no persisted Phase 6 portfolio. "
+                "That unsupported field was reset; no alternative policy was treated as equivalent."
+            )
+            carried_policy = None
     policy_index = catalog.selection_policies.index(carried_policy) if carried_policy in catalog.selection_policies else 0
+    carried_budget = carried.get("budget") if isinstance(carried, dict) else None
+    carried_horizon = (
+        carried.get("horizon_sessions", carried.get("horizon"))
+        if isinstance(carried, dict)
+        else None
+    )
+    carried_risk = carried.get("risk_policy") if isinstance(carried, dict) else None
+    if carried_budget is not None and carried_budget not in catalog.budgets:
+        st.info(
+            f"The carried budget `{carried_budget}` has no persisted portfolio evidence. "
+            "That unsupported field was reset."
+        )
+    if carried_horizon is not None and carried_horizon not in catalog.horizons:
+        st.info(
+            f"The carried horizon `{carried_horizon}` has no persisted portfolio evidence. "
+            "That unsupported field was reset."
+        )
+    if carried_risk is not None and carried_risk not in catalog.risk_policies:
+        st.info(
+            f"The carried risk policy `{carried_risk}` has no persisted portfolio evidence. "
+            "That unsupported field was reset."
+        )
     controls = st.columns((1.4, .75, .75, 1.35))
     policy = controls[0].selectbox("Selection policy", catalog.selection_policies, index=policy_index, format_func=_label)
-    budget = controls[1].selectbox("Budget", catalog.budgets, format_func=lambda value: f"Top {value}")
-    horizon = controls[2].selectbox("Horizon", catalog.horizons, format_func=lambda value: f"{value} sessions")
-    risk_policy = controls[3].selectbox("Risk-policy variant", catalog.risk_policies, format_func=_label)
+    budget = controls[1].selectbox(
+        "Budget", catalog.budgets,
+        index=catalog.budgets.index(carried_budget) if carried_budget in catalog.budgets else 0,
+        format_func=lambda value: f"Top {value}",
+    )
+    horizon = controls[2].selectbox(
+        "Horizon", catalog.horizons,
+        index=catalog.horizons.index(carried_horizon) if carried_horizon in catalog.horizons else 0,
+        format_func=lambda value: f"{value} sessions",
+    )
+    risk_policy = controls[3].selectbox(
+        "Risk-policy variant", catalog.risk_policies,
+        index=catalog.risk_policies.index(carried_risk) if carried_risk in catalog.risk_policies else 0,
+        format_func=_label,
+    )
+    st.session_state["quantlab_forward_context"] = {
+        "selection_policy": policy,
+        "horizon_sessions": horizon,
+    }
+    if isinstance(carried, dict) and carried.get("candidate_type") == "risk_policy":
+        st.session_state["quantlab_decision_context"] = {
+            "candidate_type": "risk_policy",
+            "candidate": risk_policy,
+        }
+    else:
+        st.session_state["quantlab_decision_context"] = {
+            "candidate_type": "portfolio_configuration",
+            "budget": budget,
+            "horizon_sessions": horizon,
+        }
 
     evidence = select_portfolio_risk_evidence(
         catalog,

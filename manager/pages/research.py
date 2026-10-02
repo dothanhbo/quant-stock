@@ -4,7 +4,8 @@ from collections import defaultdict
 
 from manager.theme import (
     compact_status_label,
-    research_stage_row_html,
+    research_progression_html,
+    summary_panel_html,
     status_badge_row_html,
 )
 from manager.view_models import ResearchViewModel
@@ -58,8 +59,6 @@ def render(model: ResearchViewModel) -> None:
         if candidate_gate_available
         else ()
     )
-    factor_count = len(frontier.factor_decisions)
-    policy_count = len(frontier.policy_decisions)
     latest_artifact = next(
         (item for item in reversed(catalog.artifacts) if item.state is EvidenceState.AVAILABLE),
         None,
@@ -84,50 +83,43 @@ def render(model: ResearchViewModel) -> None:
         "control and also the current Forward selection policy; Forward evidence is not paper execution."
     )
 
-    cards = st.columns(5)
-    cards[0].metric("Deployed paper baseline", model.production.deployed_strategy_identity)
-    cards[0].caption(model.production.active_store)
-    cards[1].metric("Canonical candidates", len(all_decisions))
-    cards[1].caption(f"{factor_count} factors · {policy_count} policies")
-    cards[2].metric(
-        "Latest research stage",
-        latest_artifact.label if latest_artifact is not None else "UNAVAILABLE",
-    )
-    cards[2].caption(
-        f"As of {latest_artifact.as_of if latest_artifact is not None else 'UNKNOWN'}"
-    )
-    cards[3].metric("Production readiness", compact_status_label(frontier.readiness.readiness))
-    cards[3].caption(
-        f"Replacement: {compact_status_label(frontier.production_replacement.decision.value)}"
-    )
-    cards[4].metric(
-        "Open evidence gaps",
-        frontier.readiness.open_gap_count
-        if frontier.readiness.open_gap_count is not None
-        else "UNKNOWN",
-    )
-    cards[4].caption(frontier.readiness.conclusion)
-
-    st.subheader("Research Path")
-    for artifact in catalog.artifacts:
-        st.markdown(
-            research_stage_row_html(
-                name=artifact.label,
-                state=artifact.state.value,
-                as_of=artifact.as_of,
-                detail=artifact.detail,
-            ),
-            unsafe_allow_html=True,
-        )
-    forward_state, forward_as_of, forward_detail = _forward_stage(model)
-    st.markdown(
-        research_stage_row_html(
-            name="Forward Evidence",
-            state=forward_state.value,
-            as_of=forward_as_of,
-            detail=forward_detail,
+    cards = st.columns(3)
+    cards[0].markdown(
+        summary_panel_html(
+            label="Current research frontier",
+            value=latest_artifact.label if latest_artifact is not None else "UNAVAILABLE",
+            detail=f"As of {latest_artifact.as_of if latest_artifact is not None else 'UNKNOWN'} · {len(all_decisions)} canonical candidates",
         ),
         unsafe_allow_html=True,
+    )
+    cards[1].markdown(
+        summary_panel_html(
+            label="Production readiness",
+            value=compact_status_label(frontier.readiness.readiness),
+            detail="Replacement: " + compact_status_label(frontier.production_replacement.decision.value),
+        ),
+        unsafe_allow_html=True,
+    )
+    cards[2].markdown(
+        summary_panel_html(
+            label="Open evidence gaps",
+            value=(frontier.readiness.open_gap_count if frontier.readiness.open_gap_count is not None else "UNKNOWN"),
+            detail=compact_status_label(frontier.readiness.conclusion),
+        ),
+        unsafe_allow_html=True,
+    )
+
+    st.subheader("Research Progression")
+    forward_state, forward_as_of, _forward_detail = _forward_stage(model)
+    st.markdown(
+        research_progression_html(
+            tuple((artifact.label, artifact.state.value, artifact.as_of) for artifact in catalog.artifacts)
+            + (("Forward Evidence", forward_state.value, forward_as_of),)
+        ),
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "AVAILABLE means persisted evidence exists; it does not mean a candidate is approved, promoted, or production-ready."
     )
 
     st.subheader("Candidate Decisions")
@@ -174,12 +166,23 @@ def render(model: ResearchViewModel) -> None:
                     st.markdown(f"**{gap.identifier}** — {gap.state} / {gap.decision}")
                     st.caption(gap.reason)
 
-    st.subheader("Recent Meaningful Change")
     monitoring = catalog.monitoring
-    if monitoring.state is EvidenceState.AVAILABLE:
-        st.info(monitoring.message)
-    else:
-        st.caption(monitoring.message)
+    with st.expander("Recent meaningful change", expanded=False):
+        if monitoring.state is EvidenceState.AVAILABLE:
+            st.info(monitoring.message)
+        else:
+            st.caption(monitoring.message)
+
+    navigation = st.columns(3)
+    if navigation[0].button("Explore factor evidence", type="secondary", width="stretch"):
+        st.session_state["_quant_manager_nav_request"] = "Explore"
+        st.rerun()
+    if navigation[1].button("Compare candidates", type="secondary", width="stretch"):
+        st.session_state["_quant_manager_nav_request"] = "Compare"
+        st.rerun()
+    if navigation[2].button("Open Decision Gate", type="secondary", width="stretch"):
+        st.session_state["_quant_manager_nav_request"] = "Decision Gate"
+        st.rerun()
 
     with st.expander("Provenance and limitations", expanded=False):
         st.markdown("**Canonical artifact evidence**")

@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+from manager.charts import bar_chart, line_chart
+from manager.formatting import (
+    format_fraction_percent,
+    format_ic,
+    format_percent,
+    format_percentage_points,
+    format_temporal_block,
+)
 from manager.theme import compact_status_label, status_badge_row_html
 from manager.view_models import ExploreViewModel
 from quantctl.factor_explore import (
@@ -19,11 +27,35 @@ _OUTCOME_LABELS = {
 def _number(value: float | None, *, percentage: bool = False) -> str:
     if value is None:
         return "UNKNOWN"
-    return f"{value:.2f}%" if percentage else f"{value:.4f}"
+    return format_percent(value) if percentage else format_ic(value)
 
 
 def _rate(value: float | None) -> str:
-    return "UNKNOWN" if value is None else f"{value * 100.0:.2f}%"
+    return "UNKNOWN" if value is None else format_fraction_percent(value)
+
+
+def _temporal_ic_rows(blocks: tuple[object, ...]) -> tuple[dict[str, object], ...]:
+    return tuple(
+        {
+            "Block": format_temporal_block(item.name),
+            "Mean daily rank IC": item.mean_daily_rank_ic,
+        }
+        for item in blocks
+        if item.mean_daily_rank_ic is not None
+    )
+
+
+def _descriptive_temporal_summary(blocks: tuple[object, ...]) -> str:
+    values = tuple(item.mean_daily_rank_ic for item in blocks if item.mean_daily_rank_ic is not None)
+    if not values:
+        return "No persisted calendar block has a defined mean daily rank IC for this context."
+    positive = sum(value > 0 for value in values)
+    negative = sum(value < 0 for value in values)
+    zero = sum(value == 0 for value in values)
+    return (
+        f"Persisted block means: {positive} positive, {negative} negative, {zero} zero; "
+        f"range {min(values):.4f} to {max(values):.4f}. This is descriptive, not a research decision."
+    )
 
 
 def _yes_no_unknown(value: bool | None) -> str:
@@ -62,8 +94,26 @@ def render(model: ExploreViewModel) -> None:
     )
     population = model.catalog.population(population_value)
     assert population is not None
-    factor = context[1].selectbox("Factor / candidate", population.factors)
-    horizon = context[2].selectbox("Horizon", population.horizons, format_func=lambda value: f"{value} sessions")
+    carried = st.session_state.get("quantlab_explore_context", {})
+    carried_factor = carried.get("factor") if isinstance(carried, dict) else None
+    if carried_factor and carried_factor not in population.factors:
+        st.info(
+            f"The carried candidate `{carried_factor}` is unavailable in this evidence population; "
+            "the unsupported candidate field was reset."
+        )
+        carried_factor = None
+    factor = context[1].selectbox(
+        "Factor / candidate",
+        population.factors,
+        index=population.factors.index(carried_factor) if carried_factor in population.factors else 0,
+    )
+    carried_horizon = carried.get("horizon_sessions") if isinstance(carried, dict) else None
+    horizon = context[2].selectbox(
+        "Horizon",
+        population.horizons,
+        index=population.horizons.index(carried_horizon) if carried_horizon in population.horizons else 0,
+        format_func=lambda value: f"{value} sessions",
+    )
     outcome = context[3].selectbox(
         "Outcome",
         population.outcomes,
@@ -99,6 +149,10 @@ def render(model: ExploreViewModel) -> None:
         "outcome": outcome,
         "scope": scope,
     }
+    st.session_state["quantlab_decision_context"] = {
+        "candidate_type": "factor",
+        "candidate": factor,
+    }
     if evidence.state is EvidenceState.UNAVAILABLE or evidence.summary is None:
         st.warning(evidence.detail)
         return
@@ -123,21 +177,31 @@ def render(model: ExploreViewModel) -> None:
     cards[4].metric("Temporal consistency", compact_status_label(temporal_label))
     cards[4].caption("Descriptive consistency across persisted calendar blocks.")
 
-    st.subheader("Temporal Evidence Matrix")
+    st.subheader("Temporal Rank IC")
     if not evidence.blocks:
         st.warning("Temporal block evidence is unavailable for this selection.")
     else:
+        st.altair_chart(
+            bar_chart(
+                _temporal_ic_rows(evidence.blocks),
+                category="Block",
+                value="Mean daily rank IC",
+                y_title="Mean daily rank IC",
+                value_format=".4f",
+            ),
+            width="stretch",
+        )
+        st.info(_descriptive_temporal_summary(evidence.blocks))
+
+    st.subheader("Spread, Incremental and Redundancy Evidence")
+    if evidence.blocks:
         st.dataframe(
             tuple(
                 {
-                    "Block": item.name.replace("_", " ").title(),
-                    "Dates": f"{item.start_date} → {item.end_date}",
-                    "Mean rank IC": _number(item.mean_daily_rank_ic),
-                    "High − low spread": _number(item.high_minus_low_spread),
-                    "IC coverage": _number(item.ic_coverage_pct, percentage=True),
-                    "Spread coverage": _number(item.spread_coverage_pct, percentage=True),
-                    "Direction": item.direction,
-                    "Missing evidence": item.undefined_reason or "—",
+                    "Block": format_temporal_block(item.name),
+                    "High − low spread": format_percentage_points(item.high_minus_low_spread),
+                    "Positive spread-date rate": _rate(item.positive_spread_date_rate),
+                    "Spread coverage": format_percent(item.spread_coverage_pct),
                 }
                 for item in evidence.blocks
             ),
@@ -145,27 +209,11 @@ def render(model: ExploreViewModel) -> None:
             width="stretch",
         )
 
-    st.subheader("Evidence by Horizon")
     horizon_rows = tuple(
         item
         for item in population.summaries
         if item.factor == factor and item.outcome_field == outcome
     )
-    st.dataframe(
-        tuple(
-            {
-                "Horizon": f"{item.horizon_sessions} sessions",
-                "Defined-date coverage": _number(item.ic_coverage_pct, percentage=True),
-                "Mean rank IC": _number(item.mean_daily_rank_ic),
-                "Positive spread-date rate": _rate(item.positive_spread_date_rate),
-                "High − low spread": _number(item.high_minus_low_spread),
-            }
-            for item in horizon_rows
-        ),
-        hide_index=True,
-        width="stretch",
-    )
-
     if st.checkbox("Load persisted daily IC and spread detail", value=False):
         daily = load_daily_factor_evidence(
             model.catalog,
@@ -186,9 +234,29 @@ def render(model: ExploreViewModel) -> None:
                 for item in daily
             )
             st.markdown("**Daily rank IC**")
-            st.line_chart(chart_rows, x="Signal date", y="Rank IC")
-            st.markdown("**Daily high-minus-low spread**")
-            st.bar_chart(chart_rows, x="Signal date", y="High − low spread")
+            st.altair_chart(
+                line_chart(
+                    tuple({"Signal date": row["Signal date"], "Series": "Rank IC", "Value": row["Rank IC"]} for row in chart_rows),
+                    category="Signal date",
+                    series="Series",
+                    value="Value",
+                    y_title="Rank IC",
+                    value_format=".4f",
+                    zero=True,
+                ),
+                width="stretch",
+            )
+            st.markdown("**Daily high-minus-low spread (percentage points)**")
+            st.altair_chart(
+                bar_chart(
+                    chart_rows,
+                    category="Signal date",
+                    value="High − low spread",
+                    y_title="High − low spread (pp)",
+                    value_format=".3f",
+                ),
+                width="stretch",
+            )
 
     evidence_columns = st.columns(2)
     with evidence_columns[0]:
@@ -200,8 +268,8 @@ def render(model: ExploreViewModel) -> None:
                         "Hypothesis": item.hypothesis,
                         "Controls": item.controls,
                         "Partial IC coverage": _number(item.partial_ic_coverage_pct, percentage=True),
-                        "Mean partial rank IC": _number(item.mean_partial_rank_ic),
-                        "Partial − raw IC": _number(item.partial_minus_raw_rank_ic),
+                        "Mean partial rank IC": format_ic(item.mean_partial_rank_ic),
+                        "Partial − raw IC": format_ic(item.partial_minus_raw_rank_ic),
                         "All blocks positive": _yes_no_unknown(item.all_blocks_positive),
                     }
                     for item in evidence.incremental
@@ -218,7 +286,7 @@ def render(model: ExploreViewModel) -> None:
                 tuple(
                     {
                         "Other factor": item.other_factor,
-                        "Correlation": _number(item.correlation),
+                        "Correlation": format_ic(item.correlation),
                         "Coverage": _number(item.correlation_coverage_pct, percentage=True),
                         "Scope": item.scope,
                     }
@@ -229,6 +297,40 @@ def render(model: ExploreViewModel) -> None:
             )
         else:
             st.caption("UNAVAILABLE — no canonical pairwise evidence exists for this selection.")
+
+    with st.expander("Detailed temporal evidence matrix", expanded=False):
+        st.dataframe(
+            tuple(
+                {
+                    "Block": format_temporal_block(item.name),
+                    "Exact dates": f"{item.start_date} → {item.end_date}",
+                    "Mean rank IC": format_ic(item.mean_daily_rank_ic),
+                    "High − low spread": format_percentage_points(item.high_minus_low_spread),
+                    "IC coverage": format_percent(item.ic_coverage_pct),
+                    "Spread coverage": format_percent(item.spread_coverage_pct),
+                    "Direction": item.direction,
+                    "Missing evidence": item.undefined_reason or "—",
+                }
+                for item in evidence.blocks
+            ),
+            hide_index=True,
+            width="stretch",
+        )
+        st.markdown("**Evidence by horizon**")
+        st.dataframe(
+            tuple(
+                {
+                    "Horizon": f"{item.horizon_sessions} sessions",
+                    "Defined-date coverage": format_percent(item.ic_coverage_pct),
+                    "Mean rank IC": format_ic(item.mean_daily_rank_ic),
+                    "Positive spread-date rate": format_fraction_percent(item.positive_spread_date_rate),
+                    "High − low spread": format_percentage_points(item.high_minus_low_spread),
+                }
+                for item in horizon_rows
+            ),
+            hide_index=True,
+            width="stretch",
+        )
 
     with st.expander("Provenance and limitations", expanded=False):
         st.markdown(

@@ -6,27 +6,27 @@ from html import escape
 MANAGER_CSS = """
 <style>
 :root {
-  --qm-ink: #17202b;
-  --qm-muted: #617083;
+  --qm-ink: #172338;
+  --qm-muted: #64748b;
   --qm-line: #d9e0e7;
   --qm-surface: #ffffff;
-  --qm-soft: #f4f6f8;
-  --qm-navy: #172438;
+  --qm-soft: #f5f7fa;
+  --qm-navy: #142338;
   --qm-blue: #2d5f8b;
-  --qm-green: #257052;
-  --qm-amber: #8a5b12;
+  --qm-green: #287a72;
+  --qm-amber: #8a6515;
   --qm-red: #9a3636;
 }
 
-[data-testid="stAppViewContainer"] { background: #f4f6f8; color: var(--qm-ink); }
-[data-testid="stHeader"] { background: rgba(244, 246, 248, .92); }
+[data-testid="stAppViewContainer"] { background: #f5f7fa; color: var(--qm-ink); }
+[data-testid="stHeader"] { background: rgba(245, 247, 250, .94); height: 2rem; }
 [data-testid="stMainBlockContainer"] {
-  max-width: 1180px;
-  padding: 2.15rem 2rem 4rem;
+  max-width: 1220px;
+  padding: 1rem 2rem 3.5rem;
 }
 [data-testid="stMainBlockContainer"] > div { gap: .75rem; }
 
-h1 { font-size: 1.75rem !important; line-height: 1.15 !important; letter-spacing: -.035em; margin-bottom: .1rem !important; }
+h1 { font-size: 1.66rem !important; line-height: 1.15 !important; letter-spacing: -.03em; margin: 0 0 .08rem !important; }
 h2 { font-size: 1.18rem !important; line-height: 1.25 !important; letter-spacing: -.015em; margin: 1.45rem 0 .55rem !important; }
 h3 { font-size: .98rem !important; line-height: 1.3 !important; letter-spacing: -.005em; margin: 1rem 0 .4rem !important; }
 h4 { font-size: .84rem !important; text-transform: uppercase; letter-spacing: .055em; color: var(--qm-muted); }
@@ -60,7 +60,7 @@ hr { border-color: var(--qm-line); margin: 1rem 0; }
 .qm-sidebar-meta__value:last-child { margin-bottom: 0; }
 .qm-nav-label { color: #8fa2b8; font-size: .68rem; text-transform: uppercase; letter-spacing: .11em; margin: 0 0 .35rem; }
 
-.qm-console-mode { border-left: 3px solid #567894; background: #eaf0f5; color: #34485b; padding: .55rem .75rem; font-size: .78rem; margin: .45rem 0 .9rem; }
+.qm-console-mode { border-left: 3px solid #567894; background: #eaf0f5; color: #34485b; padding: .4rem .68rem; font-size: .74rem; margin: .25rem 0 .65rem; }
 
 [data-testid="stMetric"] {
   background: var(--qm-surface);
@@ -94,6 +94,22 @@ hr { border-color: var(--qm-line); margin: 1rem 0; }
 .qm-badge--danger { color: var(--qm-red); border-color: #d9adad; background: #faeeee; }
 .qm-badge--neutral { color: #506071; border-color: #c7d0d9; background: #f3f5f7; }
 .qm-badge__key { color: #6d7885; font-weight: 500; }
+
+.qm-section-kicker { color: var(--qm-muted); font-size: .68rem; font-weight: 700; letter-spacing: .09em; text-transform: uppercase; margin-bottom: .25rem; }
+.qm-decision-panel { border: 1px solid #a9c9c4; border-left: 4px solid #287a72; border-radius: 6px; background: #f2f8f7; padding: .9rem 1rem; min-height: 118px; }
+.qm-decision-panel__label { color: #4d6765; font-size: .68rem; font-weight: 700; letter-spacing: .08em; text-transform: uppercase; }
+.qm-decision-panel__value { color: var(--qm-ink); font-size: 1.3rem; font-weight: 700; line-height: 1.25; margin: .22rem 0; overflow-wrap: anywhere; }
+.qm-decision-panel__detail { color: var(--qm-muted); font-size: .78rem; line-height: 1.4; }
+.qm-summary-panel { border: 1px solid var(--qm-line); border-radius: 6px; background: var(--qm-surface); padding: .75rem .85rem; min-height: 112px; }
+.qm-summary-panel__label { color: var(--qm-muted); font-size: .68rem; font-weight: 700; letter-spacing: .07em; text-transform: uppercase; }
+.qm-summary-panel__value { color: var(--qm-ink); font-size: 1rem; font-weight: 650; line-height: 1.35; margin: .25rem 0; overflow-wrap: anywhere; }
+.qm-summary-panel__detail { color: var(--qm-muted); font-size: .74rem; line-height: 1.38; }
+.qm-progress { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: .5rem; margin: .4rem 0 .9rem; }
+.qm-progress__step { border: 1px solid var(--qm-line); border-top: 3px solid #7791aa; border-radius: 5px; background: var(--qm-surface); padding: .58rem .62rem; min-width: 0; }
+.qm-progress__name { color: var(--qm-ink); font-size: .75rem; font-weight: 650; line-height: 1.3; }
+.qm-progress__state { color: var(--qm-green); font-size: .65rem; font-weight: 700; letter-spacing: .04em; margin-top: .3rem; }
+.qm-progress__date { color: var(--qm-muted); font-size: .64rem; margin-top: .18rem; overflow-wrap: anywhere; }
+@media (max-width: 900px) { .qm-progress { grid-template-columns: 1fr 1fr; } }
 
 .qm-research-stage { display: grid; grid-template-columns: minmax(145px, 1.15fr) auto minmax(100px, .8fr) minmax(220px, 2fr); gap: .65rem; align-items: center; padding: .62rem .72rem; border: 1px solid var(--qm-line); border-radius: 5px; background: var(--qm-surface); margin: .32rem 0; }
 .qm-research-stage__name { font-size: .79rem; font-weight: 650; color: var(--qm-ink); }
@@ -138,9 +154,12 @@ def status_badge_html(value: object, *, label: str | None = None) -> str:
         "WARN", "WARNING", "RUNNING", "STALE_RUNNING", "NOT_STARTED",
         "NOT STARTED", "ENGINEERING_CLOSED_EVIDENCE_PENDING", "PARTIAL",
         "INSUFFICIENT", "INSUFFICIENT_EVIDENCE",
+        "SAMPLE_IMMATURE", "CONTINUITY_GAP",
     }:
         tone = "warning"
-    elif normalized in {"FAIL", "FAILED", "ERROR", "UNAVAILABLE", "UNREADABLE"}:
+    elif normalized in {
+        "FAIL", "FAILED", "ERROR", "UNAVAILABLE", "UNREADABLE", "SCHEMA_INCOMPATIBLE",
+    }:
         tone = "danger"
     else:
         tone = "neutral"
@@ -154,6 +173,40 @@ def status_badge_html(value: object, *, label: str | None = None) -> str:
 def status_badge_row_html(*items: tuple[str, object]) -> str:
     badges = "".join(status_badge_html(value, label=label) for label, value in items)
     return f'<div class="qm-badge-row">{badges}</div>'
+
+
+def summary_panel_html(*, label: str, value: object, detail: str) -> str:
+    return (
+        '<div class="qm-summary-panel">'
+        f'<div class="qm-summary-panel__label">{escape(label)}</div>'
+        f'<div class="qm-summary-panel__value">{escape(str(value))}</div>'
+        f'<div class="qm-summary-panel__detail">{escape(detail)}</div>'
+        '</div>'
+    )
+
+
+def decision_panel_html(*, label: str, value: object, detail: str) -> str:
+    return (
+        '<div class="qm-decision-panel">'
+        f'<div class="qm-decision-panel__label">{escape(label)}</div>'
+        f'<div class="qm-decision-panel__value">{escape(compact_status_label(value))}</div>'
+        f'<div class="qm-decision-panel__detail">{escape(detail)}</div>'
+        '</div>'
+    )
+
+
+def research_progression_html(
+    stages: tuple[tuple[str, object, str | None], ...],
+) -> str:
+    steps = ''.join(
+        '<div class="qm-progress__step">'
+        f'<div class="qm-progress__name">{escape(name)}</div>'
+        f'<div class="qm-progress__state">{escape(compact_status_label(state))}</div>'
+        f'<div class="qm-progress__date">{escape(as_of or "AS OF UNKNOWN")}</div>'
+        '</div>'
+        for name, state, as_of in stages
+    )
+    return f'<div class="qm-progress">{steps}</div>'
 
 
 def research_stage_row_html(

@@ -2,7 +2,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Mapping
+from typing import TYPE_CHECKING, Mapping
 
 from quantctl.commands.doctor import Check, collect_checks, overall_status
 from quantctl.operations import OperationSpec, list_operations, operation_available
@@ -29,6 +29,11 @@ from quantctl.research_status import (
     inspect_research_frontier,
 )
 from quantctl.run_history import HistoryReadError, OperationHistoryStore, RunDetail, history_path
+
+
+if TYPE_CHECKING:
+    from quantctl.decision_gate import DecisionGateCatalog
+    from quantctl.forward_evidence import ForwardEvidenceCatalog
 
 
 @dataclass(frozen=True, slots=True)
@@ -65,6 +70,16 @@ class CompareViewModel:
 @dataclass(frozen=True, slots=True)
 class PortfolioRiskViewModel:
     catalog: PortfolioRiskCatalog
+
+
+@dataclass(frozen=True, slots=True)
+class ForwardEvidenceViewModel:
+    catalog: ForwardEvidenceCatalog
+
+
+@dataclass(frozen=True, slots=True)
+class DecisionGateViewModel:
+    catalog: DecisionGateCatalog
 
 
 @dataclass(frozen=True, slots=True)
@@ -151,6 +166,30 @@ def build_compare_model(*, root: Path = PROJECT_ROOT) -> CompareViewModel:
 
 def build_portfolio_risk_model(*, root: Path = PROJECT_ROOT) -> PortfolioRiskViewModel:
     return PortfolioRiskViewModel(inspect_portfolio_risk_catalog(root=root))
+
+
+def build_forward_evidence_model(
+    *,
+    root: Path = PROJECT_ROOT,
+    environ: Mapping[str, str] | None = None,
+) -> ForwardEvidenceViewModel:
+    from quantctl.forward_evidence import inspect_forward_evidence_catalog
+
+    return ForwardEvidenceViewModel(
+        inspect_forward_evidence_catalog(root=root, environ=environ)
+    )
+
+
+def build_decision_gate_model(
+    *,
+    root: Path = PROJECT_ROOT,
+    environ: Mapping[str, str] | None = None,
+) -> DecisionGateViewModel:
+    from quantctl.decision_gate import inspect_decision_gate_catalog
+
+    return DecisionGateViewModel(
+        inspect_decision_gate_catalog(root=root, environ=environ)
+    )
 
 
 def build_system_model(

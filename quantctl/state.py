@@ -88,6 +88,7 @@ class PaperStoreSnapshot:
     evidence_continuity_state: str = "NOT_STARTED"
     evidence_missing_session_count: int | None = None
     evidence_warnings: tuple[str, ...] = ()
+    evidence_error: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,6 +202,7 @@ def inspect_paper_store(
             "evidence_continuity_state": evidence.continuity_state,
             "evidence_missing_session_count": len(evidence.missing_sessions),
             "evidence_warnings": evidence.warnings,
+            "evidence_error": evidence.error,
         }
         if evidence is not None
         else {}

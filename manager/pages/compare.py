@@ -1,5 +1,13 @@
 from __future__ import annotations
 
+from manager.charts import grouped_bar_chart
+from manager.formatting import (
+    format_fraction_percent,
+    format_ic,
+    format_percent,
+    format_percentage_points,
+    format_temporal_block,
+)
 from manager.theme import compact_status_label, status_badge_row_html
 from manager.view_models import CompareViewModel
 from quantctl.evidence_compare import (
@@ -27,11 +35,40 @@ _POLICY_LABELS = {
 def _number(value: float | None, *, percentage: bool = False) -> str:
     if value is None:
         return "UNKNOWN"
-    return f"{value:.2f}%" if percentage else f"{value:.4f}"
+    return format_percent(value) if percentage else format_ic(value)
 
 
 def _rate(value: float | None) -> str:
-    return "UNKNOWN" if value is None else f"{value * 100.0:.2f}%"
+    return "UNKNOWN" if value is None else format_fraction_percent(value)
+
+
+def _paired_block_chart_rows(
+    comparison: EvidenceComparison,
+    *,
+    metric: str,
+) -> tuple[dict[str, object], ...]:
+    a = comparison.evidence_a
+    b = comparison.evidence_b
+    if a is None or b is None:
+        return ()
+    if metric == "ic":
+        values = lambda item: (item.a_mean_rank_ic, item.b_mean_rank_ic)
+        label = "Mean rank IC"
+    elif metric == "spread":
+        values = lambda item: (item.a_spread, item.b_spread)
+        label = "High − low spread (pp)"
+    else:
+        raise ValueError(f"unsupported paired block metric: {metric}")
+    rows: list[dict[str, object]] = []
+    for item in comparison.blocks:
+        value_a, value_b = values(item)
+        rows.extend(
+            (
+                {"Block": format_temporal_block(item.name), "Candidate": f"A · {a.name}", label: value_a},
+                {"Block": format_temporal_block(item.name), "Candidate": f"B · {b.name}", label: value_b},
+            )
+        )
+    return tuple(rows)
 
 
 def _scope_label(value: str) -> str:
@@ -135,44 +172,54 @@ def _render_comparison(comparison: EvidenceComparison) -> None:
     _paired_card(cards[3], "Temporal support", compact_status_label(a.temporal_support), compact_status_label(b.temporal_support), a.name, b.name)
     _paired_card(cards[4], "Defined-date coverage", _number(a.defined_date_coverage_pct, percentage=True), _number(b.defined_date_coverage_pct, percentage=True), a.name, b.name)
 
-    st.subheader("Comparable Evidence Matrix")
-    st.dataframe(_paired_rows(comparison), hide_index=True, width="stretch")
-
     if comparison.blocks:
-        st.subheader("Paired Temporal Blocks")
+        st.subheader("Paired Temporal Evidence")
         block_rows = tuple(
             {
-                "Block": item.name.replace("_", " ").title(),
-                f"{a.name} mean rank IC": item.a_mean_rank_ic,
-                f"{b.name} mean rank IC": item.b_mean_rank_ic,
-                f"{a.name} spread": item.a_spread,
-                f"{b.name} spread": item.b_spread,
-                f"{a.name} coverage": item.a_coverage_pct,
-                f"{b.name} coverage": item.b_coverage_pct,
+                "Block": format_temporal_block(item.name),
+                f"{a.name} mean rank IC": format_ic(item.a_mean_rank_ic),
+                f"{b.name} mean rank IC": format_ic(item.b_mean_rank_ic),
+                f"{a.name} spread": format_percentage_points(item.a_spread),
+                f"{b.name} spread": format_percentage_points(item.b_spread),
+                f"{a.name} coverage": format_percent(item.a_coverage_pct),
+                f"{b.name} coverage": format_percent(item.b_coverage_pct),
             }
             for item in comparison.blocks
         )
-        st.dataframe(block_rows, hide_index=True, width="stretch")
         charts = st.columns(2)
         with charts[0]:
-            st.markdown("**Mean rank IC by block**")
-            st.bar_chart(
-                tuple({"Block": row["Block"], "A": row[f"{a.name} mean rank IC"], "B": row[f"{b.name} mean rank IC"]} for row in block_rows),
-                x="Block",
-                y=("A", "B"),
+            st.markdown("**Mean daily rank IC by calendar block**")
+            st.altair_chart(
+                grouped_bar_chart(
+                    _paired_block_chart_rows(comparison, metric="ic"),
+                    category="Block",
+                    series="Candidate",
+                    value="Mean rank IC",
+                    y_title="Mean rank IC",
+                    value_format=".4f",
+                ),
+                width="stretch",
             )
         with charts[1]:
-            st.markdown("**High-minus-low spread by block**")
-            st.bar_chart(
-                tuple({"Block": row["Block"], "A": row[f"{a.name} spread"], "B": row[f"{b.name} spread"]} for row in block_rows),
-                x="Block",
-                y=("A", "B"),
+            st.markdown("**High-minus-low outcome spread by calendar block (pp)**")
+            st.altair_chart(
+                grouped_bar_chart(
+                    _paired_block_chart_rows(comparison, metric="spread"),
+                    category="Block",
+                    series="Candidate",
+                    value="High − low spread (pp)",
+                    y_title="High − low spread (pp)",
+                    value_format=".3f",
+                ),
+                width="stretch",
             )
+        with st.expander("Detailed paired block values and coverage", expanded=False):
+            st.dataframe(block_rows, hide_index=True, width="stretch")
 
     st.subheader("Descriptive Differences")
     if comparison.descriptive_differences:
         for item in comparison.descriptive_differences:
-            st.info(item)
+            st.caption(item)
     else:
         st.caption("No descriptive difference is available for the persisted metrics.")
     if comparison.incremental_notes:
@@ -222,6 +269,9 @@ def _render_comparison(comparison: EvidenceComparison) -> None:
         )
     else:
         st.caption("Turnover comparison is unavailable for this pair.")
+
+    with st.expander("Comparable evidence dimensions", expanded=False):
+        st.dataframe(_paired_rows(comparison), hide_index=True, width="stretch")
 
     st.caption("Cost sensitivity: UNAVAILABLE — no compatible persisted cost contrast exists.")
     st.caption("Portfolio consequence: UNAVAILABLE — no compatible persisted portfolio contrast exists.")
@@ -323,6 +373,10 @@ def render(model: CompareViewModel) -> None:
             outcome_b=outcome,
             temporal_scope=scope,
         )
+        st.session_state["quantlab_decision_context"] = {
+            "candidate_type": "factor",
+            "candidate": factor_a,
+        }
     else:
         source = model.catalog.policies
         if source.state is ComparisonState.UNAVAILABLE or not source.supported_pairs:
@@ -331,7 +385,13 @@ def render(model: CompareViewModel) -> None:
             return
         controls = st.columns((1.2, 1.2, .7, 1.15, 1.15))
         candidates_a = tuple(dict.fromkeys(item[0] for item in source.supported_pairs))
-        policy_a = controls[0].selectbox("Candidate A", candidates_a, format_func=_policy_label)
+        preferred_policy = carried.get("selection_policy") if isinstance(carried, dict) else None
+        policy_a = controls[0].selectbox(
+            "Candidate A",
+            candidates_a,
+            index=_default_index(candidates_a, preferred_policy),
+            format_func=_policy_label,
+        )
         candidates_b = tuple(item[1] for item in source.supported_pairs if item[0] == policy_a)
         policy_b = controls[1].selectbox("Candidate B", candidates_b, format_func=_policy_label)
         compatible_contrasts = tuple(
@@ -362,6 +422,13 @@ def render(model: CompareViewModel) -> None:
             outcome_b=outcome,
             temporal_scope=scope,
         )
-        st.session_state["quantlab_portfolio_context"] = {"selection_policy": policy_a}
+        st.session_state["quantlab_portfolio_context"] = {
+            "selection_policy": policy_a,
+            "comparison_candidates": (policy_a, policy_b),
+        }
+        st.session_state["quantlab_decision_context"] = {
+            "candidate_type": "selection_policy",
+            "candidate": policy_a,
+        }
 
     _render_comparison(comparison)
