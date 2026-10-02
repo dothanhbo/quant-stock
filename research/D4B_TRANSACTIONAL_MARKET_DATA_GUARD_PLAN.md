@@ -81,3 +81,76 @@ Production protection is active only after every provider ingestion entry point
 uses `commit_price_batch`, direct calls to the legacy writer are prevented, the
 maintenance paths have explicit audited semantics, and transaction-level tests
 prove that no non-PASS candidate can alter persisted prices.
+
+## D4B1 foundation implemented (not activated)
+
+`quantlab.transactional_market_data` now provides an isolated
+`PreparedPriceBatch`, D4B1 schema initializer, and `commit_price_batch()` for an
+explicit SQLite connection or path. No production module imports it.
+
+The transaction invariants are:
+
+- `BEGIN IMMEDIATE` precedes the receipt lookup, persisted-anchor read, guard
+  evaluation, or mutation.
+- An operation id may identify exactly one deterministic batch fingerprint.
+  An identical retry returns its stored result; a different fingerprint raises
+  an explicit conflict inside the reserved transaction.
+- A non-PASS guard decision commits one durable reason-coded rejection receipt
+  and writes no manifest, price, or price-provenance link.
+- A PASS writes its receipt, manifest, complete price batch, and current-row
+  provenance links in one transaction. Any exception before commit rolls all of
+  them back.
+- An existing price is treated as verified only when its current provenance
+  link resolves to a manifest whose source, price unit, and adjustment basis are
+  all explicitly verified. Rows without that link remain legacy/unverified.
+- A claimed adjustment basis with unknown verification state is retained in the
+  batch fingerprint but is presented to D4A as unknown. It cannot self-certify.
+- A normalized candidate hash is always identified as normalized content. It is
+  never stored as a raw-payload hash. `raw_payload_sha256` is populated only
+  when an archive identity explicitly describes original provider payload.
+
+PASS remains a batch-integrity/write decision. It does not assert prospective
+label eligibility and does not retrofit verification onto historical rows.
+
+## Archive and SQLite crash consistency
+
+Filesystem archives and SQLite are not one atomic commit. A production archive
+adapter must use this order:
+
+1. Write provider bytes to a same-filesystem temporary archive object without
+   labelling a normalized DataFrame as the raw response.
+2. Flush the file and containing directory as supported, calculate SHA-256 from
+   the staged bytes, verify it, and atomically rename to a content-addressed,
+   immutable final name.
+3. Only then construct `ImmutableArchiveIdentity` and `PreparedPriceBatch` and
+   call `commit_price_batch()` using the verified final reference and hash.
+4. If SQLite fails or rejects the candidate, the archive is an intentional
+   orphan, not evidence of a committed ingestion. A retry with the same
+   operation id and fingerprint reuses that exact archive identity.
+5. An orphan collector may remove only archives absent from committed manifests
+   and older than a configured retention period. Unknown, partially staged, or
+   hash-mismatched objects are quarantined rather than attached or deleted.
+
+SQLite never attempts to roll back, rename, or delete an external archive. A
+manifest is authoritative only after its SQLite transaction commits.
+
+## Minimum D4B2 activation gate
+
+1. Add an archive adapter that implements and tests the archive-first protocol,
+   or explicitly operate without a raw archive while leaving raw provenance
+   null.
+2. Add a reviewed schema migration and backup/restore rehearsal for the D4B1
+   tables; do not initialize them opportunistically during ingestion.
+3. Build one DataFrame-to-`PreparedPriceBatch` adapter that records the
+   normalized DataFrame as normalized content only and leaves unsupported KBS
+   source/adjustment claims unknown.
+4. Migrate `update_symbol()` and `backfill_symbol()` together to that adapter and
+   transactional writer, with explicit statuses for BLOCK,
+   INSUFFICIENT_EVIDENCE, operation conflict, and retryable transport failure.
+5. Disable direct production use of `save_price_data()` only after both paths
+   migrate. Until then it remains a known bypass.
+6. Put `cleanup_price_duplicates()` and `quarantine_invalid_ohlc.py --apply`
+   behind separate audited, atomic maintenance contracts. They must never emit
+   ingestion manifests or upgrade legacy provenance.
+7. Run temporary-clone migration/rollback and concurrent-writer tests before any
+   canonical-database activation. Canonical history stays `LEGACY_UNVERIFIED`.
