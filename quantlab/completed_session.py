@@ -23,6 +23,12 @@ class CalendarSessionStatus(str, Enum):
     UNKNOWN = "UNKNOWN"
 
 
+class SymbolSessionStatus(str, Enum):
+    TRADING_CONFIRMED = "TRADING_CONFIRMED"
+    NOT_TRADING = "NOT_TRADING"
+    UNKNOWN = "UNKNOWN"
+
+
 class CompletedSessionDecision(str, Enum):
     ADMITTED = "ADMITTED"
     UNRESOLVED = "UNRESOLVED"
@@ -35,6 +41,11 @@ class CompletedSessionReason(str, Enum):
     CALENDAR_EVIDENCE_MISSING = "CALENDAR_EVIDENCE_MISSING"
     CALENDAR_ATTRIBUTION_INCOMPLETE = "CALENDAR_ATTRIBUTION_INCOMPLETE"
     CALENDAR_SESSION_UNRESOLVED = "CALENDAR_SESSION_UNRESOLVED"
+    SYMBOL_SESSION_EVIDENCE_MISSING = "SYMBOL_SESSION_EVIDENCE_MISSING"
+    SYMBOL_SESSION_ATTRIBUTION_INCOMPLETE = "SYMBOL_SESSION_ATTRIBUTION_INCOMPLETE"
+    SYMBOL_SESSION_IDENTITY_MISMATCH = "SYMBOL_SESSION_IDENTITY_MISMATCH"
+    SYMBOL_NOT_TRADING = "SYMBOL_NOT_TRADING"
+    SYMBOL_SESSION_UNKNOWN = "SYMBOL_SESSION_UNKNOWN"
     SESSION_NOT_COMPLETED = "SESSION_NOT_COMPLETED"
     NON_SESSION = "NON_SESSION"
     EXCEPTIONAL_CLOSURE = "EXCEPTIONAL_CLOSURE"
@@ -129,6 +140,32 @@ class CalendarSessionEvidence:
 
 
 @dataclass(frozen=True, slots=True)
+class SymbolSessionEvidence:
+    symbol: str
+    venue: str
+    target_session: date
+    status: SymbolSessionStatus
+    source_identity: str
+    snapshot_identity: str
+    source_references: tuple[str, ...]
+
+    def __post_init__(self) -> None:
+        if not isinstance(self.target_session, date) or isinstance(self.target_session, datetime):
+            raise ValueError("symbol target session must be a date")
+        if not isinstance(self.status, SymbolSessionStatus):
+            raise ValueError("symbol-session status must be a SymbolSessionStatus")
+        object.__setattr__(self, "symbol", _text(self.symbol, "symbol").upper())
+        object.__setattr__(self, "venue", _text(self.venue, "venue").upper())
+        object.__setattr__(self, "source_identity", _text(self.source_identity, "symbol-session source identity"))
+        object.__setattr__(self, "snapshot_identity", _text(self.snapshot_identity, "symbol-session snapshot identity"))
+        object.__setattr__(self, "source_references", _references(self.source_references))
+
+    @property
+    def attributable(self) -> bool:
+        return bool(self.source_references)
+
+
+@dataclass(frozen=True, slots=True)
 class ProviderPublicationObservation:
     provider_identity: str
     symbol: str
@@ -201,6 +238,10 @@ class CompletedSessionResult:
     calendar_identity: str | None
     calendar_version: str | None
     calendar_snapshot_reference: str | None
+    symbol_session_status: SymbolSessionStatus | None
+    symbol_session_source_identity: str | None
+    symbol_session_snapshot_identity: str | None
+    symbol_session_source_references: tuple[str, ...]
     publication_policy_identity: str
     observation_timestamps: tuple[str, ...]
     normalized_row_fingerprints: tuple[str, ...]
@@ -221,6 +262,12 @@ class CompletedSessionResult:
             "calendar_identity": self.calendar_identity,
             "calendar_version": self.calendar_version,
             "calendar_snapshot_reference": self.calendar_snapshot_reference,
+            "symbol_session": None if self.symbol_session_status is None else {
+                "status": self.symbol_session_status.value,
+                "source_identity": self.symbol_session_source_identity,
+                "snapshot_identity": self.symbol_session_snapshot_identity,
+                "source_references": self.symbol_session_source_references,
+            },
             "publication_policy_identity": self.publication_policy_identity,
             "observation_timestamps": self.observation_timestamps,
             "normalized_row_fingerprints": self.normalized_row_fingerprints,
@@ -236,6 +283,7 @@ def _result(
     provider_identity: str,
     target_session: date,
     calendar: CalendarSessionEvidence | None,
+    symbol_session: SymbolSessionEvidence | None,
     observations: Sequence[ProviderPublicationObservation],
     policy: PublicationDelayPolicy,
     evidence_payload: dict[str, object],
@@ -250,6 +298,10 @@ def _result(
         None if calendar is None else calendar.calendar_identity,
         None if calendar is None else calendar.calendar_version,
         None if calendar is None else calendar.snapshot_reference,
+        None if symbol_session is None else symbol_session.status,
+        None if symbol_session is None else symbol_session.source_identity,
+        None if symbol_session is None else symbol_session.snapshot_identity,
+        () if symbol_session is None else symbol_session.source_references,
         policy.policy_identity,
         tuple(item.observed_at.isoformat().replace("+00:00", "Z") for item in observations),
         tuple(item.normalized_row_fingerprint for item in observations),
@@ -263,6 +315,7 @@ def evaluate_completed_session(
     provider_identity: str,
     target_session: date,
     calendar: CalendarSessionEvidence | None,
+    symbol_session: SymbolSessionEvidence | None,
     observations: Sequence[ProviderPublicationObservation],
     publication_delay_policy: PublicationDelayPolicy,
     completion_watermark: ProviderCompletionWatermark | None = None,
@@ -274,7 +327,7 @@ def evaluate_completed_session(
         raise ValueError("target session must be a date")
     observations = tuple(sorted(observations, key=lambda item: item.observed_at))
     evidence_payload = {
-        "contract": "completed-session/v1",
+        "contract": "completed-session/v2",
         "symbol": symbol,
         "provider_identity": provider_identity,
         "target_session": target_session.isoformat(),
@@ -286,6 +339,15 @@ def evaluate_completed_session(
             "target_session": calendar.target_session.isoformat(),
             "status": calendar.status.value,
             "references": calendar.source_references,
+        },
+        "symbol_session": None if symbol_session is None else {
+            "symbol": symbol_session.symbol,
+            "venue": symbol_session.venue,
+            "target_session": symbol_session.target_session.isoformat(),
+            "status": symbol_session.status.value,
+            "source_identity": symbol_session.source_identity,
+            "snapshot_identity": symbol_session.snapshot_identity,
+            "references": symbol_session.source_references,
         },
         "observations": [
             {
@@ -321,6 +383,7 @@ def evaluate_completed_session(
             provider_identity=provider_identity,
             target_session=target_session,
             calendar=calendar,
+            symbol_session=symbol_session,
             observations=observations,
             policy=publication_delay_policy,
             evidence_payload=evidence_payload,
@@ -340,6 +403,36 @@ def evaluate_completed_session(
         return finish(CompletedSessionDecision.UNRESOLVED, CompletedSessionReason.SESSION_NOT_COMPLETED)
     if calendar.status is CalendarSessionStatus.UNKNOWN:
         return finish(CompletedSessionDecision.UNRESOLVED, CompletedSessionReason.CALENDAR_SESSION_UNRESOLVED)
+
+    if symbol_session is None:
+        return finish(
+            CompletedSessionDecision.UNRESOLVED,
+            CompletedSessionReason.SYMBOL_SESSION_EVIDENCE_MISSING,
+        )
+    if (
+        symbol_session.symbol != symbol
+        or symbol_session.venue != calendar.venue
+        or symbol_session.target_session != target_session
+    ):
+        return finish(
+            CompletedSessionDecision.REJECTED,
+            CompletedSessionReason.SYMBOL_SESSION_IDENTITY_MISMATCH,
+        )
+    if not symbol_session.attributable:
+        return finish(
+            CompletedSessionDecision.UNRESOLVED,
+            CompletedSessionReason.SYMBOL_SESSION_ATTRIBUTION_INCOMPLETE,
+        )
+    if symbol_session.status is SymbolSessionStatus.NOT_TRADING:
+        return finish(
+            CompletedSessionDecision.REJECTED,
+            CompletedSessionReason.SYMBOL_NOT_TRADING,
+        )
+    if symbol_session.status is SymbolSessionStatus.UNKNOWN:
+        return finish(
+            CompletedSessionDecision.UNRESOLVED,
+            CompletedSessionReason.SYMBOL_SESSION_UNKNOWN,
+        )
 
     if not observations:
         return finish(CompletedSessionDecision.UNRESOLVED, CompletedSessionReason.PROVIDER_OBSERVATIONS_MISSING)
@@ -400,6 +493,8 @@ __all__ = [
     "ProviderCompletionWatermark",
     "ProviderPublicationObservation",
     "PublicationDelayPolicy",
+    "SymbolSessionEvidence",
+    "SymbolSessionStatus",
     "evaluate_completed_session",
     "normalized_price_row_fingerprint",
 ]

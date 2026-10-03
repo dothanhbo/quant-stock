@@ -15,6 +15,8 @@ from quantlab.completed_session import (
     ProviderCompletionWatermark,
     ProviderPublicationObservation,
     PublicationDelayPolicy,
+    SymbolSessionEvidence,
+    SymbolSessionStatus,
     evaluate_completed_session,
     normalized_price_row_fingerprint,
 )
@@ -23,6 +25,7 @@ from quantlab.operational_admission import (
     IngestionIntent,
     OPERATIONAL_ONLY,
     OperationalAdmission,
+    OperationalReason,
     ShadowDailyStatus,
     SymbolIdentityState,
     shadow_daily_status,
@@ -124,6 +127,7 @@ def _batch(
     intent: IngestionIntent = IngestionIntent.INCREMENTAL_UPDATE,
     coverage_state: CoverageState = CoverageState.VERIFIED_COMPLETE,
     identity_state: SymbolIdentityState = SymbolIdentityState.CONSISTENT_REQUEST_SYMBOL,
+    symbol_session_status: SymbolSessionStatus = SymbolSessionStatus.TRADING_CONFIRMED,
 ):
     candidate = _frame(days) if frame is None else frame
     start = START + timedelta(days=min(days))
@@ -159,6 +163,15 @@ def _batch(
             end,
             CalendarSessionStatus.OPEN_COMPLETED,
             ("fixture://calendar/source",),
+        ),
+        symbol_session=SymbolSessionEvidence(
+            "AAA",
+            "HOSE",
+            end,
+            symbol_session_status,
+            "synthetic-symbol-session-register",
+            "fixture-symbol-session-v1",
+            ("fixture://symbol-session/source",),
         ),
         observations=(ProviderPublicationObservation(
             "KBS",
@@ -241,6 +254,65 @@ def test_ordinary_unknown_adjustment_kbs_update_is_operationally_admitted(tmp_pa
     assert result.rows_written == 1
     assert shadow_daily_status(result.operational_result) is ShadowDailyStatus.OPERATIONAL_APPEND_ACCEPTED
     assert len(_prices(path)) == 5
+
+
+@pytest.mark.parametrize(
+    ("symbol_status", "operational_reason"),
+    (
+        (
+            SymbolSessionStatus.NOT_TRADING,
+            OperationalReason.SYMBOL_SESSION_NOT_TRADING,
+        ),
+        (
+            SymbolSessionStatus.UNKNOWN,
+            OperationalReason.SYMBOL_SESSION_UNKNOWN,
+        ),
+    ),
+)
+def test_symbol_session_failure_is_durable_and_precedes_price_mutation(
+    tmp_path: Path,
+    symbol_status: SymbolSessionStatus,
+    operational_reason: OperationalReason,
+) -> None:
+    path = _database(tmp_path)
+    before = _prices(path)
+
+    result = commit_price_batch_shadow(
+        path,
+        _batch("symbol-session-blocked", symbol_session_status=symbol_status),
+    )
+
+    assert result.status is ReceiptStatus.REJECTED
+    assert result.rows_written == 0
+    assert operational_reason in result.operational_result.reasons
+    assert _prices(path) == before
+    with sqlite3.connect(path) as connection:
+        persisted = connection.execute(
+            """
+            SELECT completed_session_result_json, operational_result_json
+            FROM market_ingestion_receipts
+            WHERE operation_id=?
+            """,
+            (result.operation_id,),
+        ).fetchone()
+    assert persisted is not None
+    assert symbol_status.value in persisted[0]
+    assert "synthetic-symbol-session-register" in persisted[0]
+    assert "fixture-symbol-session-v1" in persisted[0]
+    assert "fixture://symbol-session/source" in persisted[0]
+    assert operational_reason.value in persisted[1]
+
+
+def test_multi_session_append_requires_symbol_evidence_for_each_new_date(tmp_path: Path) -> None:
+    path = _database(tmp_path)
+    before = _prices(path)
+
+    result = commit_price_batch_shadow(path, _batch("multi-session", days=(2, 3, 4, 5)))
+
+    assert result.status is ReceiptStatus.REJECTED
+    assert result.rows_written == 0
+    assert OperationalReason.SYMBOL_SESSION_COVERAGE_MISSING in result.operational_result.reasons
+    assert _prices(path) == before
 
 
 def test_operational_append_never_rewrites_overlap_rows_or_links(tmp_path: Path) -> None:

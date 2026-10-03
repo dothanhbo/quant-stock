@@ -16,6 +16,8 @@ from quantlab.completed_session import (
     ProviderCompletionWatermark,
     ProviderPublicationObservation,
     PublicationDelayPolicy,
+    SymbolSessionEvidence,
+    SymbolSessionStatus,
     evaluate_completed_session,
     normalized_price_row_fingerprint,
 )
@@ -42,6 +44,7 @@ SESSION = date(2026, 9, 5)
 OBSERVED = datetime(2026, 9, 5, 10, 0, tzinfo=timezone.utc)
 FINGERPRINT_A = "a" * 64
 FINGERPRINT_B = "b" * 64
+_DEFAULT_SYMBOL_SESSION = object()
 
 
 def _calendar(status: CalendarSessionStatus = CalendarSessionStatus.OPEN_COMPLETED):
@@ -61,6 +64,20 @@ def _policy() -> PublicationDelayPolicy:
         "approved-delay-fixture",
         timedelta(minutes=30),
         ("fixture://policy/publication-delay",),
+    )
+
+
+def _symbol_session(
+    status: SymbolSessionStatus = SymbolSessionStatus.TRADING_CONFIRMED,
+) -> SymbolSessionEvidence:
+    return SymbolSessionEvidence(
+        "AAA",
+        "HOSE",
+        SESSION,
+        status,
+        "synthetic-symbol-session-register",
+        "fixture-symbol-session-v1",
+        ("fixture://symbol-session/source",),
     )
 
 
@@ -96,12 +113,18 @@ def _evaluate(
     calendar: CalendarSessionEvidence | None = None,
     observations: tuple[ProviderPublicationObservation, ...] = (),
     watermark: ProviderCompletionWatermark | None = None,
+    symbol_session: SymbolSessionEvidence | None | object = _DEFAULT_SYMBOL_SESSION,
 ):
     return evaluate_completed_session(
         symbol="AAA",
         provider_identity="KBS",
         target_session=SESSION,
         calendar=_calendar() if calendar is None else calendar,
+        symbol_session=(
+            _symbol_session()
+            if symbol_session is _DEFAULT_SYMBOL_SESSION
+            else symbol_session
+        ),
         observations=observations,
         publication_delay_policy=_policy(),
         completion_watermark=watermark,
@@ -138,12 +161,160 @@ def test_missing_calendar_evidence_is_unresolved() -> None:
         provider_identity="KBS",
         target_session=SESSION,
         calendar=None,
+        symbol_session=_symbol_session(),
         observations=(_observation(),),
         publication_delay_policy=_policy(),
         completion_watermark=_watermark(),
     )
     assert result.decision is CompletedSessionDecision.UNRESOLVED
     assert CompletedSessionReason.CALENDAR_EVIDENCE_MISSING in result.reasons
+
+
+def test_missing_symbol_session_evidence_fails_closed() -> None:
+    result = _evaluate(
+        symbol_session=None,
+        observations=(_observation(),),
+        watermark=_watermark(),
+    )
+    assert result.decision is CompletedSessionDecision.UNRESOLVED
+    assert CompletedSessionReason.SYMBOL_SESSION_EVIDENCE_MISSING in result.reasons
+
+
+def test_unattributed_symbol_session_evidence_fails_closed() -> None:
+    evidence = SymbolSessionEvidence(
+        "AAA",
+        "HOSE",
+        SESSION,
+        SymbolSessionStatus.TRADING_CONFIRMED,
+        "synthetic-symbol-session-register",
+        "fixture-symbol-session-v1",
+        (),
+    )
+    result = _evaluate(
+        symbol_session=evidence,
+        observations=(_observation(),),
+        watermark=_watermark(),
+    )
+    assert result.decision is CompletedSessionDecision.UNRESOLVED
+    assert CompletedSessionReason.SYMBOL_SESSION_ATTRIBUTION_INCOMPLETE in result.reasons
+
+
+@pytest.mark.parametrize(
+    "evidence",
+    (
+        SymbolSessionEvidence(
+            "BBB", "HOSE", SESSION, SymbolSessionStatus.TRADING_CONFIRMED,
+            "fixture-register", "fixture-v1", ("fixture://symbol-session/source",),
+        ),
+        SymbolSessionEvidence(
+            "AAA", "HNX", SESSION, SymbolSessionStatus.TRADING_CONFIRMED,
+            "fixture-register", "fixture-v1", ("fixture://symbol-session/source",),
+        ),
+        SymbolSessionEvidence(
+            "AAA", "HOSE", SESSION - timedelta(days=1), SymbolSessionStatus.TRADING_CONFIRMED,
+            "fixture-register", "fixture-v1", ("fixture://symbol-session/source",),
+        ),
+    ),
+)
+def test_symbol_session_identity_mismatch_is_rejected(evidence: SymbolSessionEvidence) -> None:
+    result = _evaluate(
+        symbol_session=evidence,
+        observations=(_observation(),),
+        watermark=_watermark(),
+    )
+    assert result.decision is CompletedSessionDecision.REJECTED
+    assert CompletedSessionReason.SYMBOL_SESSION_IDENTITY_MISMATCH in result.reasons
+
+
+CTR_GAP_SESSIONS = (
+    date(2022, 2, 16),
+    date(2022, 2, 17),
+    date(2022, 2, 18),
+    date(2022, 2, 21),
+    date(2022, 2, 22),
+)
+CTR_OBSERVED = datetime(2022, 2, 17, 3, 0, tzinfo=timezone.utc)
+CTR_REPORT_SHA256 = "d1be19fc9374485494c7878a54c5e1442a16ecc5b0139ea526ecbe2fad51e035"
+CTR_REPORT_REFERENCE = "research/data_integrity_audit/CTR_FEB2022_INCIDENT_REVIEW.md"
+
+
+def _ctr_gap_result(
+    status: SymbolSessionStatus,
+    *,
+    session: date = CTR_GAP_SESSIONS[0],
+    observations: bool = True,
+):
+    provider_observations = ()
+    if observations:
+        provider_observations = (
+            ProviderPublicationObservation(
+                "KBS",
+                "CTR",
+                session,
+                CTR_OBSERVED,
+                FINGERPRINT_A,
+                True,
+                ("fixture://ctr/persisted-row/first",),
+            ),
+            ProviderPublicationObservation(
+                "KBS",
+                "CTR",
+                session,
+                CTR_OBSERVED + timedelta(minutes=30),
+                FINGERPRINT_A,
+                True,
+                ("fixture://ctr/persisted-row/repeated",),
+            ),
+        )
+    return evaluate_completed_session(
+        symbol="CTR",
+        provider_identity="KBS",
+        target_session=session,
+        calendar=CalendarSessionEvidence(
+            "HOSE",
+            "official-venue-calendar-fixture",
+            "historical-snapshot-2022-02",
+            f"fixture://calendar/{session.isoformat()}",
+            session,
+            CalendarSessionStatus.OPEN_COMPLETED,
+            ("fixture://attributed/venue-calendar",),
+        ),
+        symbol_session=SymbolSessionEvidence(
+            "CTR",
+            "HOSE",
+            session,
+            status,
+            "CTR_FEB2022_INCIDENT_REVIEW",
+            CTR_REPORT_SHA256,
+            (CTR_REPORT_REFERENCE,),
+        ),
+        observations=provider_observations,
+        publication_delay_policy=_policy(),
+    )
+
+
+@pytest.mark.parametrize("session", CTR_GAP_SESSIONS)
+def test_ctr_transfer_gap_cannot_be_admitted_as_observed_trading_session(
+    session: date,
+) -> None:
+    result = _ctr_gap_result(SymbolSessionStatus.NOT_TRADING, session=session)
+    assert result.decision is CompletedSessionDecision.REJECTED
+    assert CompletedSessionReason.SYMBOL_NOT_TRADING in result.reasons
+    assert CompletedSessionReason.COMPLETED_SESSION_ESTABLISHED_BY_STABLE_OBSERVATIONS not in result.reasons
+
+
+def test_ctr_repeated_tuple_cannot_override_unknown_symbol_session() -> None:
+    result = _ctr_gap_result(SymbolSessionStatus.UNKNOWN)
+    assert result.decision is CompletedSessionDecision.UNRESOLVED
+    assert CompletedSessionReason.SYMBOL_SESSION_UNKNOWN in result.reasons
+    assert CompletedSessionReason.COMPLETED_SESSION_ESTABLISHED_BY_STABLE_OBSERVATIONS not in result.reasons
+
+
+def test_confirmed_symbol_session_passes_to_independent_publication_gate() -> None:
+    result = _ctr_gap_result(SymbolSessionStatus.TRADING_CONFIRMED, observations=False)
+    assert result.decision is CompletedSessionDecision.UNRESOLVED
+    assert result.reasons == (CompletedSessionReason.PROVIDER_OBSERVATIONS_MISSING,)
+    assert result.symbol_session_status is SymbolSessionStatus.TRADING_CONFIRMED
 
 
 def test_missing_watermark_and_single_observation_is_unresolved() -> None:

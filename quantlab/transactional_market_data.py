@@ -22,7 +22,11 @@ import shutil
 import sqlite3
 from typing import Any, Iterator
 
-from quantlab.completed_session import CompletedSessionDecision, CompletedSessionResult
+from quantlab.completed_session import (
+    CompletedSessionDecision,
+    CompletedSessionResult,
+    SymbolSessionStatus,
+)
 from quantlab.market_data_operation_identity import (
     OperationIdentityAllocation,
     OperationIdentityConflict,
@@ -228,6 +232,10 @@ class PreparedPriceBatch:
             if completed.target_session > self.requested_end:
                 raise ValueError("completed-session target falls outside the prepared request")
             if completed.decision is CompletedSessionDecision.ADMITTED:
+                if completed.symbol_session_status is not SymbolSessionStatus.TRADING_CONFIRMED:
+                    raise ValueError(
+                        "admitted completed session requires confirmed symbol-session evidence"
+                    )
                 target_rows = tuple(row for row in rows if row.session == completed.target_session)
                 if len(target_rows) != 1:
                     raise ValueError("admitted completed session requires exactly one target row")

@@ -7,7 +7,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
-from quantlab.completed_session import CompletedSessionDecision
+from quantlab.completed_session import CompletedSessionDecision, CompletedSessionReason
 from quantlab.preupdate_market_data_guard import (
     GuardDecision,
     GuardReason,
@@ -64,6 +64,11 @@ class OperationalReason(str, Enum):
     COMPLETED_SESSION_EVIDENCE_MISSING = "COMPLETED_SESSION_EVIDENCE_MISSING"
     COMPLETED_SESSION_UNRESOLVED = "COMPLETED_SESSION_UNRESOLVED"
     COMPLETED_SESSION_REJECTED = "COMPLETED_SESSION_REJECTED"
+    SYMBOL_SESSION_EVIDENCE_MISSING = "SYMBOL_SESSION_EVIDENCE_MISSING"
+    SYMBOL_SESSION_COVERAGE_MISSING = "SYMBOL_SESSION_COVERAGE_MISSING"
+    SYMBOL_SESSION_EVIDENCE_INVALID = "SYMBOL_SESSION_EVIDENCE_INVALID"
+    SYMBOL_SESSION_NOT_TRADING = "SYMBOL_SESSION_NOT_TRADING"
+    SYMBOL_SESSION_UNKNOWN = "SYMBOL_SESSION_UNKNOWN"
 
 
 class ShadowDailyStatus(str, Enum):
@@ -137,6 +142,24 @@ def _result(
     )
 
 
+def _symbol_session_reasons(
+    completed_reasons: Sequence[CompletedSessionReason],
+) -> tuple[OperationalReason, ...]:
+    mapping = {
+        CompletedSessionReason.SYMBOL_SESSION_EVIDENCE_MISSING:
+            OperationalReason.SYMBOL_SESSION_EVIDENCE_MISSING,
+        CompletedSessionReason.SYMBOL_SESSION_ATTRIBUTION_INCOMPLETE:
+            OperationalReason.SYMBOL_SESSION_EVIDENCE_INVALID,
+        CompletedSessionReason.SYMBOL_SESSION_IDENTITY_MISMATCH:
+            OperationalReason.SYMBOL_SESSION_EVIDENCE_INVALID,
+        CompletedSessionReason.SYMBOL_NOT_TRADING:
+            OperationalReason.SYMBOL_SESSION_NOT_TRADING,
+        CompletedSessionReason.SYMBOL_SESSION_UNKNOWN:
+            OperationalReason.SYMBOL_SESSION_UNKNOWN,
+    }
+    return tuple(mapping[reason] for reason in completed_reasons if reason in mapping)
+
+
 def evaluate_operational_admission(
     batch: PreparedPriceBatch,
     guard: GuardResult,
@@ -174,13 +197,26 @@ def evaluate_operational_admission(
     if completed.decision is CompletedSessionDecision.UNRESOLVED:
         return _result(
             OperationalAdmission.OPERATIONAL_REJECTED,
-            (OperationalReason.COMPLETED_SESSION_UNRESOLVED,),
+            (
+                OperationalReason.COMPLETED_SESSION_UNRESOLVED,
+                *_symbol_session_reasons(completed.reasons),
+            ),
             guard,
         )
     if completed.decision is CompletedSessionDecision.REJECTED:
         return _result(
             OperationalAdmission.OPERATIONAL_REJECTED,
-            (OperationalReason.COMPLETED_SESSION_REJECTED,),
+            (
+                OperationalReason.COMPLETED_SESSION_REJECTED,
+                *_symbol_session_reasons(completed.reasons),
+            ),
+            guard,
+        )
+
+    if guard.genuinely_new_dates and set(guard.genuinely_new_dates) != {completed.target_session}:
+        return _result(
+            OperationalAdmission.OPERATIONAL_REJECTED,
+            (OperationalReason.SYMBOL_SESSION_COVERAGE_MISSING,),
             guard,
         )
 
