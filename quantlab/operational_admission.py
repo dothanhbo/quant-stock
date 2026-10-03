@@ -7,6 +7,7 @@ from dataclasses import dataclass
 from enum import Enum
 from typing import TYPE_CHECKING, Any
 
+from quantlab.completed_session import CompletedSessionDecision
 from quantlab.preupdate_market_data_guard import (
     GuardDecision,
     GuardReason,
@@ -60,6 +61,9 @@ class OperationalReason(str, Enum):
     SYMBOL_IDENTITY_UNSAFE = "SYMBOL_IDENTITY_UNSAFE"
     SOURCE_ATTRIBUTION_INCOMPLETE = "SOURCE_ATTRIBUTION_INCOMPLETE"
     COMPLETED_SESSION_COVERAGE_MISSING = "COMPLETED_SESSION_COVERAGE_MISSING"
+    COMPLETED_SESSION_EVIDENCE_MISSING = "COMPLETED_SESSION_EVIDENCE_MISSING"
+    COMPLETED_SESSION_UNRESOLVED = "COMPLETED_SESSION_UNRESOLVED"
+    COMPLETED_SESSION_REJECTED = "COMPLETED_SESSION_REJECTED"
 
 
 class ShadowDailyStatus(str, Enum):
@@ -157,6 +161,26 @@ def evaluate_operational_admission(
         return _result(
             OperationalAdmission.BACKFILL_REQUIRES_STAGING,
             (OperationalReason.BACKFILL_NOT_APPEND_ONLY,),
+            guard,
+        )
+
+    completed = batch.completed_session_result
+    if completed is None:
+        return _result(
+            OperationalAdmission.OPERATIONAL_REJECTED,
+            (OperationalReason.COMPLETED_SESSION_EVIDENCE_MISSING,),
+            guard,
+        )
+    if completed.decision is CompletedSessionDecision.UNRESOLVED:
+        return _result(
+            OperationalAdmission.OPERATIONAL_REJECTED,
+            (OperationalReason.COMPLETED_SESSION_UNRESOLVED,),
+            guard,
+        )
+    if completed.decision is CompletedSessionDecision.REJECTED:
+        return _result(
+            OperationalAdmission.OPERATIONAL_REJECTED,
+            (OperationalReason.COMPLETED_SESSION_REJECTED,),
             guard,
         )
 

@@ -7,6 +7,7 @@ from datetime import date
 
 import pandas as pd
 
+from quantlab.completed_session import CompletedSessionResult
 from quantlab.operational_admission import IngestionIntent, SymbolIdentityState
 from quantlab.preupdate_market_data_guard import (
     AdjustmentBasis,
@@ -46,6 +47,7 @@ def prepare_dataframe_price_batch(
     symbol_identity_state: SymbolIdentityState = SymbolIdentityState.UNCERTAIN,
     symbol_identity_references: Sequence[str] = (),
     completed_through: date | None = None,
+    completed_session_result: CompletedSessionResult | None = None,
     corporate_action_verification_state: AttributionState = AttributionState.UNKNOWN,
     archive: ImmutableArchiveIdentity | None = None,
     revision_evidence: Sequence[RevisionEvidence] = (),
@@ -116,6 +118,7 @@ def prepare_dataframe_price_batch(
         symbol_identity_state=symbol_identity_state,
         symbol_identity_references=tuple(symbol_identity_references),
         completed_through=completed_through,
+        completed_session_result=completed_session_result,
         corporate_action_verification_state=corporate_action_verification_state,
     )
 

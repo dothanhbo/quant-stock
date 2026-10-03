@@ -1,7 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
-from datetime import date, timedelta
+from datetime import date, datetime, timedelta, timezone
 from pathlib import Path
 import sqlite3
 import threading
@@ -9,6 +9,15 @@ import threading
 import pandas as pd
 import pytest
 
+from quantlab.completed_session import (
+    CalendarSessionEvidence,
+    CalendarSessionStatus,
+    ProviderCompletionWatermark,
+    ProviderPublicationObservation,
+    PublicationDelayPolicy,
+    evaluate_completed_session,
+    normalized_price_row_fingerprint,
+)
 from quantlab.market_data_shadow_adapter import prepare_dataframe_price_batch
 from quantlab.operational_admission import (
     IngestionIntent,
@@ -33,6 +42,7 @@ from quantlab.transactional_market_data import (
     commit_price_batch_shadow,
     initialize_transactional_ingestion_schema,
     migrate_operational_admission_schema,
+    migrate_shadow_runtime_foundation_schema,
     rehearse_operational_migration,
 )
 
@@ -102,6 +112,7 @@ def _database(
         initialize_transactional_ingestion_schema(connection)
         if migrate:
             migrate_operational_admission_schema(connection)
+            migrate_shadow_runtime_foundation_schema(connection)
     return path
 
 
@@ -124,6 +135,52 @@ def _batch(
         end,
         coverage_state,
         ("normalized-response:fixture",) if coverage_state is CoverageState.VERIFIED_COMPLETE else (),
+    )
+    observed_at = datetime(2026, 9, 30, 12, 0, tzinfo=timezone.utc)
+    target_row = candidate.sort_values("time").iloc[-1]
+    target_fingerprint = normalized_price_row_fingerprint(
+        symbol="AAA",
+        session=end,
+        open=target_row["open"],
+        high=target_row["high"],
+        low=target_row["low"],
+        close=target_row["close"],
+        volume=target_row["volume"],
+    )
+    completed_session = evaluate_completed_session(
+        symbol="AAA",
+        provider_identity="KBS",
+        target_session=end,
+        calendar=CalendarSessionEvidence(
+            "HOSE",
+            "synthetic-vn-calendar",
+            "fixture-v1",
+            "fixture://calendar/snapshot",
+            end,
+            CalendarSessionStatus.OPEN_COMPLETED,
+            ("fixture://calendar/source",),
+        ),
+        observations=(ProviderPublicationObservation(
+            "KBS",
+            "AAA",
+            end,
+            observed_at,
+            target_fingerprint,
+            True,
+            ("fixture://provider/observation",),
+        ),),
+        publication_delay_policy=PublicationDelayPolicy(
+            "fixture-delay-policy",
+            timedelta(minutes=30),
+            ("fixture://policy/publication-delay",),
+        ),
+        completion_watermark=ProviderCompletionWatermark(
+            "KBS",
+            end,
+            observed_at,
+            "fixture-watermark",
+            ("fixture://provider/watermark",),
+        ),
     )
     return prepare_dataframe_price_batch(
         candidate,
@@ -149,6 +206,7 @@ def _batch(
             SymbolIdentityState.VERIFIED_STABLE,
         } else (),
         completed_through=end,
+        completed_session_result=completed_session,
         corporate_action_verification_state=AttributionState.UNKNOWN,
         archive=None,
     )
