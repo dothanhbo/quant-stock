@@ -1,0 +1,66 @@
+{
+  "schema_version": "D4B2.7B_CALENDAR_SOURCE_MANIFEST_V1",
+  "qualification_date": "2026-10-03",
+  "hash_algorithm": "SHA-256",
+  "artifacts": [
+    {
+      "venue_scope": ["HNX", "UPCOM"],
+      "role": "ANNUAL_BASELINE",
+      "notice_number": "5305/TB-SGDHN",
+      "publication_date": "2025-12-03",
+      "official_page_url": "https://www.gov.hnx.vn/vi-vn/chi-tiet-lich-nghi-gd-60021971.html?_page=1",
+      "official_document_url": "https://owa.hnx.vn/ftp//PORTALNEW/HEADER_IMAGES/20251204/5305-tb_0001.pdf",
+      "sha256": "213e8621883eef4bc5ed949e15b0d9e19a0184a509129d10420c00a88b8d4b97",
+      "byte_length": 668966,
+      "status": "OFFICIAL_BYTES_HASHED"
+    },
+    {
+      "venue_scope": ["HNX", "UPCOM"],
+      "role": "AMENDMENT",
+      "notice_number": "5680/TB-SGDHN",
+      "publication_date": "2025-12-25",
+      "official_page_url": "https://www.upcom.hnx.vn/vi-vn/chi-tiet-lich-nghi-gd-60022084.html?_page=1",
+      "official_document_url": "https://owa.hnx.vn/ftp//PORTALNEW/HEADER_IMAGES/20251225/5680-tb_0001.pdf",
+      "sha256": "2fed6d2a9a4792e83c10f46eb4abf275f6ce9e5537e8df072ddb204ef7fbf5b1",
+      "byte_length": 466569,
+      "status": "OFFICIAL_BYTES_HASHED"
+    },
+    {
+      "venue_scope": ["HOSE"],
+      "role": "ANNUAL_BASELINE",
+      "notice_number": "2294/TB-SGDHCM",
+      "publication_date": "2025-12-09",
+      "official_page_url": null,
+      "official_document_url": null,
+      "sha256": null,
+      "byte_length": null,
+      "status": "UNRESOLVED_OFFICIAL_BYTES_MISSING"
+    },
+    {
+      "venue_scope": ["HOSE"],
+      "role": "AMENDMENT",
+      "notice_number": "2410/TB-SGDHCM",
+      "publication_date": "2025-12-25",
+      "official_page_url": null,
+      "official_document_url": "https://staticfile.hsx.vn/Uploads/UploadDocuments/2426350/20251225_Thong%20bao%20%20ve%20%20viec%20cap%20nhat%20lich%20nghi%20giao%20dich%20Tet%20Duong%20lich%202026%20toan%20thi%20truong.pdf",
+      "sha256": "ef798ee1078b1895b026dfea5652630f408f6772dcdc59a07690b833241aed2c",
+      "byte_length": 194413,
+      "status": "OFFICIAL_BYTES_HASHED",
+      "references_notice": "2294/TB-SGDHCM"
+    }
+  ],
+  "retention_note": "URLs are locators, not preservation guarantees. Hashes identify bytes already reviewed. Redistribution or local archival requires confirmation of source retention rights.",
+  "exceptional_closure_procedure": {
+    "frequency": "Before each observation window and again before any later admission review",
+    "official_surfaces": [
+      "HNX and UPCoM official notices/search",
+      "HOSE official notices/search and staticfile.hsx.vn documents",
+      "Vietnam State Securities Commission official notices"
+    ],
+    "record": [
+      "query timestamp in UTC", "venue", "query terms/date range", "result URLs",
+      "notice number and publication date", "downloaded-byte SHA-256 when retention is permitted"
+    ],
+    "fail_closed": "Any conflicting notice, inaccessible referenced amendment, or unresolved exceptional closure keeps that venue/session ineligible for completed-session evidence."
+  }
+}

@@ -1,0 +1,9 @@
+{
+  "evidence_kind": "SYNTHETIC_FIXTURE",
+  "sessions": {
+    "2026-09-03": {
+      "venues": ["HOSE"],
+      "scheduled_state": "OPEN"
+    }
+  }
+}

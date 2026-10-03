@@ -1,0 +1,59 @@
+{
+  "contract_version": "D4B2.7B_OBSERVATION_ONLY_V1",
+  "transport": {"mode": "DISABLED"},
+  "symbol_to_venue": {"AAA": "HOSE"},
+  "calendar_snapshot": {
+    "snapshot_id": "synthetic-calendar-2026-09-03-v1",
+    "evidence_kind": "SYNTHETIC_FIXTURE",
+    "content_sha256": "fe7d64cacb024b6b4e4bf2c01cce10436c12683c01bcde4f14a5a43a07ee5962",
+    "source_references": ["tests/fixtures/offline_market_observation/synthetic_calendar_2026-09-03.json"],
+    "sessions": {
+      "2026-09-03": {"venues": ["HOSE"], "scheduled_state": "OPEN"}
+    }
+  },
+  "publication_delay_seconds": null,
+  "observations": [
+    {
+      "observation_id": "synthetic-aaa-20260903-a",
+      "symbol": "AAA",
+      "venue": "HOSE",
+      "target_session": "2026-09-03",
+      "observed_at": "2026-09-03T09:15:00Z",
+      "raw_payload": "{\"data\":[[1788397200,10.0,10.5,9.9,10.2,125000]]}",
+      "raw_provenance": {
+        "kind": "SYNTHETIC_RECORDED_FIXTURE",
+        "source_reference": "tests/fixtures/offline_market_observation/synthetic_two_observations.json#observation-a"
+      },
+      "normalized_row": {
+        "symbol": "AAA", "session": "2026-09-03", "open": 10.0,
+        "high": 10.5, "low": 9.9, "close": 10.2, "volume": 125000
+      },
+      "normalized_provenance": {
+        "kind": "SYNTHETIC_RECORDED_FIXTURE",
+        "source_reference": "tests/fixtures/offline_market_observation/synthetic_two_observations.json#observation-a",
+        "transform_reference": "D4B2.7B synthetic OHLCV mapping v1"
+      }
+    },
+    {
+      "observation_id": "synthetic-aaa-20260903-b",
+      "symbol": "AAA",
+      "venue": "HOSE",
+      "target_session": "2026-09-03",
+      "observed_at": "2026-09-03T09:45:00Z",
+      "raw_payload": "{\"data\":[[1788397200,10.0,10.5,9.9,10.2,125000]]}",
+      "raw_provenance": {
+        "kind": "SYNTHETIC_RECORDED_FIXTURE",
+        "source_reference": "tests/fixtures/offline_market_observation/synthetic_two_observations.json#observation-b"
+      },
+      "normalized_row": {
+        "symbol": "AAA", "session": "2026-09-03", "open": 10.0,
+        "high": 10.5, "low": 9.9, "close": 10.2, "volume": 125000
+      },
+      "normalized_provenance": {
+        "kind": "SYNTHETIC_RECORDED_FIXTURE",
+        "source_reference": "tests/fixtures/offline_market_observation/synthetic_two_observations.json#observation-b",
+        "transform_reference": "D4B2.7B synthetic OHLCV mapping v1"
+      }
+    }
+  ]
+}
