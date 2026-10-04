@@ -1,0 +1,313 @@
+{
+  "sources": [
+    {
+      "url": "https://vsdc.vn/vi/ad/147589",
+      "final_url": "https://vsdc.vn/vi/ad/147589",
+      "request_started_at_utc": "2026-10-04T14:05:38.612614+00:00",
+      "collected_at_utc": "2026-10-04T14:05:39.045723+00:00",
+      "http_status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "snapshot_path": "research\\symbol_session_evidence\\CTR_2022-02-17\\vsdc_transfer.html",
+      "snapshot_kind": "ORIGINAL_HTTP_RESPONSE_BODY",
+      "byte_length": 72078,
+      "sha256": "94d8f196adfdf16e437f0e5f1ea79a1afab0bafeae92a0e2cfc84cdf2f519285"
+    },
+    {
+      "url": "https://ssc.gov.vn/webcenter/portal/ubck/pages_r/m/thngtinthtrng/thngkthtrng/thngtinhose/tintchose?docType=TinBai&mucHienThi=188&selectedPage=20",
+      "request_started_at_utc": "2026-10-04T14:05:39.045723+00:00",
+      "attempt_ended_at_utc": "2026-10-04T14:05:59.113231+00:00",
+      "status": "UNRESOLVED_FETCH_FAILED",
+      "error_type": "URLError",
+      "error": "<urlopen error timed out>",
+      "snapshot_path": null,
+      "sha256": null
+    }
+  ],
+  "first_trading_notice_follow_up": {
+    "outcome": "ORIGINAL_HOSE_NOTICE_AND_BYTE_IDENTICAL_ISSUER_COPY_FOUND",
+    "successful_sources": [
+      {
+        "url": "https://staticfile.hsx.vn/Uploads/News/6571266f2f084c4e80b7ca12a4e10f63/20220215_20220215%20-%20CTR%20-%20TB%20ngay%20giao%20dich%20dau%20tien.pdf",
+        "request_started_at_utc": "2026-10-04T14:39:38.775902+00:00",
+        "final_url": "https://staticfile.hsx.vn/Uploads/News/6571266f2f084c4e80b7ca12a4e10f63/20220215_20220215%20-%20CTR%20-%20TB%20ngay%20giao%20dich%20dau%20tien.pdf",
+        "http_status": 200,
+        "content_type": "application/pdf",
+        "collected_at_utc": "2026-10-04T14:39:40.276027+00:00",
+        "snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\hose-original-0.pdf",
+        "snapshot_kind": "ORIGINAL_HTTP_RESPONSE_BODY",
+        "byte_length": 234905,
+        "sha256": "a8ec7676fb47db068dc663d356d1a1eac6e4b7be17a296a6895ded74e7fb28e5"
+      },
+      {
+        "url": "https://viettelconstruction.com.vn/wp-content/uploads.bak/2022/02/20220215_20220215-CTR-TB-ngay-giao-dich-dau-tien.pdf",
+        "request_started_at_utc": "2026-10-04T14:36:43.429784+00:00",
+        "final_url": "https://viettelconstruction.com.vn/wp-content/uploads.bak/2022/02/20220215_20220215-CTR-TB-ngay-giao-dich-dau-tien.pdf",
+        "http_status": 200,
+        "content_type": "application/pdf",
+        "collected_at_utc": "2026-10-04T14:36:43.970233+00:00",
+        "snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\issuer-original-retry-0.pdf",
+        "snapshot_kind": "ORIGINAL_HTTP_RESPONSE_BODY",
+        "byte_length": 234905,
+        "sha256": "a8ec7676fb47db068dc663d356d1a1eac6e4b7be17a296a6895ded74e7fb28e5"
+      },
+      {
+        "url": "https://viettelconstruction.com.vn/quan-he-co-dong/cong-bo-thong-tin/",
+        "request_started_at_utc": "2026-10-04T14:34:36.434039+00:00",
+        "final_url": "https://viettelconstruction.com.vn/quan-he-co-dong/cong-bo-thong-tin/",
+        "http_status": 200,
+        "content_type": "text/html; charset=UTF-8",
+        "collected_at_utc": "2026-10-04T14:34:37.968344+00:00",
+        "snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\notice-archive-1.html",
+        "snapshot_kind": "ORIGINAL_HTTP_RESPONSE_BODY",
+        "byte_length": 705941,
+        "sha256": "0d6bb856075356051590431a4c28430ceacd32e600fdb7aa014be6075424b285"
+      },
+      {
+        "url": "https://api.hsx.vn/n/api/v1/1/news/1500539",
+        "request_started_at_utc": "2026-10-04T14:36:06.865978+00:00",
+        "final_url": "https://api.hsx.vn/n/api/v1/1/news/1500539",
+        "http_status": 200,
+        "content_type": "application/json; charset=utf-8",
+        "collected_at_utc": "2026-10-04T14:36:07.206290+00:00",
+        "snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\hose-notice-detail-0.html",
+        "snapshot_kind": "ORIGINAL_HTTP_RESPONSE_BODY",
+        "byte_length": 1002,
+        "sha256": "712f2c4497023f3acddc74609b30d12dff0ed4a3da70ee5f94eec1c68cd65d8d"
+      },
+      {
+        "url": "https://api.hsx.vn/m/api/v1/1/mediafiles/1/1500539?pageIndex=1&pageSize=5&year=0",
+        "request_started_at_utc": "2026-10-04T14:39:03.828340+00:00",
+        "final_url": "https://api.hsx.vn/m/api/v1/1/mediafiles/1/1500539?pageIndex=1&pageSize=5&year=0",
+        "http_status": 200,
+        "content_type": "application/json; charset=utf-8",
+        "collected_at_utc": "2026-10-04T14:39:04.334361+00:00",
+        "snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\hose-attachment-0.html",
+        "snapshot_kind": "ORIGINAL_HTTP_RESPONSE_BODY",
+        "byte_length": 498,
+        "sha256": "6021bf504744a95bd8041074a5a040ba334e875894e3066641515cdc77f244d7"
+      }
+    ],
+    "other_document_search_records": [
+      {
+        "url": "https://viettelconstruction.com.vn/",
+        "request_started_at_utc": "2026-10-04T14:27:48.963712+00:00",
+        "status": "UNRESOLVED_FETCH_FAILED",
+        "error_type": "URLError",
+        "error": "<urlopen error _ssl.c:993: The handshake operation timed out>",
+        "attempt_ended_at_utc": "2026-10-04T14:28:10.150230+00:00"
+      },
+      {
+        "url": "https://viettelconstruction.com.vn/wp-json/wp/v2/search?search=giao%20dich&per_page=100",
+        "request_started_at_utc": "2026-10-04T14:28:10.150230+00:00",
+        "final_url": "https://viettelconstruction.com.vn/wp-json/wp/v2/search?search=giao%20dich&per_page=100",
+        "http_status": 200,
+        "content_type": "text/html; charset=utf-8,gbk",
+        "collected_at_utc": "2026-10-04T14:28:10.333260+00:00",
+        "snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\issuer-discovery-1.html",
+        "snapshot_kind": "ORIGINAL_HTTP_RESPONSE_BODY",
+        "byte_length": 177,
+        "sha256": "c0b97dcf99b3fbae220dbed45e08f74a9a4e876ce119c48bc7816e4cbd2ed0f0"
+      },
+      {
+        "url": "https://www.hsx.vn/",
+        "request_started_at_utc": "2026-10-04T14:29:14.431846+00:00",
+        "final_url": "https://www.hsx.vn/",
+        "http_status": 200,
+        "content_type": "text/html",
+        "collected_at_utc": "2026-10-04T14:29:14.834353+00:00",
+        "snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\hose-discovery-0.html",
+        "snapshot_kind": "ORIGINAL_HTTP_RESPONSE_BODY",
+        "byte_length": 1900,
+        "sha256": "7dbc4cffdf9c1d349b5ccee75bc821264966cb80d929345fb20bca8ef6d454c5"
+      },
+      {
+        "url": "https://viettelconstruction.com.vn/?s=HOSE",
+        "request_started_at_utc": "2026-10-04T14:29:14.834353+00:00",
+        "final_url": "https://viettelconstruction.com.vn/?s=HOSE",
+        "http_status": 200,
+        "content_type": "text/html; charset=utf-8,gbk",
+        "collected_at_utc": "2026-10-04T14:29:35.058664+00:00",
+        "snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\hose-discovery-1.html",
+        "snapshot_kind": "ORIGINAL_HTTP_RESPONSE_BODY",
+        "byte_length": 177,
+        "sha256": "c0b97dcf99b3fbae220dbed45e08f74a9a4e876ce119c48bc7816e4cbd2ed0f0"
+      },
+      {
+        "url": "https://viettelconstruction.com.vn/?s=HOSE",
+        "request_started_at_utc": "2026-10-04T14:30:08.257249+00:00",
+        "final_url": "https://viettelconstruction.com.vn/?s=HOSE",
+        "http_status": 200,
+        "content_type": "text/html; charset=UTF-8",
+        "collected_at_utc": "2026-10-04T14:30:28.932193+00:00",
+        "snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\issuer-cookie-0.html",
+        "snapshot_kind": "ORIGINAL_HTTP_RESPONSE_BODY",
+        "byte_length": 57229,
+        "sha256": "023f30eae4398463437c636f2b932b147e7f900f7f3feb36590332973124d8ea"
+      },
+      {
+        "url": "https://viettelconstruction.com.vn/wp-json/wp/v2/search?search=giao%20dich&per_page=100",
+        "request_started_at_utc": "2026-10-04T14:30:28.933197+00:00",
+        "status": "UNRESOLVED_FETCH_FAILED",
+        "error_type": "URLError",
+        "error": "<urlopen error timed out>",
+        "attempt_ended_at_utc": "2026-10-04T14:31:08.971885+00:00"
+      },
+      {
+        "url": "https://viettelconstruction.com.vn/quan-he-co-dong/",
+        "request_started_at_utc": "2026-10-04T14:32:45.859802+00:00",
+        "final_url": "https://viettelconstruction.com.vn/quan-he-co-dong/",
+        "http_status": 200,
+        "content_type": "text/html; charset=UTF-8",
+        "collected_at_utc": "2026-10-04T14:32:46.316180+00:00",
+        "snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\issuer-notice-search-0.html",
+        "snapshot_kind": "ORIGINAL_HTTP_RESPONSE_BODY",
+        "byte_length": 56528,
+        "sha256": "e55172d10968a08f67b99d0b191a24393c0af67e68e01eb9b1ca39ac0ff50eac"
+      },
+      {
+        "url": "https://viettelconstruction.com.vn/?s=giao+d%E1%BB%8Bch+%C4%91%E1%BA%A7u+ti%C3%AAn",
+        "request_started_at_utc": "2026-10-04T14:32:46.316180+00:00",
+        "status": "UNRESOLVED_FETCH_FAILED",
+        "error_type": "URLError",
+        "error": "<urlopen error _ssl.c:993: The handshake operation timed out>",
+        "attempt_ended_at_utc": "2026-10-04T14:33:21.385688+00:00"
+      },
+      {
+        "url": "https://viettelconstruction.com.vn/quan-he-co-dong/cong-bo-thong-tin",
+        "request_started_at_utc": "2026-10-04T14:33:43.212389+00:00",
+        "status": "UNRESOLVED_FETCH_FAILED",
+        "error_type": "URLError",
+        "error": "<urlopen error _ssl.c:993: The handshake operation timed out>",
+        "attempt_ended_at_utc": "2026-10-04T14:34:04.587136+00:00"
+      },
+      {
+        "url": "https://api.hsx.vn/n/api/v1/1/news?pageIndex=1&pageSize=200&startDate=2022-02-14&endDate=2022-02-16",
+        "request_started_at_utc": "2026-10-04T14:34:34.890093+00:00",
+        "final_url": "https://api.hsx.vn/n/api/v1/1/news?pageIndex=1&pageSize=200&startDate=2022-02-14&endDate=2022-02-16",
+        "http_status": 200,
+        "content_type": "application/json; charset=utf-8",
+        "collected_at_utc": "2026-10-04T14:34:36.433022+00:00",
+        "snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\notice-archive-0.html",
+        "snapshot_kind": "ORIGINAL_HTTP_RESPONSE_BODY",
+        "byte_length": 214341,
+        "sha256": "fa940cac4d7d6acb42a7d1cbbb749138f9187e8e4abee5962ccab11d78ee9fd4"
+      },
+      {
+        "url": "https://viettelconstruction.com.vn/quan-he-co-dong/cong-bo-thong-tin/",
+        "request_started_at_utc": "2026-10-04T14:34:36.434039+00:00",
+        "final_url": "https://viettelconstruction.com.vn/quan-he-co-dong/cong-bo-thong-tin/",
+        "http_status": 200,
+        "content_type": "text/html; charset=UTF-8",
+        "collected_at_utc": "2026-10-04T14:34:37.968344+00:00",
+        "snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\notice-archive-1.html",
+        "snapshot_kind": "ORIGINAL_HTTP_RESPONSE_BODY",
+        "byte_length": 705941,
+        "sha256": "0d6bb856075356051590431a4c28430ceacd32e600fdb7aa014be6075424b285"
+      },
+      {
+        "url": "https://viettelconstruction.com.vn/wp-content/uploads.bak/2022/02/20220215_20220215-CTR-TB-ngay-giao-dich-dau-tien.pdf",
+        "request_started_at_utc": "2026-10-04T14:35:34.512080+00:00",
+        "status": "UNRESOLVED_FETCH_FAILED",
+        "error_type": "URLError",
+        "error": "<urlopen error _ssl.c:993: The handshake operation timed out>",
+        "attempt_ended_at_utc": "2026-10-04T14:35:57.703511+00:00"
+      }
+    ],
+    "web_search_scope": [
+      "CTR first-trading notice on HOSE/issuer official domains",
+      "Exact title and February 2022 filename variants",
+      "Secondary search hits treated solely as discovery; no newspaper/price/annual-report claim substituted"
+    ],
+    "canonical_writes": false,
+    "provider_fetch": false,
+    "prior_manifest_snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\prior_collection_manifest.json"
+  },
+  "checkpoint": {
+    "scope": "Offline relocation of already-collected bytes; source objects, claims and original collection timestamps unchanged. No new source research.",
+    "snapshot_paths": {
+      "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-session-20220217\\hose_annual_report_2022.pdf": "research/symbol_session_evidence/CTR_2022-02-17/sources/hose_annual_report_2022.pdf",
+      "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\hose-original-0.pdf": "research/symbol_session_evidence/CTR_2022-02-17/sources/hose-original-0.pdf",
+      "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\issuer-original-retry-0.pdf": "research/symbol_session_evidence/CTR_2022-02-17/sources/issuer-original-retry-0.pdf",
+      "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\notice-archive-1.html": "research/symbol_session_evidence/CTR_2022-02-17/sources/notice-archive-1.html",
+      "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\hose-notice-detail-0.html": "research/symbol_session_evidence/CTR_2022-02-17/sources/hose-notice-detail-0.html",
+      "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\hose-attachment-0.html": "research/symbol_session_evidence/CTR_2022-02-17/sources/hose-attachment-0.html",
+      "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\prior_evidence_packet.json": "research/symbol_session_evidence/CTR_2022-02-17/history/prior_evidence_packet.json",
+      "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\prior_collection_manifest.json": "research/symbol_session_evidence/CTR_2022-02-17/history/prior_collection_manifest.json",
+      "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\prior_README.md": "research/symbol_session_evidence/CTR_2022-02-17/history/prior_README.md",
+      "C:\\Users\\hello\\Desktop\\quant-stock\\research\\symbol_session_evidence\\CTR_2022-02-17\\evidence_packet.json": "research/symbol_session_evidence/CTR_2022-02-17/history/notice_packet_before_checkpoint.json",
+      "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\notice_packet_check_results.json": "research/symbol_session_evidence/CTR_2022-02-17/history/notice_check_results_before_checkpoint.json"
+    },
+    "snapshot_inventory": [
+      {
+        "original_snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-session-20220217\\hose_annual_report_2022.pdf",
+        "repository_path": "research/symbol_session_evidence/CTR_2022-02-17/sources/hose_annual_report_2022.pdf",
+        "byte_length": 11923116,
+        "sha256": "5ebc07d70af3a540469a5954a4abd5a75a9e3b8d64ba35fda42095b49231460f"
+      },
+      {
+        "original_snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\hose-original-0.pdf",
+        "repository_path": "research/symbol_session_evidence/CTR_2022-02-17/sources/hose-original-0.pdf",
+        "byte_length": 234905,
+        "sha256": "a8ec7676fb47db068dc663d356d1a1eac6e4b7be17a296a6895ded74e7fb28e5"
+      },
+      {
+        "original_snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\issuer-original-retry-0.pdf",
+        "repository_path": "research/symbol_session_evidence/CTR_2022-02-17/sources/issuer-original-retry-0.pdf",
+        "byte_length": 234905,
+        "sha256": "a8ec7676fb47db068dc663d356d1a1eac6e4b7be17a296a6895ded74e7fb28e5"
+      },
+      {
+        "original_snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\notice-archive-1.html",
+        "repository_path": "research/symbol_session_evidence/CTR_2022-02-17/sources/notice-archive-1.html",
+        "byte_length": 705941,
+        "sha256": "0d6bb856075356051590431a4c28430ceacd32e600fdb7aa014be6075424b285"
+      },
+      {
+        "original_snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\hose-notice-detail-0.html",
+        "repository_path": "research/symbol_session_evidence/CTR_2022-02-17/sources/hose-notice-detail-0.html",
+        "byte_length": 1002,
+        "sha256": "712f2c4497023f3acddc74609b30d12dff0ed4a3da70ee5f94eec1c68cd65d8d"
+      },
+      {
+        "original_snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\hose-attachment-0.html",
+        "repository_path": "research/symbol_session_evidence/CTR_2022-02-17/sources/hose-attachment-0.html",
+        "byte_length": 498,
+        "sha256": "6021bf504744a95bd8041074a5a040ba334e875894e3066641515cdc77f244d7"
+      },
+      {
+        "original_snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\prior_evidence_packet.json",
+        "repository_path": "research/symbol_session_evidence/CTR_2022-02-17/history/prior_evidence_packet.json",
+        "byte_length": 9907,
+        "sha256": "89385147ba1158c6c128acd7c2b9b2dcbff93b4f4f56ae45e5103b87c5126278"
+      },
+      {
+        "original_snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\prior_collection_manifest.json",
+        "repository_path": "research/symbol_session_evidence/CTR_2022-02-17/history/prior_collection_manifest.json",
+        "byte_length": 1099,
+        "sha256": "8b5221ce07271363082de748df764b0a8fbaf8ecef0429e0afe953c2ab8acab0"
+      },
+      {
+        "original_snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\prior_README.md",
+        "repository_path": "research/symbol_session_evidence/CTR_2022-02-17/history/prior_README.md",
+        "byte_length": 5970,
+        "sha256": "4e5f87b60d3428eb720eb518695219c78931cf8170d3356bcfff476ff714e423"
+      },
+      {
+        "original_snapshot_path": "C:\\Users\\hello\\Desktop\\quant-stock\\research\\symbol_session_evidence\\CTR_2022-02-17\\evidence_packet.json",
+        "repository_path": "research/symbol_session_evidence/CTR_2022-02-17/history/notice_packet_before_checkpoint.json",
+        "byte_length": 20029,
+        "sha256": "8c49f83327f628da04991d94825317c7b7294b163d37f7abd4d44ebd405bd454"
+      },
+      {
+        "original_snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\notice_packet_check_results.json",
+        "repository_path": "research/symbol_session_evidence/CTR_2022-02-17/history/notice_check_results_before_checkpoint.json",
+        "byte_length": 830,
+        "sha256": "be64ce8eebc010d069d33e58730acd8f2c8abb578da7aa208c0a693c8f037ddf"
+      }
+    ],
+    "current_checker": "research/symbol_session_evidence/CTR_2022-02-17/check_notice_packet.py",
+    "current_results": "research/symbol_session_evidence/CTR_2022-02-17/notice_packet_check_results.json",
+    "historical_availability": "UNVERIFIED",
+    "excluded_artifacts": "Discovery/challenge/cookie/cache bodies, rendered inspections and fetch scripts remain outside this checkpoint; not claim evidence."
+  }
+}

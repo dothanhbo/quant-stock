@@ -1,0 +1,19 @@
+{
+  "tests_run": 3,
+  "failures": 0,
+  "errors": 0,
+  "passed": true,
+  "packet_sha256": "8c49f83327f628da04991d94825317c7b7294b163d37f7abd4d44ebd405bd454",
+  "original_document_sha256": "a8ec7676fb47db068dc663d356d1a1eac6e4b7be17a296a6895ded74e7fb28e5",
+  "manual_scan_transcription": "Visually reviewed, bound to original PDF hash; assertions do not OCR or independently validate the handwriting",
+  "target": "CTR/HOSE/2022-02-17",
+  "mapping_status": "NOT_TRADING",
+  "checks": [
+    "Original/mirror hashes and issuer/HOSE retrieval bindings",
+    "Claim/date/identity mapping and prior-evidence preservation",
+    "Fail-closed with missing calendar, ineligible symbol, withdrawn notice or missing symbol evidence"
+  ],
+  "database_access": false,
+  "provider_fetch": false,
+  "writer_activation": false
+}

@@ -1,0 +1,11 @@
+{
+  "scope": "one real packet; all positive calendar/provider inputs are synthetic negative controls only",
+  "tests_run": 3,
+  "failures": 0,
+  "errors": 0,
+  "passed": true,
+  "packet_sha256": "89385147ba1158c6c128acd7c2b9b2dcbff93b4f4f56ae45e5103b87c5126278",
+  "database_access": false,
+  "provider_fetch": false,
+  "writer_activation": false
+}

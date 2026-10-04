@@ -1,0 +1,26 @@
+{
+  "sources": [
+    {
+      "url": "https://vsdc.vn/vi/ad/147589",
+      "final_url": "https://vsdc.vn/vi/ad/147589",
+      "request_started_at_utc": "2026-10-04T14:05:38.612614+00:00",
+      "collected_at_utc": "2026-10-04T14:05:39.045723+00:00",
+      "http_status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "snapshot_path": "research\\symbol_session_evidence\\CTR_2022-02-17\\vsdc_transfer.html",
+      "snapshot_kind": "ORIGINAL_HTTP_RESPONSE_BODY",
+      "byte_length": 72078,
+      "sha256": "94d8f196adfdf16e437f0e5f1ea79a1afab0bafeae92a0e2cfc84cdf2f519285"
+    },
+    {
+      "url": "https://ssc.gov.vn/webcenter/portal/ubck/pages_r/m/thngtinthtrng/thngkthtrng/thngtinhose/tintchose?docType=TinBai&mucHienThi=188&selectedPage=20",
+      "request_started_at_utc": "2026-10-04T14:05:39.045723+00:00",
+      "attempt_ended_at_utc": "2026-10-04T14:05:59.113231+00:00",
+      "status": "UNRESOLVED_FETCH_FAILED",
+      "error_type": "URLError",
+      "error": "<urlopen error timed out>",
+      "snapshot_path": null,
+      "sha256": null
+    }
+  ]
+}

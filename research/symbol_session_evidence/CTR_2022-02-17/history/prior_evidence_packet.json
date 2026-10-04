@@ -1,0 +1,205 @@
+{
+  "contract": "d4-one-symbol-session-evidence/v1",
+  "selection_reason": "Inspect the actual CTR transfer-effective boundary using an available official identity/depository notice; selection is not based on obtaining PASS. Tradability is still unresolved.",
+  "symbol": "CTR",
+  "session_date": "2022-02-17",
+  "venue": "HOSE",
+  "security": {
+    "isin": "VN000000CTR4",
+    "issuer": "Tổng Công ty cổ phần Công trình Viettel",
+    "security_name": "Cổ phiếu Tổng Công ty cổ phần Công trình Viettel",
+    "type": "COMMON_SHARES"
+  },
+  "qualification": "PARTIAL_IDENTITY_AND_DEPOSITORY_TRANSFER_ONLY",
+  "activity_status": "UNRESOLVED",
+  "trading_status": "UNKNOWN",
+  "operational_admission": "UNRESOLVED",
+  "research_eligible": false,
+  "sources": [
+    {
+      "url": "https://vsdc.vn/vi/ad/147589",
+      "final_url": "https://vsdc.vn/vi/ad/147589",
+      "request_started_at_utc": "2026-10-04T14:05:38.612614+00:00",
+      "collected_at_utc": "2026-10-04T14:05:39.045723+00:00",
+      "http_status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "snapshot_path": "research\\symbol_session_evidence\\CTR_2022-02-17\\vsdc_transfer.html",
+      "snapshot_kind": "ORIGINAL_HTTP_RESPONSE_BODY",
+      "byte_length": 72078,
+      "sha256": "94d8f196adfdf16e437f0e5f1ea79a1afab0bafeae92a0e2cfc84cdf2f519285",
+      "source_id": "vsdc-transfer-147589",
+      "displayed_updated_at": "2022-01-27T12:20:26",
+      "displayed_updated_timezone": null,
+      "publication_time_verified": false,
+      "effective_date": "2022-02-17",
+      "effective_scope": "Registration/depository data transfer on the VSD system only"
+    },
+    {
+      "url": "https://staticfile.hsx.vn/Uploads/UploadDocuments/1641900/Bao%20cao%20thuong%20nien%202022_tv.pdf",
+      "final_url": "https://staticfile.hsx.vn/Uploads/UploadDocuments/1641900/Bao%20cao%20thuong%20nien%202022_tv.pdf",
+      "request_started_at_utc": "2026-10-04T14:08:23.284269+00:00",
+      "collected_at_utc": "2026-10-04T14:08:35.306002+00:00",
+      "http_status": 200,
+      "content_type": "application/pdf",
+      "snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-session-20220217\\hose_annual_report_2022.pdf",
+      "snapshot_kind": "ORIGINAL_HTTP_RESPONSE_BODY",
+      "byte_length": 11923116,
+      "sha256": "5ebc07d70af3a540469a5954a4abd5a75a9e3b8d64ba35fda42095b49231460f",
+      "source_id": "hose-annual-2022",
+      "publication_time": null,
+      "publication_time_verified": false,
+      "pdf_creation_metadata": "D:20230601155302+07'00'",
+      "pdf_modification_metadata": "D:20230602154727+07'00'",
+      "metadata_is_publication_proof": false,
+      "locator": {
+        "physical_page": 47,
+        "printed_page": 97,
+        "table": "NEWLY LISTED COMPANIES IN 2022",
+        "row": "3 CTR",
+        "date_column_vietnamese": "Ngày giao dịch",
+        "date_column_english": "Listing date"
+      }
+    }
+  ],
+  "unsuccessful_collection_attempts": [
+    {
+      "url": "https://ssc.gov.vn/webcenter/portal/ubck/pages_r/m/thngtinthtrng/thngkthtrng/thngtinhose/tintchose?docType=TinBai&mucHienThi=188&selectedPage=20",
+      "request_started_at_utc": "2026-10-04T14:05:39.045723+00:00",
+      "attempt_ended_at_utc": "2026-10-04T14:05:59.113231+00:00",
+      "status": "UNRESOLVED_FETCH_FAILED",
+      "error_type": "URLError",
+      "error": "<urlopen error timed out>",
+      "snapshot_path": null,
+      "sha256": null
+    }
+  ],
+  "claims": [
+    {
+      "id": "security_identity",
+      "support": "DIRECT",
+      "source_id": "vsdc-transfer-147589",
+      "value": {
+        "symbol": "CTR",
+        "isin": "VN000000CTR4",
+        "issuer": "Tổng Công ty cổ phần Công trình Viettel"
+      },
+      "locator": "Article fields: issuer, security code, ISIN"
+    },
+    {
+      "id": "depository_transfer",
+      "support": "DIRECT",
+      "source_id": "vsdc-transfer-147589",
+      "value": {
+        "old_venue_as_printed": "UpCOM",
+        "new_venue": "HOSE",
+        "effective_date": "2022-02-17",
+        "scope": "VSD_REGISTRATION_DEPOSITORY_SYSTEM"
+      },
+      "locator": "Article fields: old venue, new venue, effective date; following VSD system statement",
+      "establishes_tradability": false
+    },
+    {
+      "id": "retrospective_hose_table_date",
+      "support": "DIRECT_AS_LABELLED",
+      "source_id": "hose-annual-2022",
+      "value": "2022-02-23",
+      "locator": {
+        "physical_page": 47,
+        "printed_page": 97,
+        "table": "NEWLY LISTED COMPANIES IN 2022",
+        "row": "3 CTR",
+        "date_column_vietnamese": "Ngày giao dịch",
+        "date_column_english": "Listing date"
+      },
+      "establishes_first_trading_day_or_status_on_target": false
+    }
+  ],
+  "symbol_session_schema_mapping": {
+    "symbol": "CTR",
+    "venue": "HOSE",
+    "target_session": "2022-02-17",
+    "status": "UNKNOWN",
+    "source_identity": "VSD-transfer-147589+HOSE-annual-2022",
+    "snapshot_identity": "sha256:4abbc1fbfc05965f8340292e4ca08362aed7e67ce8eaa80cd5ea9853d8e6db77",
+    "source_references": [
+      "https://vsdc.vn/vi/ad/147589#sha256=94d8f196adfdf16e437f0e5f1ea79a1afab0bafeae92a0e2cfc84cdf2f519285",
+      "https://staticfile.hsx.vn/Uploads/UploadDocuments/1641900/Bao%20cao%20thuong%20nien%202022_tv.pdf#sha256=5ebc07d70af3a540469a5954a4abd5a75a9e3b8d64ba35fda42095b49231460f"
+    ]
+  },
+  "snapshot_identity_definition": "SHA-256 of UTF-8 compact JSON of the sorted list of original source SHA-256 strings; this identifies the bundle, not historical availability.",
+  "point_in_time": {
+    "historical_availability_established": false,
+    "captured_today": true,
+    "as_of_session_admissible": false,
+    "limitations": [
+      "The VSD displayed update timestamp precedes the session but has no stated timezone or immutable historical version. Today's bytes can include later changes.",
+      "The HOSE annual table is retrospective; PDF metadata from June 2023 is not a publication timestamp or evidence available on 2022-02-17."
+    ]
+  },
+  "gate_mapping": [
+    {
+      "gate": "Security identity and transfer destination/effective claim",
+      "status": "SUPPORTED_RESTRICTED_SCOPE",
+      "claims": [
+        "security_identity",
+        "depository_transfer"
+      ]
+    },
+    {
+      "gate": "SymbolSessionEvidence construction and source attribution",
+      "status": "SCHEMA_VALID_ONLY",
+      "note": "Attributable means nonempty references in code; it does not verify legal tradability, authenticity or point-in-time availability."
+    },
+    {
+      "gate": "Policy acceptance 1: reject actual CTR inactive dates",
+      "status": "BLOCKED",
+      "note": "No complete, authoritative inactive interval or first-trading notice established by these snapshots; do not convert transfer into NOT_TRADING."
+    },
+    {
+      "gate": "Policy acceptance 2 / real symbol-session validity",
+      "status": "BLOCKED",
+      "note": "UNKNOWN is retained. Focused check verifies existing fail-closed behavior, not lifecycle qualification."
+    },
+    {
+      "gate": "Shadow completed-session 1: exchange calendar",
+      "status": "BLOCKED",
+      "note": "No HOSE 2022 calendar and exceptional-closure coverage was qualified."
+    },
+    {
+      "gate": "Shadow completed-session 3-5: publication, row and retained completion evidence",
+      "status": "BLOCKED",
+      "note": "No provider observations, watermark, approved measured delay or actual candidate row is supplied."
+    },
+    {
+      "gate": "Historical point-in-time and research eligibility",
+      "status": "BLOCKED",
+      "note": "No historical source version, basis/event lineage or incident-window exclusion; research_eligible remains false."
+    }
+  ],
+  "unresolved": [
+    {
+      "claim": "CTR permitted/active trading on HOSE on 2022-02-17",
+      "required_document": "Original HOSE CTR first-trading announcement/decision with issuer/security identity, document number, issue date and explicit first trading date; any amendments or contrary trading-status notices covering 2022-02-17.",
+      "integration": "Review status and valid interval before setting SymbolSessionEvidence.status; keep UNKNOWN until established."
+    },
+    {
+      "claim": "CTR last UPCoM session / full transfer gap",
+      "required_document": "Original HNX CTR cancellation-of-trading-registration notice with effective/last-trading dates and amendments; needed only before asserting the all-venue transfer gap."
+    },
+    {
+      "claim": "HOSE calendar state on 2022-02-17",
+      "required_document": "Authoritative HOSE 2022 session calendar and exceptional-closure notices covering the date.",
+      "integration": "CalendarSessionEvidence, independently of symbol lifecycle."
+    },
+    {
+      "claim": "Exact source claims available as of the historical session",
+      "required_document": "An independently dated archived version or original signed publication plus historical archive/publication evidence; a displayed old timestamp or today's hash is insufficient."
+    },
+    {
+      "claim": "Provider completion, series basis/version, research windows",
+      "required_document": "Separate attributable provider completion and basis/version/event/incident lineage evidence; not collected or inferred in this packet."
+    }
+  ],
+  "next_step": "Acquire and snapshot the original HOSE CTR first-trading announcement, retaining document number, issue date, explicit first-trading date and SHA-256; review it against this one session without wiring a writer.",
+  "side_effects": "Artifact only. No database access, provider fetch, writer activation or eligibility promotion."
+}

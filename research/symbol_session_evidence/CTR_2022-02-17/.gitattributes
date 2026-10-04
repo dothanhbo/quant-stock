@@ -1,0 +1,5 @@
+# Preserve collected bytes and packet/result hashes across Git checkouts.
+vsdc_transfer.html -text -whitespace
+sources/** -text -whitespace
+history/** -text -whitespace
+*.json -text whitespace=cr-at-eol

@@ -1,0 +1,447 @@
+{
+  "contract": "d4-one-symbol-session-evidence/v1",
+  "selection_reason": "Continue the previously selected CTR/HOSE/2022-02-17 boundary. The original first-trading notice resolves only the HOSE start-date boundary; no selection or policy change to obtain PASS.",
+  "symbol": "CTR",
+  "session_date": "2022-02-17",
+  "venue": "HOSE",
+  "security": {
+    "isin": "VN000000CTR4",
+    "issuer": "Tổng Công ty cổ phần Công trình Viettel",
+    "security_name": "Cổ phiếu Tổng Công ty cổ phần Công trình Viettel",
+    "type": "COMMON_SHARES"
+  },
+  "qualification": "HOSE_FIRST_TRADING_BOUNDARY_ESTABLISHED_FROM_ORIGINAL_NOTICE",
+  "activity_status": "LISTED_BUT_NOT_YET_TRADING_ON_HOSE_ACCORDING_TO_NOTICE",
+  "trading_status": "NOT_TRADING",
+  "operational_admission": "UNRESOLVED",
+  "research_eligible": false,
+  "sources": [
+    {
+      "url": "https://vsdc.vn/vi/ad/147589",
+      "final_url": "https://vsdc.vn/vi/ad/147589",
+      "request_started_at_utc": "2026-10-04T14:05:38.612614+00:00",
+      "collected_at_utc": "2026-10-04T14:05:39.045723+00:00",
+      "http_status": 200,
+      "content_type": "text/html; charset=utf-8",
+      "snapshot_path": "research\\symbol_session_evidence\\CTR_2022-02-17\\vsdc_transfer.html",
+      "snapshot_kind": "ORIGINAL_HTTP_RESPONSE_BODY",
+      "byte_length": 72078,
+      "sha256": "94d8f196adfdf16e437f0e5f1ea79a1afab0bafeae92a0e2cfc84cdf2f519285",
+      "source_id": "vsdc-transfer-147589",
+      "displayed_updated_at": "2022-01-27T12:20:26",
+      "displayed_updated_timezone": null,
+      "publication_time_verified": false,
+      "effective_date": "2022-02-17",
+      "effective_scope": "Registration/depository data transfer on the VSD system only"
+    },
+    {
+      "url": "https://staticfile.hsx.vn/Uploads/UploadDocuments/1641900/Bao%20cao%20thuong%20nien%202022_tv.pdf",
+      "final_url": "https://staticfile.hsx.vn/Uploads/UploadDocuments/1641900/Bao%20cao%20thuong%20nien%202022_tv.pdf",
+      "request_started_at_utc": "2026-10-04T14:08:23.284269+00:00",
+      "collected_at_utc": "2026-10-04T14:08:35.306002+00:00",
+      "http_status": 200,
+      "content_type": "application/pdf",
+      "snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-session-20220217\\hose_annual_report_2022.pdf",
+      "snapshot_kind": "ORIGINAL_HTTP_RESPONSE_BODY",
+      "byte_length": 11923116,
+      "sha256": "5ebc07d70af3a540469a5954a4abd5a75a9e3b8d64ba35fda42095b49231460f",
+      "source_id": "hose-annual-2022",
+      "publication_time": null,
+      "publication_time_verified": false,
+      "pdf_creation_metadata": "D:20230601155302+07'00'",
+      "pdf_modification_metadata": "D:20230602154727+07'00'",
+      "metadata_is_publication_proof": false,
+      "locator": {
+        "physical_page": 47,
+        "printed_page": 97,
+        "table": "NEWLY LISTED COMPANIES IN 2022",
+        "row": "3 CTR",
+        "date_column_vietnamese": "Ngày giao dịch",
+        "date_column_english": "Listing date"
+      }
+    },
+    {
+      "url": "https://staticfile.hsx.vn/Uploads/News/6571266f2f084c4e80b7ca12a4e10f63/20220215_20220215%20-%20CTR%20-%20TB%20ngay%20giao%20dich%20dau%20tien.pdf",
+      "request_started_at_utc": "2026-10-04T14:39:38.775902+00:00",
+      "final_url": "https://staticfile.hsx.vn/Uploads/News/6571266f2f084c4e80b7ca12a4e10f63/20220215_20220215%20-%20CTR%20-%20TB%20ngay%20giao%20dich%20dau%20tien.pdf",
+      "http_status": 200,
+      "content_type": "application/pdf",
+      "collected_at_utc": "2026-10-04T14:39:40.276027+00:00",
+      "snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\hose-original-0.pdf",
+      "snapshot_kind": "ORIGINAL_HTTP_RESPONSE_BODY",
+      "byte_length": 234905,
+      "sha256": "a8ec7676fb47db068dc663d356d1a1eac6e4b7be17a296a6895ded74e7fb28e5",
+      "source_id": "hose-first-trading-191-20220215",
+      "document_number": "191/TB-SGDHCM",
+      "document_issue_date": "2022-02-15",
+      "issuer_authority": "Sở Giao dịch Chứng khoán Thành phố Hồ Chí Minh",
+      "document_kind": "SIGNED_STAMPED_SCAN_FIRST_TRADING_NOTICE",
+      "title": "THÔNG BÁO - Về việc niêm yết và ngày giao dịch đầu tiên của cổ phiếu",
+      "original_page_count": 1,
+      "locator": {
+        "physical_page": 1,
+        "printed_page": "1/1"
+      },
+      "verification_method": "Manual visual review of the complete original scan and a higher-resolution header render; no embedded PDF text layer",
+      "visual_review_at_utc": "2026-10-04T14:42:39.272955+00:00",
+      "security_identity_in_document": {
+        "symbol": "CTR",
+        "issuer": "Tổng Công ty cổ phần Công trình Viettel",
+        "type": "COMMON_SHARES",
+        "isin": null
+      },
+      "isin_binding": {
+        "source_id": "vsdc-transfer-147589",
+        "method": "Join the explicitly matching symbol and issuer; ISIN is stated by VSD, not by this HOSE notice"
+      },
+      "first_official_trading_date": "2022-02-23",
+      "listing_effective_date": "2021-12-27",
+      "referenced_listing_decision": {
+        "number": "727/QĐ-SGDHCM",
+        "date": "2021-12-27",
+        "status": "REFERENCE_IN_NOTICE_ONLY_NOT_SEPARATELY_QUALIFIED"
+      },
+      "signatory_as_printed": "Trần Anh Đào",
+      "signature_cryptographically_verified": false,
+      "pdf_creation_metadata": "D:20220215134520+07'00'",
+      "pdf_modification_metadata": "D:20220215134520+07'00'",
+      "metadata_is_publication_proof": false,
+      "publication_time_verified": false,
+      "issuer_copy": {
+        "url": "https://viettelconstruction.com.vn/wp-content/uploads.bak/2022/02/20220215_20220215-CTR-TB-ngay-giao-dich-dau-tien.pdf",
+        "request_started_at_utc": "2026-10-04T14:36:43.429784+00:00",
+        "final_url": "https://viettelconstruction.com.vn/wp-content/uploads.bak/2022/02/20220215_20220215-CTR-TB-ngay-giao-dich-dau-tien.pdf",
+        "http_status": 200,
+        "content_type": "application/pdf",
+        "collected_at_utc": "2026-10-04T14:36:43.970233+00:00",
+        "snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\issuer-original-retry-0.pdf",
+        "snapshot_kind": "ORIGINAL_HTTP_RESPONSE_BODY",
+        "byte_length": 234905,
+        "sha256": "a8ec7676fb47db068dc663d356d1a1eac6e4b7be17a296a6895ded74e7fb28e5"
+      },
+      "issuer_disclosure_index": {
+        "url": "https://viettelconstruction.com.vn/quan-he-co-dong/cong-bo-thong-tin/",
+        "request_started_at_utc": "2026-10-04T14:34:36.434039+00:00",
+        "final_url": "https://viettelconstruction.com.vn/quan-he-co-dong/cong-bo-thong-tin/",
+        "http_status": 200,
+        "content_type": "text/html; charset=UTF-8",
+        "collected_at_utc": "2026-10-04T14:34:37.968344+00:00",
+        "snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\notice-archive-1.html",
+        "snapshot_kind": "ORIGINAL_HTTP_RESPONSE_BODY",
+        "byte_length": 705941,
+        "sha256": "0d6bb856075356051590431a4c28430ceacd32e600fdb7aa014be6075424b285"
+      },
+      "issuer_index_displayed_publication_at": "2022-02-16T03:37:19+07:00",
+      "hose_notice_api": {
+        "url": "https://api.hsx.vn/n/api/v1/1/news/1500539",
+        "request_started_at_utc": "2026-10-04T14:36:06.865978+00:00",
+        "final_url": "https://api.hsx.vn/n/api/v1/1/news/1500539",
+        "http_status": 200,
+        "content_type": "application/json; charset=utf-8",
+        "collected_at_utc": "2026-10-04T14:36:07.206290+00:00",
+        "snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\hose-notice-detail-0.html",
+        "snapshot_kind": "ORIGINAL_HTTP_RESPONSE_BODY",
+        "byte_length": 1002,
+        "sha256": "712f2c4497023f3acddc74609b30d12dff0ed4a3da70ee5f94eec1c68cd65d8d"
+      },
+      "hose_attachment_api": {
+        "url": "https://api.hsx.vn/m/api/v1/1/mediafiles/1/1500539?pageIndex=1&pageSize=5&year=0",
+        "request_started_at_utc": "2026-10-04T14:39:03.828340+00:00",
+        "final_url": "https://api.hsx.vn/m/api/v1/1/mediafiles/1/1500539?pageIndex=1&pageSize=5&year=0",
+        "http_status": 200,
+        "content_type": "application/json; charset=utf-8",
+        "collected_at_utc": "2026-10-04T14:39:04.334361+00:00",
+        "snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\hose-attachment-0.html",
+        "snapshot_kind": "ORIGINAL_HTTP_RESPONSE_BODY",
+        "byte_length": 498,
+        "sha256": "6021bf504744a95bd8041074a5a040ba334e875894e3066641515cdc77f244d7"
+      },
+      "snapshot_equivalence": "HOSE original and issuer copy are byte-identical at collection; this does not prove historical byte availability"
+    }
+  ],
+  "unsuccessful_collection_attempts": [
+    {
+      "url": "https://ssc.gov.vn/webcenter/portal/ubck/pages_r/m/thngtinthtrng/thngkthtrng/thngtinhose/tintchose?docType=TinBai&mucHienThi=188&selectedPage=20",
+      "request_started_at_utc": "2026-10-04T14:05:39.045723+00:00",
+      "attempt_ended_at_utc": "2026-10-04T14:05:59.113231+00:00",
+      "status": "UNRESOLVED_FETCH_FAILED",
+      "error_type": "URLError",
+      "error": "<urlopen error timed out>",
+      "snapshot_path": null,
+      "sha256": null
+    }
+  ],
+  "claims": [
+    {
+      "id": "security_identity",
+      "support": "DIRECT",
+      "source_id": "vsdc-transfer-147589",
+      "value": {
+        "symbol": "CTR",
+        "isin": "VN000000CTR4",
+        "issuer": "Tổng Công ty cổ phần Công trình Viettel"
+      },
+      "locator": "Article fields: issuer, security code, ISIN"
+    },
+    {
+      "id": "depository_transfer",
+      "support": "DIRECT",
+      "source_id": "vsdc-transfer-147589",
+      "value": {
+        "old_venue_as_printed": "UpCOM",
+        "new_venue": "HOSE",
+        "effective_date": "2022-02-17",
+        "scope": "VSD_REGISTRATION_DEPOSITORY_SYSTEM"
+      },
+      "locator": "Article fields: old venue, new venue, effective date; following VSD system statement",
+      "establishes_tradability": false
+    },
+    {
+      "id": "retrospective_hose_table_date",
+      "support": "DIRECT_AS_LABELLED",
+      "source_id": "hose-annual-2022",
+      "value": "2022-02-23",
+      "locator": {
+        "physical_page": 47,
+        "printed_page": 97,
+        "table": "NEWLY LISTED COMPANIES IN 2022",
+        "row": "3 CTR",
+        "date_column_vietnamese": "Ngày giao dịch",
+        "date_column_english": "Listing date"
+      },
+      "establishes_first_trading_day_or_status_on_target": false
+    },
+    {
+      "id": "hose_first_official_trading",
+      "support": "DIRECT_ORIGINAL_NOTICE",
+      "source_id": "hose-first-trading-191-20220215",
+      "value": "2022-02-23",
+      "document_number": "191/TB-SGDHCM",
+      "document_issue_date": "2022-02-15",
+      "locator": {
+        "physical_page": 1,
+        "heading": "First-trading notice heading; bullet below the listing-effective-date bullet"
+      },
+      "exact_excerpts": [
+        "Về việc niêm yết và ngày giao dịch đầu tiên của cổ phiếu",
+        "Ngày chính thức giao dịch: 23/02/2022"
+      ],
+      "transcription_method": "MANUAL_VISUAL_REVIEW_BOUND_TO_ORIGINAL_PDF_SHA256",
+      "listing_date_is_not_trading_date": true
+    },
+    {
+      "id": "hose_target_session_before_first_trading",
+      "support": "EXPLICIT_FIRST_TRADING_BOUNDARY_APPLIED_TO_TARGET_DATE",
+      "source_id": "hose-first-trading-191-20220215",
+      "depends_on_claim": "hose_first_official_trading",
+      "symbol": "CTR",
+      "venue": "HOSE",
+      "session_date": "2022-02-17",
+      "value": "NOT_TRADING",
+      "meaning": "Official first-trading date had not arrived for this security on HOSE; not a suspension or an unlisted-status assertion",
+      "comparison": "2022-02-17 < 2022-02-23",
+      "document_scope": "The explicit first/official trading start supports this date boundary. The notice does not literally mention 2022-02-17; the date comparison is stated openly.",
+      "excluded_inferences": [
+        "UPCoM status",
+        "all-venue transfer gap",
+        "exchange-wide calendar",
+        "provider completion",
+        "price basis",
+        "actual trades on the first day",
+        "historical byte availability"
+      ]
+    }
+  ],
+  "symbol_session_schema_mapping": {
+    "symbol": "CTR",
+    "venue": "HOSE",
+    "target_session": "2022-02-17",
+    "status": "NOT_TRADING",
+    "source_identity": "VSD-transfer-147589+HOSE-first-trading-191-20220215",
+    "snapshot_identity": "sha256:1d8a0290c4903bb58fd49b461a4eaff1871fc792a4061d047aa3663d1b2bea6f",
+    "source_references": [
+      "https://vsdc.vn/vi/ad/147589#sha256=94d8f196adfdf16e437f0e5f1ea79a1afab0bafeae92a0e2cfc84cdf2f519285",
+      "https://staticfile.hsx.vn/Uploads/News/6571266f2f084c4e80b7ca12a4e10f63/20220215_20220215%20-%20CTR%20-%20TB%20ngay%20giao%20dich%20dau%20tien.pdf#sha256=a8ec7676fb47db068dc663d356d1a1eac6e4b7be17a296a6895ded74e7fb28e5"
+    ]
+  },
+  "snapshot_identity_definition": "SHA-256 of UTF-8 compact JSON of the sorted list of original source SHA-256 strings; this identifies the bundle, not historical availability.",
+  "point_in_time": {
+    "historical_availability_established": false,
+    "captured_today": true,
+    "as_of_session_admissible": false,
+    "limitations": [
+      "The VSD displayed update timestamp precedes the session but has no stated timezone or immutable historical version. Today's bytes can include later changes.",
+      "The HOSE annual table is retrospective; PDF metadata from June 2023 is not a publication timestamp or evidence available on 2022-02-17.",
+      "The signed notice is dated 2022-02-15 and today's issuer index/API display historical timestamps, but current collection and byte agreement do not establish the same bytes or claims available as of 2022-02-17. PDF metadata and the API approval timestamp are not historical archival proof."
+    ]
+  },
+  "gate_mapping": [
+    {
+      "gate": "Security identity and transfer destination/effective claim",
+      "status": "SUPPORTED_RESTRICTED_SCOPE",
+      "claims": [
+        "security_identity",
+        "depository_transfer"
+      ]
+    },
+    {
+      "gate": "SymbolSessionEvidence construction and source attribution",
+      "status": "SCHEMA_VALID_ONLY",
+      "note": "Attribution syntax and NOT_TRADING mapping for this date are checked. ISIN joins VSD source explicitly; no automatic source resolver, interval schema or point-in-time attestation is added."
+    },
+    {
+      "gate": "Policy acceptance 1: reject actual CTR inactive dates",
+      "status": "SINGLE_HOSE_DATE_BOUNDARY_SUPPORTED_GLOBAL_GATE_BLOCKED",
+      "note": "The original notice establishes a first official trading date after the target. Only CTR/HOSE/2022-02-17 maps NOT_TRADING. Full CTR transfer gap, all target dates and real-calendar/provider rejection exercise remain unqualified."
+    },
+    {
+      "gate": "Policy acceptance 2 / real symbol-session validity",
+      "status": "SINGLE_SESSION_MAPPING_SUPPORTED_GLOBAL_GATE_BLOCKED",
+      "note": "This target maps NOT_TRADING from the original notice, not depository transfer or OHLCV. Real-universe coverage and source resolver integration remain BLOCKED; missing calendar still yields UNRESOLVED."
+    },
+    {
+      "gate": "Shadow completed-session 1: exchange calendar",
+      "status": "BLOCKED",
+      "note": "No HOSE 2022 calendar and exceptional-closure coverage was qualified."
+    },
+    {
+      "gate": "Shadow completed-session 3-5: publication, row and retained completion evidence",
+      "status": "BLOCKED",
+      "note": "No provider observations, watermark, approved measured delay or actual candidate row is supplied."
+    },
+    {
+      "gate": "Historical point-in-time and research eligibility",
+      "status": "BLOCKED",
+      "note": "No historical source version, basis/event lineage or incident-window exclusion; research_eligible remains false."
+    }
+  ],
+  "unresolved": [
+    {
+      "claim": "Historical availability and complete amendment/contrary-notice coverage for the HOSE start-date document",
+      "resolved_part": "Notice 191/TB-SGDHCM dated 2022-02-15 directly establishes the first official trading boundary at 2022-02-23; target 2022-02-17 precedes it.",
+      "required_document": "Independently timestamped historical archive/publication evidence for this original notice, plus any applicable original amendment or contrary trading-status notice; current site indexes and metadata do not establish archive completeness.",
+      "integration": "Retrospective source review only. No as-of-session or research promotion; re-review if contrary official evidence is found."
+    },
+    {
+      "claim": "CTR last UPCoM session / full transfer gap",
+      "required_document": "Original HNX CTR cancellation-of-trading-registration notice with effective/last-trading dates and amendments; needed only before asserting the all-venue transfer gap."
+    },
+    {
+      "claim": "HOSE calendar state on 2022-02-17",
+      "required_document": "Authoritative HOSE 2022 session calendar and exceptional-closure notices covering the date.",
+      "integration": "CalendarSessionEvidence, independently of symbol lifecycle."
+    },
+    {
+      "claim": "Exact source claims available as of the historical session",
+      "required_document": "An independently dated archived version or original signed publication plus historical archive/publication evidence; a displayed old timestamp or today's hash is insufficient."
+    },
+    {
+      "claim": "Provider completion, series basis/version, research windows",
+      "required_document": "Separate attributable provider completion and basis/version/event/incident lineage evidence; not collected or inferred in this packet."
+    }
+  ],
+  "next_step": "Acquire an independently dated historical archive/publication record for notice 191/TB-SGDHCM; verify version and any linked amendments without changing writers or claiming research eligibility.",
+  "side_effects": "Artifact only. No database access, provider fetch, writer activation or eligibility promotion.",
+  "symbol_session_eligible": false,
+  "operational_eligible": false,
+  "operational_admission_scope": "Actual completed-session check without calendar is UNRESOLVED; the symbol itself is ineligible. A synthetic open-calendar negative control returns REJECTED/SYMBOL_NOT_TRADING. No admission or DB write was attempted.",
+  "review_update": {
+    "previous_packet_sha256": "89385147ba1158c6c128acd7c2b9b2dcbff93b4f4f56ae45e5103b87c5126278",
+    "previous_packet_snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\prior_evidence_packet.json",
+    "status_before": "UNKNOWN",
+    "status_after": "NOT_TRADING",
+    "only_target": "CTR/HOSE/2022-02-17",
+    "prior_sources_and_claims_preserved": true,
+    "prior_check_script_and_results_preserved": true,
+    "focused_checks_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\check_notice_packet.py",
+    "focused_results_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\notice_packet_check_results.json"
+  },
+  "checkpoint": {
+    "scope": "Offline relocation of already-collected bytes; source objects, claims and original collection timestamps unchanged. No new source research.",
+    "snapshot_paths": {
+      "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-session-20220217\\hose_annual_report_2022.pdf": "research/symbol_session_evidence/CTR_2022-02-17/sources/hose_annual_report_2022.pdf",
+      "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\hose-original-0.pdf": "research/symbol_session_evidence/CTR_2022-02-17/sources/hose-original-0.pdf",
+      "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\issuer-original-retry-0.pdf": "research/symbol_session_evidence/CTR_2022-02-17/sources/issuer-original-retry-0.pdf",
+      "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\notice-archive-1.html": "research/symbol_session_evidence/CTR_2022-02-17/sources/notice-archive-1.html",
+      "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\hose-notice-detail-0.html": "research/symbol_session_evidence/CTR_2022-02-17/sources/hose-notice-detail-0.html",
+      "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\hose-attachment-0.html": "research/symbol_session_evidence/CTR_2022-02-17/sources/hose-attachment-0.html",
+      "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\prior_evidence_packet.json": "research/symbol_session_evidence/CTR_2022-02-17/history/prior_evidence_packet.json",
+      "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\prior_collection_manifest.json": "research/symbol_session_evidence/CTR_2022-02-17/history/prior_collection_manifest.json",
+      "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\prior_README.md": "research/symbol_session_evidence/CTR_2022-02-17/history/prior_README.md",
+      "C:\\Users\\hello\\Desktop\\quant-stock\\research\\symbol_session_evidence\\CTR_2022-02-17\\evidence_packet.json": "research/symbol_session_evidence/CTR_2022-02-17/history/notice_packet_before_checkpoint.json",
+      "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\notice_packet_check_results.json": "research/symbol_session_evidence/CTR_2022-02-17/history/notice_check_results_before_checkpoint.json"
+    },
+    "snapshot_inventory": [
+      {
+        "original_snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-session-20220217\\hose_annual_report_2022.pdf",
+        "repository_path": "research/symbol_session_evidence/CTR_2022-02-17/sources/hose_annual_report_2022.pdf",
+        "byte_length": 11923116,
+        "sha256": "5ebc07d70af3a540469a5954a4abd5a75a9e3b8d64ba35fda42095b49231460f"
+      },
+      {
+        "original_snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\hose-original-0.pdf",
+        "repository_path": "research/symbol_session_evidence/CTR_2022-02-17/sources/hose-original-0.pdf",
+        "byte_length": 234905,
+        "sha256": "a8ec7676fb47db068dc663d356d1a1eac6e4b7be17a296a6895ded74e7fb28e5"
+      },
+      {
+        "original_snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\issuer-original-retry-0.pdf",
+        "repository_path": "research/symbol_session_evidence/CTR_2022-02-17/sources/issuer-original-retry-0.pdf",
+        "byte_length": 234905,
+        "sha256": "a8ec7676fb47db068dc663d356d1a1eac6e4b7be17a296a6895ded74e7fb28e5"
+      },
+      {
+        "original_snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\notice-archive-1.html",
+        "repository_path": "research/symbol_session_evidence/CTR_2022-02-17/sources/notice-archive-1.html",
+        "byte_length": 705941,
+        "sha256": "0d6bb856075356051590431a4c28430ceacd32e600fdb7aa014be6075424b285"
+      },
+      {
+        "original_snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\hose-notice-detail-0.html",
+        "repository_path": "research/symbol_session_evidence/CTR_2022-02-17/sources/hose-notice-detail-0.html",
+        "byte_length": 1002,
+        "sha256": "712f2c4497023f3acddc74609b30d12dff0ed4a3da70ee5f94eec1c68cd65d8d"
+      },
+      {
+        "original_snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\hose-attachment-0.html",
+        "repository_path": "research/symbol_session_evidence/CTR_2022-02-17/sources/hose-attachment-0.html",
+        "byte_length": 498,
+        "sha256": "6021bf504744a95bd8041074a5a040ba334e875894e3066641515cdc77f244d7"
+      },
+      {
+        "original_snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\prior_evidence_packet.json",
+        "repository_path": "research/symbol_session_evidence/CTR_2022-02-17/history/prior_evidence_packet.json",
+        "byte_length": 9907,
+        "sha256": "89385147ba1158c6c128acd7c2b9b2dcbff93b4f4f56ae45e5103b87c5126278"
+      },
+      {
+        "original_snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\prior_collection_manifest.json",
+        "repository_path": "research/symbol_session_evidence/CTR_2022-02-17/history/prior_collection_manifest.json",
+        "byte_length": 1099,
+        "sha256": "8b5221ce07271363082de748df764b0a8fbaf8ecef0429e0afe953c2ab8acab0"
+      },
+      {
+        "original_snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\prior_README.md",
+        "repository_path": "research/symbol_session_evidence/CTR_2022-02-17/history/prior_README.md",
+        "byte_length": 5970,
+        "sha256": "4e5f87b60d3428eb720eb518695219c78931cf8170d3356bcfff476ff714e423"
+      },
+      {
+        "original_snapshot_path": "C:\\Users\\hello\\Desktop\\quant-stock\\research\\symbol_session_evidence\\CTR_2022-02-17\\evidence_packet.json",
+        "repository_path": "research/symbol_session_evidence/CTR_2022-02-17/history/notice_packet_before_checkpoint.json",
+        "byte_length": 20029,
+        "sha256": "8c49f83327f628da04991d94825317c7b7294b163d37f7abd4d44ebd405bd454"
+      },
+      {
+        "original_snapshot_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-ctr-first-trading-notice\\notice_packet_check_results.json",
+        "repository_path": "research/symbol_session_evidence/CTR_2022-02-17/history/notice_check_results_before_checkpoint.json",
+        "byte_length": 830,
+        "sha256": "be64ce8eebc010d069d33e58730acd8f2c8abb578da7aa208c0a693c8f037ddf"
+      }
+    ],
+    "current_checker": "research/symbol_session_evidence/CTR_2022-02-17/check_notice_packet.py",
+    "current_results": "research/symbol_session_evidence/CTR_2022-02-17/notice_packet_check_results.json",
+    "historical_availability": "UNVERIFIED",
+    "excluded_artifacts": "Discovery/challenge/cookie/cache bodies, rendered inspections and fetch scripts remain outside this checkpoint; not claim evidence."
+  }
+}
