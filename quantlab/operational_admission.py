@@ -164,6 +164,17 @@ def _symbol_session_reasons(
     return tuple(mapping[reason] for reason in completed_reasons if reason in mapping)
 
 
+def historical_revision_review(guard: GuardResult) -> OperationalAdmissionResult:
+    """Denial-only review classification, not full operational admission."""
+    if not guard.revisions:
+        raise ValueError("historical revision review requires detected changes")
+    return _result(
+        OperationalAdmission.HISTORICAL_REVISION_REQUIRES_REVIEW,
+        (OperationalReason.HISTORICAL_REVISION_NOT_APPEND_ONLY,),
+        guard,
+    )
+
+
 def evaluate_operational_admission(
     batch: PreparedPriceBatch,
     guard: GuardResult,
@@ -227,11 +238,7 @@ def evaluate_operational_admission(
     # Attribution explains a revision; even a D4A PASS cannot authorize an
     # operational batch to append beyond a changed historical overlap.
     if guard.revisions:
-        return _result(
-            OperationalAdmission.HISTORICAL_REVISION_REQUIRES_REVIEW,
-            (OperationalReason.HISTORICAL_REVISION_NOT_APPEND_ONLY,),
-            guard,
-        )
+        return historical_revision_review(guard)
 
     if guard.decision is GuardDecision.PASS:
         return _result(
@@ -305,5 +312,6 @@ __all__ = [
     "ShadowDailyStatus",
     "UNKNOWN",
     "evaluate_operational_admission",
+    "historical_revision_review",
     "shadow_daily_status",
 ]

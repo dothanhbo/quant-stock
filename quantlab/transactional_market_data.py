@@ -44,6 +44,7 @@ from quantlab.operational_admission import (
     OperationalReason,
     SymbolIdentityState,
     evaluate_operational_admission,
+    historical_revision_review,
 )
 from quantlab.preupdate_market_data_guard import (
     AdjustmentBasis,
@@ -381,6 +382,7 @@ class CommitPriceBatchResult:
     guard_result: GuardResult
     rows_written: int
     idempotent_replay: bool
+    revision_review_required: bool = False
 
 
 @dataclass(frozen=True, slots=True)
@@ -1017,6 +1019,7 @@ def _existing_receipt(
         _guard_result_from_json(row[2]),
         row[3],
         True,
+        "revision_review" in json.loads(row[2]),
     )
 
 
@@ -1040,7 +1043,12 @@ def _existing_shadow_receipt(
             f"operation id {batch.operation_id!r} already names fingerprint {row[0]}"
         )
     guard = _guard_result_from_json(row[2])
-    if row[4] is None:
+    review = json.loads(row[2]).get("revision_review")
+    if row[4] is None and review is not None:
+        # New D4B1 rejected PASS receipts must not become shadow guard successes.
+        # Receipt-only review remains rejected; replay does not create staging.
+        operational = _operational_result_from_json(_json(review["operational_result"]))
+    elif row[4] is None:
         operational = OperationalAdmissionResult(
             POLICY,
             (
@@ -1078,8 +1086,12 @@ def _insert_receipt(
     result: GuardResult,
     status: ReceiptStatus,
     rows_written: int,
+    *,
+    revision_review: dict[str, object] | None = None,
 ) -> None:
     result_payload = _guard_result_dict(result)
+    if revision_review is not None:
+        result_payload["revision_review"] = revision_review
     connection.execute(
         """
         INSERT INTO market_ingestion_receipts (
@@ -1424,7 +1436,9 @@ def commit_price_batch(
 
     The schema must already exist.  ``failure_injector`` is a test seam; any
     exception it raises is handled like any other pre-commit failure and rolls
-    the entire transaction back.
+    the entire transaction back. Detected revisions always reject the whole
+    batch, even on Guard PASS. This is not full D4B2 admission. Consumers must
+    use receipt status, not Guard PASS alone, to determine write success.
     """
     inject = failure_injector or (lambda _stage: None)
     with _connection(target, busy_timeout_seconds=busy_timeout_seconds) as connection:
@@ -1457,6 +1471,47 @@ def commit_price_batch(
                 boundary_evidence=batch.boundary_evidence,
             )
             inject("after_guard")
+
+            if guard_result.revisions:
+                staging_columns = {
+                    "operation_id", "batch_fingerprint", "symbol", "ingestion_intent",
+                    "staging_outcome", "normalized_content_sha256", "normalized_rows_json",
+                    "metadata_json", "data_class", "research_eligible", "created_at_utc",
+                }
+                can_stage = (
+                    _RECEIPT_D4B2_COLUMNS.keys() <= _table_columns(connection, "market_ingestion_receipts")
+                    and staging_columns <= _table_columns(connection, "market_ingestion_staging")
+                )
+                review_result = historical_revision_review(guard_result)
+                review_result = replace(review_result, limitations=review_result.limitations + (
+                    "D4B1_REVISION_ONLY_NOT_FULL_OPERATIONAL_ADMISSION",
+                ))
+                if not can_stage:
+                    review_result = replace(
+                        review_result, admission=OperationalAdmission.OPERATIONAL_REJECTED,
+                        limitations=review_result.limitations + ("D4B1_RECEIPT_ONLY_REVISION_REVIEW",),
+                    )
+                _insert_receipt(
+                    connection, batch, guard_result, ReceiptStatus.REJECTED, 0,
+                    revision_review={
+                        "operational_result": _operational_result_dict(review_result),
+                        "staging_persisted": can_stage,
+                        "research_eligible": False,
+                        "normalized_rows": [row.as_identity_dict() for row in batch.rows],
+                        "revision_evidence": [_revision_evidence_dict(item) for item in batch.revision_evidence],
+                        "source_references": list(batch.source_references),
+                    },
+                )
+                inject("after_rejection_receipt")
+                if can_stage:
+                    _attach_operational_receipt(connection, batch, review_result)
+                    _insert_staging_candidate(connection, batch, review_result)
+                inject("after_rejection_or_staging")
+                connection.commit()
+                return CommitPriceBatchResult(
+                    batch.operation_id, batch.batch_fingerprint, ReceiptStatus.REJECTED,
+                    guard_result, 0, False, True,
+                )
 
             if guard_result.decision is not GuardDecision.PASS:
                 _insert_receipt(

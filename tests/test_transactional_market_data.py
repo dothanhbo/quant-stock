@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import date, timedelta
 import json
 from pathlib import Path
@@ -13,9 +14,13 @@ from quantlab.preupdate_market_data_guard import (
     AdjustmentBasis,
     CoverageMetadata,
     CoverageState,
+    EvidenceKind,
     GuardDecision,
     GuardReason,
+    RevisionClaim,
+    RevisionEvidence,
 )
+from quantlab.operational_admission import OperationalAdmission, ShadowDailyStatus, shadow_daily_status
 from quantlab.transactional_market_data import (
     ArchiveKind,
     AttributionState,
@@ -26,7 +31,10 @@ from quantlab.transactional_market_data import (
     ReceiptStatus,
     SCHEMA_VERSION,
     commit_price_batch,
+    commit_price_batch_shadow,
     initialize_transactional_ingestion_schema,
+    migrate_operational_admission_schema,
+    migrate_shadow_runtime_foundation_schema,
 )
 
 
@@ -452,3 +460,185 @@ def test_operation_identity_is_separate_from_deterministic_batch_fingerprint() -
     assert first.operation_id != second.operation_id
     assert first.batch_fingerprint == second.batch_fingerprint
     assert first.normalized_content_sha256 == second.normalized_content_sha256
+
+
+def _revision_batch(kind: EvidenceKind | None = EvidenceKind.PROVIDER_CORRECTION):
+    original, changed = _row(3), _row(3, close_addition=0.6)
+    evidence = () if kind is None else (RevisionEvidence("AAA", kind,
+        (RevisionClaim(original.session, "close", original.close, changed.close),),
+        ("fixture://reviewed-exact-revision",)),)
+    return replace(_batch("detected-revision", (_row(2), changed, _row(4))), revision_evidence=evidence)
+
+
+def _migrate_review_schema(connection):
+    migrate_operational_admission_schema(connection)
+    migrate_shadow_runtime_foundation_schema(connection)
+
+
+def _all_tables(connection):
+    tables = [row[0] for row in connection.execute(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name NOT LIKE 'sqlite_%' ORDER BY name")]
+    return {table: connection.execute(f'SELECT * FROM "{table}" ORDER BY rowid').fetchall() for table in tables}
+
+
+def _deny_price_writes(attempts):
+    def authorize(action, table, column, database, trigger):
+        if action in (sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE, sqlite3.SQLITE_DELETE) and table in (
+            "prices", "market_price_provenance",
+        ):
+            attempts.append((action, table))
+            return sqlite3.SQLITE_DENY
+        return sqlite3.SQLITE_OK
+    return authorize
+
+
+@pytest.mark.parametrize("migrated", (False, True), ids=("base-receipt-review", "existing-staging"))
+@pytest.mark.parametrize("kind", (EvidenceKind.PROVIDER_CORRECTION, EvidenceKind.CORPORATE_ACTION_RESTATEMENT, None))
+def test_d4b1_detected_revision_blocks_entire_batch_and_replays_without_writes(tmp_path, migrated, kind):
+    path = _database(tmp_path)
+    batch = _revision_batch(kind)
+    with sqlite3.connect(path) as connection:
+        if migrated: _migrate_review_schema(connection)
+        before = _all_tables(connection)
+        attempts = []
+        connection.set_authorizer(_deny_price_writes(attempts))
+        result = commit_price_batch(connection, batch)
+        after = _all_tables(connection)
+        replay = commit_price_batch(connection, batch)
+        assert _all_tables(connection) == after
+        connection.set_authorizer(None)
+        assert attempts == []
+        assert result.status is ReceiptStatus.REJECTED
+        assert result.guard_result.decision is (GuardDecision.PASS if kind is not None else GuardDecision.BLOCK)
+        assert result.rows_written == 0
+        assert result.revision_review_required
+        assert replay.idempotent_replay and replay.revision_review_required
+        assert replay.status is ReceiptStatus.REJECTED and replay.rows_written == 0
+        assert replay.guard_result == result.guard_result
+        assert set(before) == set(after)  # No automatic migration, even on base schema.
+        for table in ("prices", "market_price_provenance", "market_ingestion_manifests"):
+            assert after[table] == before[table]
+        assert len(after["market_ingestion_receipts"]) == len(before["market_ingestion_receipts"]) + 1
+        assert all(row in after["market_ingestion_receipts"] for row in before["market_ingestion_receipts"])
+        payload = json.loads(connection.execute("SELECT guard_result_json FROM market_ingestion_receipts"
+            " WHERE operation_id=?", (batch.operation_id,)).fetchone()[0])
+        changes = [{"session": _row(3).session.isoformat(), "field": "close",
+            "existing_value": _row(3).close, "incoming_value": _row(3, close_addition=0.6).close}]
+        assert payload["revisions"] == changes
+        review = payload["revision_review"]
+        expected_evidence = [] if kind is None else [{"symbol": "AAA", "kind": kind.value,
+            "claims": changes, "source_references": ["fixture://reviewed-exact-revision"]}]
+        assert review["revision_evidence"] == expected_evidence
+        assert review["source_references"] == list(batch.source_references)
+        assert review["normalized_rows"] == [row.as_identity_dict() for row in batch.rows]
+        assert review["research_eligible"] is False
+        assert review["operational_result"]["research_eligible"] is False
+        assert review["staging_persisted"] is migrated
+        if migrated:
+            rows_json, metadata_json, eligible = connection.execute("SELECT normalized_rows_json,metadata_json,"
+                "research_eligible FROM market_ingestion_staging WHERE operation_id=?", (batch.operation_id,)).fetchone()
+            assert json.loads(rows_json) == review["normalized_rows"]
+            assert json.loads(metadata_json)["revision_evidence"] == expected_evidence
+            assert eligible == 0
+            assert len(after["market_ingestion_staging"]) == 1
+            assert connection.execute("SELECT research_eligible FROM market_ingestion_receipts WHERE operation_id=?",
+                (batch.operation_id,)).fetchone() == (0,)
+        assert connection.execute("SELECT COUNT(*) FROM prices WHERE time=?", (_row(4).session.isoformat(),)).fetchone() == (0,)
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+
+
+@pytest.mark.parametrize("migrated", (False, True))
+def test_d4b1_unchanged_guard_pass_preserves_existing_upsert_contract(tmp_path, migrated):
+    path = _database(tmp_path)
+    batch = _batch("no-revision-control", tuple(_row(day) for day in range(2, 5)))
+    with sqlite3.connect(path) as connection:
+        if migrated: _migrate_review_schema(connection)
+        result = commit_price_batch(connection, batch)
+        assert result.status is ReceiptStatus.APPROVED and result.rows_written == 3
+        assert result.guard_result.decision is GuardDecision.PASS
+        assert not result.revision_review_required
+        assert connection.execute("SELECT COUNT(*) FROM prices").fetchone() == (5,)
+        assert connection.execute("SELECT COUNT(*) FROM market_price_provenance WHERE operation_id=?",
+            (batch.operation_id,)).fetchone() == (3,)
+        before_replay = _all_tables(connection)
+        replay = commit_price_batch(connection, batch)
+        assert replay.status is ReceiptStatus.APPROVED and not replay.revision_review_required
+        assert replay.idempotent_replay
+        assert _all_tables(connection) == before_replay
+
+
+@pytest.mark.parametrize("migrated", (False, True))
+def test_d4b1_revision_shadow_replay_never_reports_guard_success_or_promotes(tmp_path, migrated):
+    path = _database(tmp_path)
+    batch = _revision_batch()
+    with sqlite3.connect(path) as connection:
+        if migrated: _migrate_review_schema(connection)
+        first = commit_price_batch(connection, batch)
+        assert first.guard_result.decision is GuardDecision.PASS
+        if not migrated: _migrate_review_schema(connection)  # Explicit fixture migration after receipt.
+        before = _all_tables(connection)
+        attempts = []
+        connection.set_authorizer(_deny_price_writes(attempts))
+        replay = commit_price_batch_shadow(connection, batch)
+        connection.set_authorizer(None)
+        assert replay.idempotent_replay and replay.status is ReceiptStatus.REJECTED
+        assert replay.rows_written == 0 and not replay.operational_result.research_eligible
+        assert replay.operational_result.admission is (
+            OperationalAdmission.HISTORICAL_REVISION_REQUIRES_REVIEW if migrated else OperationalAdmission.OPERATIONAL_REJECTED)
+        assert shadow_daily_status(replay.operational_result) is (
+            ShadowDailyStatus.HISTORICAL_REVISION_STAGED if migrated else ShadowDailyStatus.REJECTED)
+        assert attempts == [] and _all_tables(connection) == before
+
+
+@pytest.mark.parametrize("migrated", (False, True))
+@pytest.mark.parametrize("fault_stage", ("after_rejection_receipt", "after_rejection_or_staging"))
+def test_d4b1_revision_review_rollback_is_atomic(tmp_path, migrated, fault_stage):
+    path = _database(tmp_path)
+    batch = _revision_batch()
+    with sqlite3.connect(path) as connection:
+        if migrated: _migrate_review_schema(connection)
+        before = _all_tables(connection)
+        attempts = []
+
+        def fail(stage):
+            if stage == fault_stage:
+                inside = _all_tables(connection)
+                assert len(inside["market_ingestion_receipts"]) == len(before["market_ingestion_receipts"]) + 1
+                if migrated and stage == "after_rejection_or_staging":
+                    assert len(inside["market_ingestion_staging"]) == 1
+                raise RuntimeError("injected review failure")
+
+        connection.set_authorizer(_deny_price_writes(attempts))
+        with pytest.raises(RuntimeError, match="injected review failure"):
+            commit_price_batch(connection, batch, failure_injector=fail)
+        assert not connection.in_transaction
+        assert _all_tables(connection) == before and attempts == []
+        retry = commit_price_batch(connection, batch)
+        connection.set_authorizer(None)
+        assert retry.status is ReceiptStatus.REJECTED and retry.rows_written == 0
+        assert attempts == []
+
+
+def test_legacy_attributed_pass_receipt_replay_retains_original_decision_without_writes(tmp_path):
+    path = _database(tmp_path)
+    batch = _revision_batch()
+    with sqlite3.connect(path) as connection:
+        rejected = commit_price_batch(connection, batch)
+        assert rejected.guard_result.decision is GuardDecision.PASS
+        payload = json.loads(connection.execute("SELECT guard_result_json FROM market_ingestion_receipts"
+            " WHERE operation_id=?", (batch.operation_id,)).fetchone()[0])
+        del payload["revision_review"]
+        # Manufacture the old approved-revision receipt shape on this fixture
+        # only. It is historical decision evidence, not a qualified price state.
+        connection.execute("UPDATE market_ingestion_receipts SET status='APPROVED',rows_written=?,"
+            "guard_result_json=? WHERE operation_id=?", (len(batch.rows), json.dumps(payload), batch.operation_id))
+        connection.commit()
+        before = _all_tables(connection)
+        attempts = []
+        connection.set_authorizer(_deny_price_writes(attempts))
+        replay = commit_price_batch(connection, batch)
+        connection.set_authorizer(None)
+        assert replay.idempotent_replay and replay.status is ReceiptStatus.APPROVED
+        assert replay.rows_written == len(batch.rows)  # Original receipt count, not fresh writes.
+        assert not replay.revision_review_required
+        assert _all_tables(connection) == before and attempts == []
