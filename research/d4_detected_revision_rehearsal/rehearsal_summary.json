@@ -1,0 +1,371 @@
+{
+  "canonical_sha256_after": "f771b314ef2094373c3753def45223dd6e61aec84e15a369fcd52da585265fb6",
+  "canonical_sha256_before": "f771b314ef2094373c3753def45223dd6e61aec84e15a369fcd52da585265fb6",
+  "clone": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\04\\01a10720-75cf-7d50-9214-075861ee51ec\\d4-clone-rehearsal-20261004-v1\\disposable_market.sqlite",
+  "copied_real_price_rows_unchanged": {
+    "count": 189270,
+    "sha256": "fea09ac93b232058ea3689a0b2e5e7d63028ef022cc77d3c0beafd37a2c27daa"
+  },
+  "evidence_kind": "SYNTHETIC_ONLY_NOT_REAL_ELIGIBILITY",
+  "final_state": {
+    "market_ingestion_manifests": {
+      "count": 2,
+      "sha256": "07b5faabd9a7a5de48e9c530970fb924da2808473ab8c192d226443bdd4a8106"
+    },
+    "market_ingestion_receipts": {
+      "count": 4,
+      "sha256": "cc83ac633a9434df1f68900193fbbf19516beedd616d5f6ad04bd24bf99f8ff4"
+    },
+    "market_ingestion_staging": {
+      "count": 2,
+      "sha256": "7fd7efe26240393df8e47acfa24b02b322dd83214df4b22b4f8630c3f307a975"
+    },
+    "market_operation_observations": {
+      "count": 3,
+      "sha256": "b2147cccb9f2b7be51e8257f0e64d3a041c5e9c93049b85d1a2f2e5c7952effa"
+    },
+    "market_operation_requests": {
+      "count": 2,
+      "sha256": "8a403221b3c18afa9a23041f486070b274a83da0e9309ec1d4e5cc31b9e915b4"
+    },
+    "market_price_provenance": {
+      "count": 3,
+      "sha256": "f7735d471ca1ead80fbc550ace900d27fd48d0056773589f8b93625212c1d353"
+    },
+    "prices": {
+      "count": 189273,
+      "sha256": "56aadf0d994526dcbba273f5ba8610fd4e9e7484530513f8d0441c2de2b0e180"
+    }
+  },
+  "foreign_key_check": [],
+  "quick_check": "ok",
+  "result": "PASS",
+  "source": "C:\\Users\\hello\\Desktop\\quant-stock\\data\\market.db",
+  "steps": {
+    "A": {
+      "admission": "NOT_REQUIRED_GUARD_PASS",
+      "generation": 0,
+      "guard": "PASS",
+      "operation_id": "3f8af321f9f8b83ac91eb9fa34810616f59191b0df53db63076e1ffc4bf57d3b",
+      "replay": false,
+      "request_identity": "a7778ff70794f906680c6a37db55780487c7815049e1cff23b3654edc934b51f",
+      "research_eligible": false,
+      "revision_of": null,
+      "rows_written": 1,
+      "status": "APPROVED"
+    },
+    "B": {
+      "admission": "HISTORICAL_REVISION_REQUIRES_REVIEW",
+      "generation": 0,
+      "guard": "PASS",
+      "operation_id": "2535a20e9a9de5a0a18a1a7a8d27b1e959f2f11e5492dcd0929bf8e5de0557a0",
+      "replay": false,
+      "request_identity": "781352fdc3ef12ad27f02ae5c9f0df593049803074857c34b9889ce26768273a",
+      "research_eligible": false,
+      "revision_of": null,
+      "rows_written": 0,
+      "status": "REJECTED"
+    },
+    "B_same_request": {
+      "admission": "HISTORICAL_REVISION_REQUIRES_REVIEW",
+      "generation": 1,
+      "guard": "PASS",
+      "operation_id": "0e1ea35f5b12ee650bd211bf27a2dc2797c0c8bb4176fe540f74c771b7230b8f",
+      "replay": false,
+      "request_identity": "a7778ff70794f906680c6a37db55780487c7815049e1cff23b3654edc934b51f",
+      "research_eligible": false,
+      "revision_of": "3f8af321f9f8b83ac91eb9fa34810616f59191b0df53db63076e1ffc4bf57d3b",
+      "rows_written": 0,
+      "status": "REJECTED"
+    },
+    "C": {
+      "after": {
+        "market_ingestion_manifests": {
+          "count": 2,
+          "sha256": "07b5faabd9a7a5de48e9c530970fb924da2808473ab8c192d226443bdd4a8106"
+        },
+        "market_ingestion_receipts": {
+          "count": 4,
+          "sha256": "cc83ac633a9434df1f68900193fbbf19516beedd616d5f6ad04bd24bf99f8ff4"
+        },
+        "market_ingestion_staging": {
+          "count": 2,
+          "sha256": "7fd7efe26240393df8e47acfa24b02b322dd83214df4b22b4f8630c3f307a975"
+        },
+        "market_operation_observations": {
+          "count": 3,
+          "sha256": "b2147cccb9f2b7be51e8257f0e64d3a041c5e9c93049b85d1a2f2e5c7952effa"
+        },
+        "market_operation_requests": {
+          "count": 2,
+          "sha256": "8a403221b3c18afa9a23041f486070b274a83da0e9309ec1d4e5cc31b9e915b4"
+        },
+        "market_price_provenance": {
+          "count": 3,
+          "sha256": "f7735d471ca1ead80fbc550ace900d27fd48d0056773589f8b93625212c1d353"
+        },
+        "prices": {
+          "count": 189273,
+          "sha256": "56aadf0d994526dcbba273f5ba8610fd4e9e7484530513f8d0441c2de2b0e180"
+        }
+      },
+      "before": {
+        "market_ingestion_manifests": {
+          "count": 2,
+          "sha256": "07b5faabd9a7a5de48e9c530970fb924da2808473ab8c192d226443bdd4a8106"
+        },
+        "market_ingestion_receipts": {
+          "count": 3,
+          "sha256": "a7a7ba850e92e872d7af6b10b688b4da38cfef1cc3f1eece15848fff409da6fa"
+        },
+        "market_ingestion_staging": {
+          "count": 1,
+          "sha256": "8ce72836e89c4d8feea480f7a20698ac74234aa926b85fbf4e09dd5f9ea2d0f2"
+        },
+        "market_operation_observations": {
+          "count": 2,
+          "sha256": "9270d1068d7e4fd08d3a922fbfbb0a8540b3303ec41a775afa6bf0dc7a9dd48e"
+        },
+        "market_operation_requests": {
+          "count": 1,
+          "sha256": "52cd99d433caaab39fa6d27794b884e7c46b2d2b8f28106cf1f18c80e897ca80"
+        },
+        "market_price_provenance": {
+          "count": 3,
+          "sha256": "f7735d471ca1ead80fbc550ace900d27fd48d0056773589f8b93625212c1d353"
+        },
+        "prices": {
+          "count": 189273,
+          "sha256": "56aadf0d994526dcbba273f5ba8610fd4e9e7484530513f8d0441c2de2b0e180"
+        }
+      },
+      "exact_changes": [
+        {
+          "existing_value": 102.5,
+          "field": "close",
+          "incoming_value": 102.6,
+          "session": "2026-09-03"
+        }
+      ],
+      "new_day_absent": true,
+      "price_write_attempts": [],
+      "research_eligible": false,
+      "revision_evidence": {
+        "claims": [
+          {
+            "existing_value": 102.5,
+            "field": "close",
+            "incoming_value": 102.6,
+            "session": "2026-09-03"
+          }
+        ],
+        "kind": "PROVIDER_CORRECTION",
+        "source_references": [
+          "fixture://d4-clone/exact-correction",
+          "market-ingestion-operation:3f8af321f9f8b83ac91eb9fa34810616f59191b0df53db63076e1ffc4bf57d3b"
+        ],
+        "symbol": "ZZD4TEST"
+      }
+    },
+    "D": {
+      "admission": "HISTORICAL_REVISION_REQUIRES_REVIEW",
+      "generation": 0,
+      "guard": "PASS",
+      "operation_id": "2535a20e9a9de5a0a18a1a7a8d27b1e959f2f11e5492dcd0929bf8e5de0557a0",
+      "replay": true,
+      "request_identity": "781352fdc3ef12ad27f02ae5c9f0df593049803074857c34b9889ce26768273a",
+      "research_eligible": false,
+      "revision_of": null,
+      "rows_written": 0,
+      "status": "REJECTED"
+    },
+    "E_append": {
+      "after_rollback": {
+        "market_ingestion_manifests": {
+          "count": 2,
+          "sha256": "07b5faabd9a7a5de48e9c530970fb924da2808473ab8c192d226443bdd4a8106"
+        },
+        "market_ingestion_receipts": {
+          "count": 4,
+          "sha256": "cc83ac633a9434df1f68900193fbbf19516beedd616d5f6ad04bd24bf99f8ff4"
+        },
+        "market_ingestion_staging": {
+          "count": 2,
+          "sha256": "7fd7efe26240393df8e47acfa24b02b322dd83214df4b22b4f8630c3f307a975"
+        },
+        "market_operation_observations": {
+          "count": 3,
+          "sha256": "b2147cccb9f2b7be51e8257f0e64d3a041c5e9c93049b85d1a2f2e5c7952effa"
+        },
+        "market_operation_requests": {
+          "count": 2,
+          "sha256": "8a403221b3c18afa9a23041f486070b274a83da0e9309ec1d4e5cc31b9e915b4"
+        },
+        "market_price_provenance": {
+          "count": 3,
+          "sha256": "f7735d471ca1ead80fbc550ace900d27fd48d0056773589f8b93625212c1d353"
+        },
+        "prices": {
+          "count": 189273,
+          "sha256": "56aadf0d994526dcbba273f5ba8610fd4e9e7484530513f8d0441c2de2b0e180"
+        }
+      },
+      "all_seven_tables_identical": true,
+      "before": {
+        "market_ingestion_manifests": {
+          "count": 2,
+          "sha256": "07b5faabd9a7a5de48e9c530970fb924da2808473ab8c192d226443bdd4a8106"
+        },
+        "market_ingestion_receipts": {
+          "count": 4,
+          "sha256": "cc83ac633a9434df1f68900193fbbf19516beedd616d5f6ad04bd24bf99f8ff4"
+        },
+        "market_ingestion_staging": {
+          "count": 2,
+          "sha256": "7fd7efe26240393df8e47acfa24b02b322dd83214df4b22b4f8630c3f307a975"
+        },
+        "market_operation_observations": {
+          "count": 3,
+          "sha256": "b2147cccb9f2b7be51e8257f0e64d3a041c5e9c93049b85d1a2f2e5c7952effa"
+        },
+        "market_operation_requests": {
+          "count": 2,
+          "sha256": "8a403221b3c18afa9a23041f486070b274a83da0e9309ec1d4e5cc31b9e915b4"
+        },
+        "market_price_provenance": {
+          "count": 3,
+          "sha256": "f7735d471ca1ead80fbc550ace900d27fd48d0056773589f8b93625212c1d353"
+        },
+        "prices": {
+          "count": 189273,
+          "sha256": "56aadf0d994526dcbba273f5ba8610fd4e9e7484530513f8d0441c2de2b0e180"
+        }
+      },
+      "fault_stage": "after_prices_and_links",
+      "inside_transaction": {
+        "market_ingestion_manifests": {
+          "count": 3,
+          "sha256": "8bb2cf6d471d155519121a1e7c15dccb13230e5912f4c0a5ed4afbde6c489911"
+        },
+        "market_ingestion_receipts": {
+          "count": 5,
+          "sha256": "d02e31a785b56c437993d420f29ca52169556497d9304334c7c57be0edd6d4b0"
+        },
+        "market_ingestion_staging": {
+          "count": 2,
+          "sha256": "7fd7efe26240393df8e47acfa24b02b322dd83214df4b22b4f8630c3f307a975"
+        },
+        "market_operation_observations": {
+          "count": 4,
+          "sha256": "f5ed557337a201d19cd4f630cbb820a2c6b14371684b3d47d4d532dd665e691a"
+        },
+        "market_operation_requests": {
+          "count": 2,
+          "sha256": "8a403221b3c18afa9a23041f486070b274a83da0e9309ec1d4e5cc31b9e915b4"
+        },
+        "market_price_provenance": {
+          "count": 4,
+          "sha256": "1d9e4c3600d83878c9ccfa979a06e77b57770df0149378ebafaf9ba238731a2e"
+        },
+        "prices": {
+          "count": 189274,
+          "sha256": "75933738297a971be0f00957b0ca6b1cf724a2cca0cd9babde55a1edccdd4e40"
+        }
+      }
+    },
+    "E_staging": {
+      "after_rollback": {
+        "market_ingestion_manifests": {
+          "count": 2,
+          "sha256": "07b5faabd9a7a5de48e9c530970fb924da2808473ab8c192d226443bdd4a8106"
+        },
+        "market_ingestion_receipts": {
+          "count": 4,
+          "sha256": "cc83ac633a9434df1f68900193fbbf19516beedd616d5f6ad04bd24bf99f8ff4"
+        },
+        "market_ingestion_staging": {
+          "count": 2,
+          "sha256": "7fd7efe26240393df8e47acfa24b02b322dd83214df4b22b4f8630c3f307a975"
+        },
+        "market_operation_observations": {
+          "count": 3,
+          "sha256": "b2147cccb9f2b7be51e8257f0e64d3a041c5e9c93049b85d1a2f2e5c7952effa"
+        },
+        "market_operation_requests": {
+          "count": 2,
+          "sha256": "8a403221b3c18afa9a23041f486070b274a83da0e9309ec1d4e5cc31b9e915b4"
+        },
+        "market_price_provenance": {
+          "count": 3,
+          "sha256": "f7735d471ca1ead80fbc550ace900d27fd48d0056773589f8b93625212c1d353"
+        },
+        "prices": {
+          "count": 189273,
+          "sha256": "56aadf0d994526dcbba273f5ba8610fd4e9e7484530513f8d0441c2de2b0e180"
+        }
+      },
+      "all_seven_tables_identical": true,
+      "before": {
+        "market_ingestion_manifests": {
+          "count": 2,
+          "sha256": "07b5faabd9a7a5de48e9c530970fb924da2808473ab8c192d226443bdd4a8106"
+        },
+        "market_ingestion_receipts": {
+          "count": 4,
+          "sha256": "cc83ac633a9434df1f68900193fbbf19516beedd616d5f6ad04bd24bf99f8ff4"
+        },
+        "market_ingestion_staging": {
+          "count": 2,
+          "sha256": "7fd7efe26240393df8e47acfa24b02b322dd83214df4b22b4f8630c3f307a975"
+        },
+        "market_operation_observations": {
+          "count": 3,
+          "sha256": "b2147cccb9f2b7be51e8257f0e64d3a041c5e9c93049b85d1a2f2e5c7952effa"
+        },
+        "market_operation_requests": {
+          "count": 2,
+          "sha256": "8a403221b3c18afa9a23041f486070b274a83da0e9309ec1d4e5cc31b9e915b4"
+        },
+        "market_price_provenance": {
+          "count": 3,
+          "sha256": "f7735d471ca1ead80fbc550ace900d27fd48d0056773589f8b93625212c1d353"
+        },
+        "prices": {
+          "count": 189273,
+          "sha256": "56aadf0d994526dcbba273f5ba8610fd4e9e7484530513f8d0441c2de2b0e180"
+        }
+      },
+      "fault_stage": "after_rejection_or_staging",
+      "inside_transaction": {
+        "market_ingestion_manifests": {
+          "count": 2,
+          "sha256": "07b5faabd9a7a5de48e9c530970fb924da2808473ab8c192d226443bdd4a8106"
+        },
+        "market_ingestion_receipts": {
+          "count": 5,
+          "sha256": "11f978a91b58c1d717e185e9a077d919e5efce1067d6b497077b2eb52bc91a10"
+        },
+        "market_ingestion_staging": {
+          "count": 3,
+          "sha256": "5b3043e3fc1a81129526d1b58311f048b82e173fc8c43974230e41102e344228"
+        },
+        "market_operation_observations": {
+          "count": 4,
+          "sha256": "134c8373a3fa79ee62e40752d7c5be2d3e6cd398c620d5a33fdc2423f76bb4fd"
+        },
+        "market_operation_requests": {
+          "count": 2,
+          "sha256": "8a403221b3c18afa9a23041f486070b274a83da0e9309ec1d4e5cc31b9e915b4"
+        },
+        "market_price_provenance": {
+          "count": 3,
+          "sha256": "f7735d471ca1ead80fbc550ace900d27fd48d0056773589f8b93625212c1d353"
+        },
+        "prices": {
+          "count": 189273,
+          "sha256": "56aadf0d994526dcbba273f5ba8610fd4e9e7484530513f8d0441c2de2b0e180"
+        }
+      }
+    }
+  }
+}

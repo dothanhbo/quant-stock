@@ -1388,6 +1388,7 @@ def _insert_staging_candidate(
             "kind": batch.archive.kind.value,
         },
         "raw_payload_sha256": batch.raw_payload_sha256,
+        "revision_evidence": [_revision_evidence_dict(item) for item in batch.revision_evidence],
     }
     connection.execute(
         """

@@ -1,0 +1,2 @@
+# These are byte-identical retained records of the completed rehearsal.
+*.json -text whitespace=cr-at-eol

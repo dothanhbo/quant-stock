@@ -42,6 +42,7 @@ class OperationalAdmission(str, Enum):
     BACKFILL_REQUIRES_STAGING = "BACKFILL_REQUIRES_STAGING"
     BOOTSTRAP_PENDING = "BOOTSTRAP_PENDING"
     HISTORICAL_GAP_REQUIRES_REVIEW = "HISTORICAL_GAP_REQUIRES_REVIEW"
+    HISTORICAL_REVISION_REQUIRES_REVIEW = "HISTORICAL_REVISION_REQUIRES_REVIEW"
 
 
 class OperationalReason(str, Enum):
@@ -50,6 +51,7 @@ class OperationalReason(str, Enum):
     EXISTING_HISTORY_REQUIRED = "EXISTING_HISTORY_REQUIRED"
     BACKFILL_NOT_APPEND_ONLY = "BACKFILL_NOT_APPEND_ONLY"
     HISTORICAL_GAP_NOT_APPEND_ONLY = "HISTORICAL_GAP_NOT_APPEND_ONLY"
+    HISTORICAL_REVISION_NOT_APPEND_ONLY = "HISTORICAL_REVISION_NOT_APPEND_ONLY"
     GUARD_BLOCKED = "GUARD_BLOCKED"
     UNEXPECTED_GUARD_REASON = "UNEXPECTED_GUARD_REASON"
     PRICE_BASIS_IS_ONLY_ALLOWED_INSUFFICIENCY = "PRICE_BASIS_IS_ONLY_ALLOWED_INSUFFICIENCY"
@@ -78,6 +80,7 @@ class ShadowDailyStatus(str, Enum):
     BACKFILL_STAGED = "BACKFILL_STAGED"
     BOOTSTRAP_STAGED = "BOOTSTRAP_STAGED"
     HISTORICAL_GAP_STAGED = "HISTORICAL_GAP_STAGED"
+    HISTORICAL_REVISION_STAGED = "HISTORICAL_REVISION_STAGED"
 
 
 OPERATIONAL_ONLY = "OPERATIONAL_ONLY"
@@ -122,6 +125,7 @@ class OperationalAdmissionResult:
             OperationalAdmission.BACKFILL_REQUIRES_STAGING,
             OperationalAdmission.BOOTSTRAP_PENDING,
             OperationalAdmission.HISTORICAL_GAP_REQUIRES_REVIEW,
+            OperationalAdmission.HISTORICAL_REVISION_REQUIRES_REVIEW,
         }
 
 
@@ -220,6 +224,15 @@ def evaluate_operational_admission(
             guard,
         )
 
+    # Attribution explains a revision; even a D4A PASS cannot authorize an
+    # operational batch to append beyond a changed historical overlap.
+    if guard.revisions:
+        return _result(
+            OperationalAdmission.HISTORICAL_REVISION_REQUIRES_REVIEW,
+            (OperationalReason.HISTORICAL_REVISION_NOT_APPEND_ONLY,),
+            guard,
+        )
+
     if guard.decision is GuardDecision.PASS:
         return _result(
             OperationalAdmission.NOT_REQUIRED_GUARD_PASS,
@@ -276,6 +289,7 @@ def shadow_daily_status(result: OperationalAdmissionResult) -> ShadowDailyStatus
         OperationalAdmission.BACKFILL_REQUIRES_STAGING: ShadowDailyStatus.BACKFILL_STAGED,
         OperationalAdmission.BOOTSTRAP_PENDING: ShadowDailyStatus.BOOTSTRAP_STAGED,
         OperationalAdmission.HISTORICAL_GAP_REQUIRES_REVIEW: ShadowDailyStatus.HISTORICAL_GAP_STAGED,
+        OperationalAdmission.HISTORICAL_REVISION_REQUIRES_REVIEW: ShadowDailyStatus.HISTORICAL_REVISION_STAGED,
     }
     return mapping[result.admission]
 

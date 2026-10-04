@@ -1,7 +1,9 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import replace
 from datetime import date, datetime, timedelta, timezone
+import json
 from pathlib import Path
 import sqlite3
 import threading
@@ -34,8 +36,11 @@ from quantlab.preupdate_market_data_guard import (
     AdjustmentBasis,
     CoverageMetadata,
     CoverageState,
+    EvidenceKind,
     GuardDecision,
     GuardReason,
+    RevisionClaim,
+    RevisionEvidence,
 )
 from quantlab.transactional_market_data import (
     AttributionState,
@@ -376,7 +381,9 @@ def test_vhm_style_mixed_adjustment_is_blocked_atomically(tmp_path: Path) -> Non
 
     assert result.guard_result.decision is GuardDecision.BLOCK
     assert GuardReason.UNATTRIBUTED_HISTORICAL_REVISION in result.guard_result.reasons
-    assert result.operational_result.admission is OperationalAdmission.OPERATIONAL_REJECTED
+    assert result.operational_result.admission is OperationalAdmission.HISTORICAL_REVISION_REQUIRES_REVIEW
+    assert result.rows_written == 0
+    assert _count(path, "market_ingestion_staging", batch.operation_id) == 1
     assert _prices(path) == before
 
 
@@ -391,7 +398,150 @@ def test_historical_revision_is_rejected(tmp_path: Path) -> None:
 
     assert result.guard_result.decision is GuardDecision.BLOCK
     assert result.rows_written == 0
+    assert result.operational_result.admission is OperationalAdmission.HISTORICAL_REVISION_REQUIRES_REVIEW
+    assert _count(path, "market_ingestion_staging", batch.operation_id) == 1
     assert _count(path, "market_ingestion_manifests", batch.operation_id) == 0
+
+
+def _attributed_revision_fixture(tmp_path: Path, kind: EvidenceKind, *, scale: bool = False):
+    """Fabricate verified basis/claims only in a disposable synthetic database."""
+    path = _database(tmp_path)
+    seed = commit_price_batch_shadow(path, _batch("fixture-seed"))
+    assert seed.rows_written == 1
+    with sqlite3.connect(path) as connection:
+        # Synthetic fixture attribution, never a promotion of real legacy history.
+        connection.execute(
+            """
+            UPDATE market_ingestion_manifests
+            SET price_unit_verification_state='VERIFIED',
+                price_unit_references_json='["fixture://unit"]',
+                claimed_adjustment_basis='RAW', adjustment_verification_state='VERIFIED',
+                adjustment_evidence_references_json='["fixture://basis"]'
+            WHERE operation_id=?
+            """,
+            (seed.operation_id,),
+        )
+        connection.execute(
+            """
+            INSERT INTO market_price_provenance(symbol,time,operation_id,batch_fingerprint)
+            SELECT symbol,time,?,? FROM prices WHERE time < ?
+            """,
+            (seed.operation_id, seed.batch_fingerprint, (START + timedelta(days=4)).isoformat()),
+        )
+    original = _frame((3, 4, 5))
+    candidate = _frame((3, 4, 5), changed_close_day=None if scale else 3)
+    if scale:
+        candidate.loc[:1, ["open", "high", "low", "close"]] *= 0.5
+    claims = tuple(
+        RevisionClaim(START + timedelta(days=day), field, original.loc[index, field], candidate.loc[index, field])
+        for index, day in enumerate((3, 4))
+        for field in ("open", "high", "low", "close", "volume")
+        if original.loc[index, field] != candidate.loc[index, field]
+    )
+    evidence = RevisionEvidence("AAA", kind, claims, ("fixture://revision/exact-claims",))
+    batch = replace(
+        _batch("attributed-revision", (3, 4, 5), frame=candidate),
+        price_unit_verification_state=AttributionState.VERIFIED,
+        price_unit_references=("fixture://unit",),
+        claimed_adjustment_basis=AdjustmentBasis.RAW,
+        adjustment_verification_state=AttributionState.VERIFIED,
+        adjustment_evidence_references=("fixture://basis",),
+        revision_evidence=(evidence,),
+    )
+    return path, batch
+
+
+@pytest.mark.parametrize("kind", (EvidenceKind.PROVIDER_CORRECTION, EvidenceKind.CORPORATE_ACTION_RESTATEMENT))
+@pytest.mark.parametrize("scale", (False, True), ids=("small-correction", "half-scale-overlap"))
+def test_attributed_guard_pass_revision_stages_entire_batch_without_append(
+    tmp_path: Path, kind: EvidenceKind, scale: bool,
+) -> None:
+    path, batch = _attributed_revision_fixture(tmp_path, kind, scale=scale)
+    before = _prices(path)
+    with sqlite3.connect(path) as connection:
+        links_before = tuple(connection.execute("SELECT * FROM market_price_provenance ORDER BY time"))
+
+    result = commit_price_batch_shadow(path, batch)
+
+    assert result.guard_result.decision is GuardDecision.PASS
+    assert GuardReason.ATTRIBUTED_HISTORICAL_REVISION in result.guard_result.reasons
+    assert result.status is ReceiptStatus.REJECTED
+    assert result.rows_written == 0
+    assert result.operational_result.admission.value == "HISTORICAL_REVISION_REQUIRES_REVIEW"
+    assert shadow_daily_status(result.operational_result).value == "HISTORICAL_REVISION_STAGED"
+    assert result.operational_result.research_eligible is False
+    assert _prices(path) == before
+    assert _count(path, "market_ingestion_manifests", batch.operation_id) == 0
+    with sqlite3.connect(path) as connection:
+        assert tuple(connection.execute("SELECT * FROM market_price_provenance ORDER BY time")) == links_before
+        guard_json, operational_json, rows_written = connection.execute(
+            "SELECT guard_result_json,operational_result_json,rows_written FROM market_ingestion_receipts WHERE operation_id=?",
+            (batch.operation_id,),
+        ).fetchone()
+        normalized_json, metadata_json, eligible = connection.execute(
+            "SELECT normalized_rows_json,metadata_json,research_eligible FROM market_ingestion_staging WHERE operation_id=?",
+            (batch.operation_id,),
+        ).fetchone()
+        assert connection.execute("PRAGMA foreign_key_check").fetchall() == []
+    persisted_guard = json.loads(guard_json)
+    assert persisted_guard["decision"] == "PASS"
+    persisted_revisions = sorted(persisted_guard["revisions"], key=lambda item: (item["session"], item["field"]))
+    assert persisted_revisions == [
+        {"session": claim.session.isoformat(), "field": claim.field,
+         "existing_value": claim.existing_value, "incoming_value": claim.incoming_value}
+        for claim in batch.revision_evidence[0].claims
+    ]
+    assert rows_written == 0
+    assert json.loads(operational_json)["research_eligible"] is False
+    assert json.loads(normalized_json) == [row.as_identity_dict() for row in batch.rows]
+    assert json.loads(metadata_json)["revision_evidence"] == [{
+        "symbol": "AAA", "kind": kind.value,
+        "claims": persisted_revisions,
+        "source_references": ["fixture://revision/exact-claims"],
+    }]
+    assert eligible == 0
+
+    replay = commit_price_batch_shadow(path, batch)
+    assert replay.idempotent_replay
+    assert replay.operational_result == result.operational_result
+    assert _count(path, "market_ingestion_receipts", batch.operation_id) == 1
+    assert _count(path, "market_ingestion_staging", batch.operation_id) == 1
+    assert _prices(path) == before
+
+
+def test_unchanged_verified_guard_pass_still_appends_operational_only(tmp_path: Path) -> None:
+    path, batch = _attributed_revision_fixture(tmp_path, EvidenceKind.PROVIDER_CORRECTION)
+    batch = replace(
+        batch, operation_id="unchanged-verified",
+        rows=_batch("unchanged-fixture", (3, 4, 5)).rows, revision_evidence=(),
+    )
+    before = _prices(path)
+
+    result = commit_price_batch_shadow(path, batch)
+
+    assert result.guard_result.decision is GuardDecision.PASS
+    assert result.operational_result.admission is OperationalAdmission.NOT_REQUIRED_GUARD_PASS
+    assert result.operational_result.research_eligible is False
+    assert result.rows_written == 1
+    assert _prices(path)[:-1] == before
+    assert _count(path, "market_ingestion_staging", batch.operation_id) == 0
+
+
+def test_attributed_revision_staging_rolls_back_with_receipt(tmp_path: Path) -> None:
+    path, batch = _attributed_revision_fixture(tmp_path, EvidenceKind.PROVIDER_CORRECTION)
+    before = _prices(path)
+
+    def fail(stage: str) -> None:
+        if stage == "after_rejection_or_staging":
+            raise RuntimeError("injected revision staging failure")
+
+    with pytest.raises(RuntimeError, match="injected revision staging failure"):
+        commit_price_batch_shadow(path, batch, failure_injector=fail)
+
+    assert _prices(path) == before
+    for table in ("market_ingestion_receipts", "market_ingestion_staging", "market_ingestion_manifests"):
+        assert _count(path, table, batch.operation_id) == 0
+    assert commit_price_batch_shadow(path, batch).rows_written == 0
 
 
 def test_missing_overlap_is_not_allowlisted(tmp_path: Path) -> None:
