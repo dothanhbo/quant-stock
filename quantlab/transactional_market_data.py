@@ -16,11 +16,16 @@ from hashlib import sha256
 import json
 import math
 from numbers import Real
+import os
 from pathlib import Path
 import re
 import shutil
 import sqlite3
+import stat
 from typing import Any, Iterator
+from weakref import WeakSet
+
+from core.paths import DEFAULT_MARKET_DATABASE_PATH, resolve_market_database_path
 
 from quantlab.completed_session import (
     CompletedSessionDecision,
@@ -796,14 +801,350 @@ def rehearse_operational_migration(
     )
 
 
+class ShadowTargetError(RuntimeError):
+    """A disposable target or its factory-issued capability cannot be verified."""
+
+
+class DisposableShadowTarget:
+    """Opaque identity; construction alone grants no authority."""
+
+    __slots__ = ()
+
+
+class ShadowTargetCapability:
+    """Opaque token, valid only with its live factory-registered handle."""
+
+    __slots__ = ()
+
+
+@dataclass(frozen=True)
+class _CloneBinding:
+    connection: sqlite3.Connection
+    capability: ShadowTargetCapability
+    path: Path
+    file_descriptor: int
+    file_identity: tuple[int, int]
+    schema_version: int
+    protected_paths: tuple[Path, ...]
+
+
+_CLONE_BINDINGS: dict[DisposableShadowTarget, _CloneBinding] = {}
+
+
+@dataclass(frozen=True)
+class _AdmissionTransaction:
+    connection: sqlite3.Connection
+    generation: int
+
+
+_TRANSACTION_GENERATIONS: dict[sqlite3.Connection, int] = {}
+_ADMISSION_TRANSACTIONS: dict[sqlite3.Connection, _AdmissionTransaction] = {}
+_PRICE_DML_GRANTS: dict[sqlite3.Connection, _AdmissionTransaction] = {}
+_SCOPED_CURSORS: dict[sqlite3.Connection, WeakSet[sqlite3.Cursor]] = {}
+_PRICE_TABLES = frozenset({"prices", "market_price_provenance"})
+
+
+def _record_scoped_cursor(cursor: sqlite3.Cursor) -> None:
+    cursors = _SCOPED_CURSORS.get(cursor.connection)
+    if cursors is not None:
+        cursors.add(cursor)
+
+
+class _FactoryShadowCursor(sqlite3.Cursor):
+    __slots__ = ()
+
+    def execute(self, *args: Any, **kwargs: Any) -> sqlite3.Cursor:
+        _record_scoped_cursor(self)
+        return super().execute(*args, **kwargs)
+
+    def executemany(self, *args: Any, **kwargs: Any) -> sqlite3.Cursor:
+        _record_scoped_cursor(self)
+        return super().executemany(*args, **kwargs)
+
+    def executescript(self, *args: Any, **kwargs: Any) -> sqlite3.Cursor:
+        _record_scoped_cursor(self)
+        return super().executescript(*args, **kwargs)
+
+
+class _FactoryShadowConnection(sqlite3.Connection):
+    __slots__ = ()
+
+    def set_authorizer(self, authorizer: object) -> None:
+        raise ShadowTargetError("factory authorizer cannot be replaced through the instance API")
+
+    def cursor(self, factory: Any = None) -> sqlite3.Cursor:
+        if factory is not None and factory is not _FactoryShadowCursor:
+            raise ShadowTargetError("factory cursor cannot be replaced through the instance API")
+        return super().cursor(factory=_FactoryShadowCursor)
+
+    def execute(self, *args: Any, **kwargs: Any) -> sqlite3.Cursor:
+        return self.cursor().execute(*args, **kwargs)
+
+    def executemany(self, *args: Any, **kwargs: Any) -> sqlite3.Cursor:
+        return self.cursor().executemany(*args, **kwargs)
+
+    def executescript(self, *args: Any, **kwargs: Any) -> sqlite3.Cursor:
+        return self.cursor().executescript(*args, **kwargs)
+
+    def close(self) -> None:
+        _PRICE_DML_GRANTS.pop(self, None)
+        _close_scoped_cursors(self)
+        _ADMISSION_TRANSACTIONS.pop(self, None)
+        _TRANSACTION_GENERATIONS.pop(self, None)
+        super().close()
+
+
+def _install_clone_authorizer(connection: sqlite3.Connection) -> None:
+    def authorize(action: int, table: str | None, column: str | None,
+                  database: str | None, origin: str | None) -> int:
+        if _clone_authorizer(action, table, column, database, origin) != sqlite3.SQLITE_OK:
+            return sqlite3.SQLITE_DENY
+        if action in {sqlite3.SQLITE_TRANSACTION, sqlite3.SQLITE_SAVEPOINT}:
+            # Compilation of a transaction boundary invalidates the old token.
+            _TRANSACTION_GENERATIONS[connection] = _TRANSACTION_GENERATIONS.get(connection, 0) + 1
+            _ADMISSION_TRANSACTIONS.pop(connection, None)
+            _PRICE_DML_GRANTS.pop(connection, None)
+        if action in {sqlite3.SQLITE_INSERT, sqlite3.SQLITE_UPDATE, sqlite3.SQLITE_DELETE}:
+            grant = _PRICE_DML_GRANTS.get(connection)
+            if table in _PRICE_TABLES:
+                if (
+                    grant is None or grant is not _ADMISSION_TRANSACTIONS.get(connection)
+                    or grant.connection is not connection or not connection.in_transaction
+                    or grant.generation != _TRANSACTION_GENERATIONS.get(connection)
+                    or action != sqlite3.SQLITE_INSERT or database != "main" or origin is not None
+                ):
+                    return sqlite3.SQLITE_DENY
+            elif grant is not None:
+                # The admission INSERT scope cannot authorize other tables.
+                return sqlite3.SQLITE_DENY
+        return sqlite3.SQLITE_OK
+
+    # Deliberate internal use of the base method. Privileged callers can do the
+    # same; this is not security against arbitrary Python/base-C API access.
+    sqlite3.Connection.set_authorizer(connection, authorize)
+
+
+def _close_scoped_cursors(connection: sqlite3.Connection) -> None:
+    for cursor in tuple(_SCOPED_CURSORS.pop(connection, ())):
+        try:
+            sqlite3.Cursor.close(cursor)
+        except sqlite3.ProgrammingError:
+            pass  # Already closed cursor/connection.
+
+
+def _revoke_price_dml(connection: sqlite3.Connection) -> None:
+    _PRICE_DML_GRANTS.pop(connection, None)
+    _close_scoped_cursors(connection)
+    try:
+        # sqlite3_set_authorizer expires prepared statements, including cached
+        # ones. This complements cached_statements=0 in the factory.
+        _install_clone_authorizer(connection)
+    except sqlite3.ProgrammingError:
+        pass  # A closed connection cannot execute further statements.
+
+
+def _check_admission_transaction(transaction: _AdmissionTransaction) -> None:
+    connection = transaction.connection
+    if (
+        _ADMISSION_TRANSACTIONS.get(connection) is not transaction
+        or not connection.in_transaction
+        or transaction.generation != _TRANSACTION_GENERATIONS.get(connection)
+    ):
+        raise ShadowTargetError("admission transaction changed or ended")
+
+
+@contextmanager
+def _admission_price_dml(
+    target: DisposableShadowTarget | sqlite3.Connection | str | Path,
+    capability: object,
+    connection: sqlite3.Connection,
+    transaction: _AdmissionTransaction | None,
+) -> Iterator[None]:
+    if not isinstance(target, DisposableShadowTarget):
+        yield  # Legacy targets remain outside the factory capability boundary.
+        return
+    _verify_clone_target(target, capability, connection)
+    if transaction is None or transaction.connection is not connection:
+        raise ShadowTargetError("missing admission transaction")
+    _check_admission_transaction(transaction)
+    if connection in _PRICE_DML_GRANTS:
+        raise ShadowTargetError("nested price DML authorization is prohibited")
+    _PRICE_DML_GRANTS[connection] = transaction
+    _SCOPED_CURSORS[connection] = WeakSet()
+    try:
+        _install_clone_authorizer(connection)
+        yield
+        _check_admission_transaction(transaction)
+    finally:
+        _revoke_price_dml(connection)
+
+
+def _protected_market_paths() -> tuple[Path, ...]:
+    # Configuration can add a protected target, never remove the known default.
+    return (DEFAULT_MARKET_DATABASE_PATH.resolve(), resolve_market_database_path())
+
+
+def _file_identity(value: os.stat_result) -> tuple[int, int]:
+    if not stat.S_ISREG(value.st_mode) or not value.st_ino:
+        raise ShadowTargetError("regular-file identity unavailable")
+    return value.st_dev, value.st_ino
+
+
+def _reject_canonical(path: Path, protected: tuple[Path, ...]) -> None:
+    identity = _file_identity(path.stat()) if path.exists() else None
+    for canonical in protected:
+        if path == canonical or (
+            identity is not None and canonical.exists()
+            and identity == _file_identity(canonical.stat())
+        ):
+            raise ShadowTargetError("canonical target or alias is prohibited")
+
+
+def _clone_authorizer(action: int, arg1: str | None, arg2: str | None,
+                      database: str | None, trigger: str | None) -> int:
+    # Shared structural policy; DML authorization is bound per connection above.
+    denied = {
+        sqlite3.SQLITE_ATTACH, sqlite3.SQLITE_DETACH, sqlite3.SQLITE_ALTER_TABLE,
+        sqlite3.SQLITE_CREATE_INDEX, sqlite3.SQLITE_CREATE_TABLE,
+        sqlite3.SQLITE_CREATE_TRIGGER, sqlite3.SQLITE_CREATE_VIEW,
+        sqlite3.SQLITE_CREATE_VTABLE, sqlite3.SQLITE_DROP_INDEX,
+        sqlite3.SQLITE_DROP_TABLE, sqlite3.SQLITE_DROP_TRIGGER,
+        sqlite3.SQLITE_DROP_VIEW, sqlite3.SQLITE_DROP_VTABLE,
+        sqlite3.SQLITE_CREATE_TEMP_INDEX, sqlite3.SQLITE_CREATE_TEMP_TABLE,
+        sqlite3.SQLITE_CREATE_TEMP_TRIGGER, sqlite3.SQLITE_CREATE_TEMP_VIEW,
+    }
+    empty_temp_inspection = (
+        database == "temp" and action == sqlite3.SQLITE_READ
+        and arg1 in {"sqlite_temp_master", "sqlite_master"}
+    )
+    if trigger is not None:
+        return sqlite3.SQLITE_DENY  # No inherited trigger/view may widen writes.
+    if action in denied or (database not in (None, "main") and not empty_temp_inspection):
+        return sqlite3.SQLITE_DENY
+    if action == sqlite3.SQLITE_PRAGMA and arg2 is not None:
+        if not (
+            arg1 == "busy_timeout"
+            or (arg1 == "foreign_keys" and arg2.upper() in {"ON", "1"})
+        ):
+            return sqlite3.SQLITE_DENY
+    return sqlite3.SQLITE_OK
+
+
+def _verify_clone_target(
+    target: DisposableShadowTarget,
+    capability: object,
+    connection: sqlite3.Connection | None = None,
+) -> _CloneBinding:
+    if type(target) is not DisposableShadowTarget:
+        raise ShadowTargetError("target must be the exact factory-issued handle")
+    binding = _CLONE_BINDINGS.get(target)
+    if binding is None or capability is not binding.capability:
+        raise ShadowTargetError("missing, invalid or foreign target capability")
+    if connection is not None and connection is not binding.connection:
+        raise ShadowTargetError("target connection was substituted")
+    try:
+        actual = tuple(binding.connection.execute("PRAGMA database_list"))
+        main = tuple(row for row in actual if row[1] == "main")
+        if (
+            len(main) != 1 or not main[0][2]
+            or any(row[1] not in {"main", "temp"} for row in actual)
+            or any(row[2] for row in actual if row[1] == "temp")
+        ):
+            raise ShadowTargetError("attached/temporary/unverifiable target")
+        # SQLite quick_check can materialize an empty temp schema. Objects there
+        # could shadow the writer's unqualified table names and must be absent.
+        if binding.connection.execute("SELECT count(*) FROM sqlite_temp_master").fetchone()[0]:
+            raise ShadowTargetError("temporary objects could redirect the writer")
+        path = Path(main[0][2]).resolve(strict=True)
+        observed = path.stat()
+        if (
+            path != binding.path or observed.st_nlink != 1
+            or _file_identity(observed) != binding.file_identity
+            or _file_identity(os.fstat(binding.file_descriptor)) != binding.file_identity
+        ):
+            raise ShadowTargetError("target file identity changed or aliased")
+        _reject_canonical(path, binding.protected_paths + _protected_market_paths())
+        if binding.connection.execute("PRAGMA main.schema_version").fetchone()[0] != binding.schema_version:
+            raise ShadowTargetError("target schema changed")
+    except (OSError, sqlite3.Error, ValueError) as error:
+        raise ShadowTargetError("target connection/file cannot be verified") from error
+    return binding
+
+
+@contextmanager
+def create_disposable_shadow_target(
+    source_database: str | Path,
+    clone_database: str | Path,
+) -> Iterator[tuple[DisposableShadowTarget, ShadowTargetCapability]]:
+    """Backup a read-only source into a new file; no schema migration or adoption.
+
+    Capability lifetime is this context. Privileged Python/base-C access and
+    unmanaged path/connection APIs remain outside this prototype's protection.
+    """
+    connection = None
+    descriptor = None
+    target = DisposableShadowTarget()
+    try:
+        source = Path(source_database).resolve(strict=True)
+        path = Path(clone_database).resolve()
+        protected = _protected_market_paths()
+        _reject_canonical(path, protected)
+        if path.exists():
+            raise ShadowTargetError("factory requires a new disposable file")
+        # Exclusive creation plus a held file descriptor pins the owned inode.
+        descriptor = os.open(path, os.O_CREAT | os.O_EXCL | os.O_RDONLY, 0o600)
+        identity = _file_identity(os.fstat(descriptor))
+        connection = sqlite3.connect(path.as_uri() + "?mode=rw", uri=True,
+                                     cached_statements=0, factory=_FactoryShadowConnection)
+        if _file_identity(path.stat()) != identity:
+            raise ShadowTargetError("target replaced while opening connection")
+        capability = ShadowTargetCapability()
+        _CLONE_BINDINGS[target] = _CloneBinding(
+            connection, capability, path, descriptor, identity,
+            connection.execute("PRAGMA main.schema_version").fetchone()[0], protected,
+        )
+        # Verify the actual opened main BEFORE backup can mutate its destination.
+        _verify_clone_target(target, capability)
+        source_connection = sqlite3.connect(source.as_uri() + "?mode=ro", uri=True)
+        try:
+            source_connection.execute("PRAGMA query_only=ON")
+            source_connection.backup(connection)
+        finally:
+            source_connection.close()
+        connection.execute("PRAGMA foreign_keys=ON")
+        _CLONE_BINDINGS[target] = replace(
+            _CLONE_BINDINGS[target],
+            schema_version=connection.execute("PRAGMA main.schema_version").fetchone()[0],
+        )
+        _verify_clone_target(target, capability)
+        if connection.execute("PRAGMA quick_check").fetchone()[0] != "ok":
+            raise ShadowTargetError("clone integrity check failed")
+        _install_clone_authorizer(connection)
+        yield target, capability
+    except (OSError, sqlite3.Error, ValueError) as error:
+        raise ShadowTargetError("disposable target creation/verification failed") from error
+    finally:
+        _CLONE_BINDINGS.pop(target, None)
+        if connection is not None:
+            connection.close()
+        if descriptor is not None:
+            os.close(descriptor)
+
+
 @contextmanager
 def _connection(
-    target: sqlite3.Connection | str | Path,
+    target: DisposableShadowTarget | sqlite3.Connection | str | Path,
     *,
     busy_timeout_seconds: float,
+    target_capability: object = None,
 ) -> Iterator[sqlite3.Connection]:
-    owns_connection = not isinstance(target, sqlite3.Connection)
-    if owns_connection:
+    owns_connection = not isinstance(target, (sqlite3.Connection, DisposableShadowTarget))
+    if isinstance(target, DisposableShadowTarget):
+        connection = _verify_clone_target(target, target_capability).connection
+        _install_clone_authorizer(connection)
+    elif target_capability is not None:
+        raise ShadowTargetError("capability requires its registered handle")
+    elif owns_connection:
         connection = sqlite3.connect(str(target), timeout=busy_timeout_seconds)
     else:
         connection = target
@@ -1562,22 +1903,40 @@ def commit_price_batch(
 
 
 def commit_price_batch_shadow(
-    target: sqlite3.Connection | str | Path,
+    target: DisposableShadowTarget | sqlite3.Connection | str | Path,
     batch: PreparedPriceBatch,
     *,
     busy_timeout_seconds: float = 5.0,
     failure_injector: Callable[[str], None] | None = None,
     operation_identity_request: OperationIdentityRequest | None = None,
+    target_capability: ShadowTargetCapability | None = None,
 ) -> ShadowCommitResult:
     """Evaluate D4A and operational admission inside one reserved transaction.
 
     D4B2.6 callers pass an operation request; generation allocation then shares
     the write transaction so a rollback cannot leave a phantom observation.
+    Factory handles require their explicit target_capability. Legacy unmanaged
+    path/raw connection overloads remain compatibility APIs, not production
+    capability boundaries.
     """
-    inject = failure_injector or (lambda _stage: None)
-    with _connection(target, busy_timeout_seconds=busy_timeout_seconds) as connection:
+    fault = failure_injector or (lambda _stage: None)
+    with _connection(target, busy_timeout_seconds=busy_timeout_seconds,
+                     target_capability=target_capability) as connection:
+        transaction = None
+        def inject(stage: str) -> None:
+            fault(stage)
+            if isinstance(target, DisposableShadowTarget):
+                _verify_clone_target(target, target_capability, connection)
+                if transaction is not None:
+                    _check_admission_transaction(transaction)
+
         try:
             connection.execute("BEGIN IMMEDIATE")
+            if isinstance(target, DisposableShadowTarget):
+                transaction = _AdmissionTransaction(
+                    connection, _TRANSACTION_GENERATIONS.get(connection, 0),
+                )
+                _ADMISSION_TRANSACTIONS[connection] = transaction
             inject("after_begin_immediate")
             allocation = None
             if operation_identity_request is not None:
@@ -1649,12 +2008,13 @@ def commit_price_batch_shadow(
                 _insert_manifest(connection, batch)
                 _attach_operational_manifest(connection, batch, operational_result)
                 inject("after_manifest")
-                appended = _append_new_prices(
-                    connection,
-                    batch,
-                    new_session_dates,
-                )
-                _link_selected_prices(connection, batch, appended)
+                with _admission_price_dml(target, target_capability, connection, transaction):
+                    appended = _append_new_prices(
+                        connection,
+                        batch,
+                        new_session_dates,
+                    )
+                    _link_selected_prices(connection, batch, appended)
                 inject("after_prices_and_links")
                 connection.commit()
                 return ShadowCommitResult(
@@ -1694,12 +2054,52 @@ def commit_price_batch_shadow(
                 allocation,
             )
         except BaseException:
-            if connection.in_transaction:
-                connection.rollback()
+            try:
+                if connection.in_transaction:
+                    connection.rollback()
+            except sqlite3.ProgrammingError:
+                if not isinstance(target, DisposableShadowTarget):
+                    raise
+                # A closed factory connection has already rolled back on close.
             raise
+        finally:
+            if isinstance(target, DisposableShadowTarget):
+                _ADMISSION_TRANSACTIONS.pop(connection, None)
+                _revoke_price_dml(connection)
+
+
+def commit_disposable_price_batch_shadow(
+    target: DisposableShadowTarget,
+    batch: PreparedPriceBatch,
+    *,
+    target_capability: ShadowTargetCapability | None = None,
+    busy_timeout_seconds: float = 5.0,
+    failure_injector: Callable[[str], None] | None = None,
+    operation_identity_request: OperationIdentityRequest | None = None,
+) -> ShadowCommitResult:
+    """Clone-only entrypoint: require a live factory handle and its capability.
+
+    Validate before delegating to the existing admission transaction. Paths and
+    raw connections are never forwarded; errors and rejected admission never
+    retry through legacy overloads. This is a managed-call boundary, not a guard
+    against privileged base SQLite/Python APIs or other connections.
+    """
+    _verify_clone_target(target, target_capability)
+    return commit_price_batch_shadow(
+        target,
+        batch,
+        target_capability=target_capability,
+        busy_timeout_seconds=busy_timeout_seconds,
+        failure_injector=failure_injector,
+        operation_identity_request=operation_identity_request,
+    )
 
 
 __all__ = [
+    "DisposableShadowTarget",
+    "ShadowTargetCapability",
+    "ShadowTargetError",
+    "create_disposable_shadow_target",
     "ArchiveKind",
     "AttributionState",
     "CommitPriceBatchResult",
@@ -1715,6 +2115,7 @@ __all__ = [
     "ShadowCommitResult",
     "commit_price_batch",
     "commit_price_batch_shadow",
+    "commit_disposable_price_batch_shadow",
     "initialize_transactional_ingestion_schema",
     "migrate_operational_admission_schema",
     "migrate_shadow_runtime_foundation_schema",
