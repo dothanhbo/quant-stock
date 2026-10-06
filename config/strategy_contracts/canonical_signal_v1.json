@@ -1,0 +1,364 @@
+{
+  "contract_version": "canonical-2026-10-06.v1",
+  "description": "Canonical Q70/V3 SIGNAL contracts (owner decisions 2026-10-06). Reviewed snapshot of quantlab.strategy_identity signal contracts; change only by an explicit, versioned contract decision.",
+  "strategies": {
+    "Q70_FROZEN": {
+      "breadth_exposure": null,
+      "contract": "quant.strategy_identity.signal",
+      "declared_code_constants_version": "2026-10-06.v1",
+      "eligibility": {
+        "min_data_rows": 80,
+        "path": "production_scanner",
+        "relative_strength_benchmark": "VNINDEX",
+        "relative_strength_period": 20,
+        "universe": "scanner_vn100"
+      },
+      "entry": {
+        "model": {
+          "donchian_model": {
+            "max_distance_ema20": 12.0,
+            "max_return_3d": 15.0,
+            "min_adx": 20.0,
+            "min_relative_strength": 0.0,
+            "min_volume_ratio": 1.2,
+            "model": "donchian_breakout",
+            "name": "donchian_breakout_v1",
+            "regime_threshold_fields": [
+              "max_distance_ema20",
+              "max_return_3d",
+              "min_adx",
+              "min_relative_strength",
+              "min_volume_ratio"
+            ],
+            "require_volume_breakout": false,
+            "use_adx": true,
+            "use_distance_filter": true,
+            "use_ema_filter": true,
+            "use_overheated_filter": true,
+            "use_regime_thresholds": true,
+            "use_relative_strength": true,
+            "use_volume": true,
+            "use_volume_breakout_score": true
+          },
+          "donchian_weight": 0.6,
+          "min_hybrid_score": 60,
+          "mode": "trend_context",
+          "model": "hybrid_trend_donchian",
+          "name": "hybrid_trend_donchian_v1__trend_context",
+          "require_hybrid_score": true,
+          "trend_model": {
+            "model": "trend_v1",
+            "name": "trend_v1",
+            "use_adx": true,
+            "use_relative_strength": true,
+            "use_trend_filter": true,
+            "use_volume": true
+          },
+          "trend_weight": 0.4,
+          "use_regime_thresholds": true
+        },
+        "rsi_max": 72.0,
+        "rsi_min": 45.0
+      },
+      "features": {
+        "adx_period": 14,
+        "atr_period": 14,
+        "donchian_excludes_current_bar": true,
+        "donchian_high_window": 20,
+        "ema_adjust": false,
+        "ema_spans": [
+          10,
+          20,
+          50
+        ],
+        "return_3d_periods": 3,
+        "rsi_period": 14,
+        "source": "strategy/indicators.py",
+        "volume_breakout_window": 5,
+        "volume_ma_window": 20,
+        "wilder_smoothing": "ewm_alpha_1_over_period"
+      },
+      "market_state": {
+        "breadth_measure": "pct_universe_close_above_ema50",
+        "change_window": 10,
+        "ema_span": 50,
+        "min_history_sessions": 50,
+        "source": "strategy/market_state.py"
+      },
+      "quality_gate": {
+        "feature_weighting": "equal_mean",
+        "features": [
+          "score",
+          "relative_strength_20d",
+          "adx"
+        ],
+        "missing_feature_rank": 0.5,
+        "percentile_method": "searchsorted_right_over_finite",
+        "state_rules": {
+          "bear": "regime==BEAR",
+          "divergent_bull": {
+            "breadth_lt": 50.0,
+            "change_lt": 0.0,
+            "regime": "BULL"
+          },
+          "healthy_bull": {
+            "breadth_ge": 70.0,
+            "change_ge": 0.0,
+            "regime": "BULL"
+          },
+          "missing_breadth": "BULL->FRAGILE_BULL, other->NEUTRAL",
+          "recovery": {
+            "breadth_ge": 60.0,
+            "change_gt": 0.0,
+            "regime": "SIDEWAY"
+          },
+          "rejected_states": [
+            "BEAR",
+            "DIVERGENT_BULL"
+          ],
+          "source": "strategy/paper_v2_gate.py:classify_state"
+        },
+        "threshold": 0.7,
+        "universe": "same_session_evaluations"
+      },
+      "regime_classifier": {
+        "benchmark": "VNINDEX",
+        "bull_min_return_pct": -2.0,
+        "ema_fast": 50,
+        "ema_slope_lag": 10,
+        "ema_slow": 200,
+        "labels": [
+          "BULL",
+          "SIDEWAY",
+          "BEAR",
+          "UNKNOWN"
+        ],
+        "min_sessions": 200,
+        "return_window": 20,
+        "source": "strategy/market_regime.py"
+      },
+      "regime_thresholds": {
+        "BEAR": {
+          "max_distance_ema20": 7.0,
+          "max_return_3d": 10.0,
+          "min_adx": 24.0,
+          "min_relative_strength": 3.0,
+          "min_score": 74.0,
+          "min_volume_ratio": 1.25,
+          "watchlist_margin": 12.0
+        },
+        "BULL": {
+          "max_distance_ema20": 12.0,
+          "max_return_3d": 16.0,
+          "min_adx": 18.0,
+          "min_relative_strength": 0.0,
+          "min_score": 60.0,
+          "min_volume_ratio": 1.0,
+          "watchlist_margin": 10.0
+        },
+        "SIDEWAY": {
+          "max_distance_ema20": 9.0,
+          "max_return_3d": 13.0,
+          "min_adx": 20.0,
+          "min_relative_strength": 1.0,
+          "min_score": 66.0,
+          "min_volume_ratio": 1.1,
+          "watchlist_margin": 10.0
+        },
+        "UNKNOWN": {
+          "max_distance_ema20": 8.0,
+          "max_return_3d": 12.0,
+          "min_adx": 22.0,
+          "min_relative_strength": 2.0,
+          "min_score": 72.0,
+          "min_volume_ratio": 1.2,
+          "watchlist_margin": 10.0
+        }
+      }
+    },
+    "V3_BREADTH_40_60": {
+      "breadth_exposure": {
+        "applied_to": "order_quantity",
+        "full_exposure_min_pct": 60.0,
+        "half_exposure_min_pct": 40.0,
+        "measure": "breadth_ema50_pct",
+        "multiplier_at_full": 1.0,
+        "multiplier_at_half": 0.5,
+        "multiplier_below_half": 0.0,
+        "multiplier_missing": 0.0,
+        "version": "V3_BREADTH_40_60"
+      },
+      "contract": "quant.strategy_identity.signal",
+      "declared_code_constants_version": "2026-10-06.v1",
+      "eligibility": {
+        "min_data_rows": 80,
+        "path": "production_scanner",
+        "relative_strength_benchmark": "VNINDEX",
+        "relative_strength_period": 20,
+        "universe": "scanner_vn100"
+      },
+      "entry": {
+        "model": {
+          "donchian_model": {
+            "max_distance_ema20": 12.0,
+            "max_return_3d": 15.0,
+            "min_adx": 20.0,
+            "min_relative_strength": 0.0,
+            "min_volume_ratio": 1.2,
+            "model": "donchian_breakout",
+            "name": "donchian_breakout_v1",
+            "regime_threshold_fields": [
+              "max_distance_ema20",
+              "max_return_3d",
+              "min_adx",
+              "min_relative_strength",
+              "min_volume_ratio"
+            ],
+            "require_volume_breakout": false,
+            "use_adx": true,
+            "use_distance_filter": true,
+            "use_ema_filter": true,
+            "use_overheated_filter": true,
+            "use_regime_thresholds": true,
+            "use_relative_strength": true,
+            "use_volume": true,
+            "use_volume_breakout_score": true
+          },
+          "donchian_weight": 0.6,
+          "min_hybrid_score": 60,
+          "mode": "trend_context",
+          "model": "hybrid_trend_donchian",
+          "name": "hybrid_trend_donchian_v1__trend_context",
+          "require_hybrid_score": true,
+          "trend_model": {
+            "model": "trend_v1",
+            "name": "trend_v1",
+            "use_adx": true,
+            "use_relative_strength": true,
+            "use_trend_filter": true,
+            "use_volume": true
+          },
+          "trend_weight": 0.4,
+          "use_regime_thresholds": true
+        },
+        "rsi_max": 72.0,
+        "rsi_min": 45.0
+      },
+      "features": {
+        "adx_period": 14,
+        "atr_period": 14,
+        "donchian_excludes_current_bar": true,
+        "donchian_high_window": 20,
+        "ema_adjust": false,
+        "ema_spans": [
+          10,
+          20,
+          50
+        ],
+        "return_3d_periods": 3,
+        "rsi_period": 14,
+        "source": "strategy/indicators.py",
+        "volume_breakout_window": 5,
+        "volume_ma_window": 20,
+        "wilder_smoothing": "ewm_alpha_1_over_period"
+      },
+      "market_state": {
+        "breadth_measure": "pct_universe_close_above_ema50",
+        "change_window": 10,
+        "ema_span": 50,
+        "min_history_sessions": 50,
+        "source": "strategy/market_state.py"
+      },
+      "quality_gate": {
+        "feature_weighting": "equal_mean",
+        "features": [
+          "score",
+          "relative_strength_20d",
+          "adx"
+        ],
+        "missing_feature_rank": 0.5,
+        "percentile_method": "searchsorted_right_over_finite",
+        "state_rules": {
+          "bear": "regime==BEAR",
+          "divergent_bull": {
+            "breadth_lt": 50.0,
+            "change_lt": 0.0,
+            "regime": "BULL"
+          },
+          "healthy_bull": {
+            "breadth_ge": 70.0,
+            "change_ge": 0.0,
+            "regime": "BULL"
+          },
+          "missing_breadth": "BULL->FRAGILE_BULL, other->NEUTRAL",
+          "recovery": {
+            "breadth_ge": 60.0,
+            "change_gt": 0.0,
+            "regime": "SIDEWAY"
+          },
+          "rejected_states": [
+            "BEAR",
+            "DIVERGENT_BULL"
+          ],
+          "source": "strategy/paper_v2_gate.py:classify_state"
+        },
+        "threshold": 0.7,
+        "universe": "same_session_evaluations"
+      },
+      "regime_classifier": {
+        "benchmark": "VNINDEX",
+        "bull_min_return_pct": -2.0,
+        "ema_fast": 50,
+        "ema_slope_lag": 10,
+        "ema_slow": 200,
+        "labels": [
+          "BULL",
+          "SIDEWAY",
+          "BEAR",
+          "UNKNOWN"
+        ],
+        "min_sessions": 200,
+        "return_window": 20,
+        "source": "strategy/market_regime.py"
+      },
+      "regime_thresholds": {
+        "BEAR": {
+          "max_distance_ema20": 7.0,
+          "max_return_3d": 10.0,
+          "min_adx": 24.0,
+          "min_relative_strength": 3.0,
+          "min_score": 74.0,
+          "min_volume_ratio": 1.25,
+          "watchlist_margin": 12.0
+        },
+        "BULL": {
+          "max_distance_ema20": 12.0,
+          "max_return_3d": 16.0,
+          "min_adx": 18.0,
+          "min_relative_strength": 0.0,
+          "min_score": 60.0,
+          "min_volume_ratio": 1.0,
+          "watchlist_margin": 10.0
+        },
+        "SIDEWAY": {
+          "max_distance_ema20": 9.0,
+          "max_return_3d": 13.0,
+          "min_adx": 20.0,
+          "min_relative_strength": 1.0,
+          "min_score": 66.0,
+          "min_volume_ratio": 1.1,
+          "watchlist_margin": 10.0
+        },
+        "UNKNOWN": {
+          "max_distance_ema20": 8.0,
+          "max_return_3d": 12.0,
+          "min_adx": 22.0,
+          "min_relative_strength": 2.0,
+          "min_score": 72.0,
+          "min_volume_ratio": 1.2,
+          "watchlist_margin": 10.0
+        }
+      }
+    }
+  }
+}

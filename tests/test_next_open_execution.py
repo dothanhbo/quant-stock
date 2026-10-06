@@ -125,7 +125,8 @@ def test_signal_is_queued_then_filled_at_next_open(tmp_path: Path) -> None:
     assert filled.executions[0].signal_score == 90
     lifecycle = executor.broker.get_position_lifecycle("AAA")
     assert lifecycle is not None
-    assert lifecycle.maximum_holding_days == 30
+    # Approved contract transition 2026-10-06: canonical holding 20 sessions (was 30).
+    assert lifecycle.maximum_holding_days == 20
     assert lifecycle.trailing_atr_multiplier == 2.0
     assert lifecycle.stop_price == 49_000.0
     assert lifecycle.take_profit_price == 56_000.0

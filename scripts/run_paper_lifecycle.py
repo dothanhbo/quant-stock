@@ -8,6 +8,7 @@ from config.paper_store import resolve_active_paper_store
 from core.paths import resolve_market_database_path
 from core.market_data_integrity import require_market_data_integrity
 from quantctl.runtime_configuration import resolve_runtime_configuration
+from quantlab.strategy_contract import enforce_strategy_contract
 from quantlab.evidence import (
     capture_prospective_portfolio_evidence,
     PaperEventCursor,
@@ -68,6 +69,12 @@ def main() -> PaperExecutionBatchResult | None:
     market_database_path = resolve_market_database_path()
     require_market_data_integrity(database_path=market_database_path)
     active_store = resolve_active_paper_store()
+    # B6: fail closed on strategy-contract drift BEFORE the first paper-store
+    # write (evidence baseline, pending fills, exits). Same enforcement
+    # function as the canonical scan boundary (app.strategy_scan).
+    contract_identity, _contract_comparison = enforce_strategy_contract(
+        active_store.strategy_identity
+    )
     with sqlite3.connect(market_database_path) as connection:
         latest_value = connection.execute(
             "SELECT MAX(date(time)) FROM prices WHERE UPPER(TRIM(symbol)) = 'VNINDEX'"
@@ -181,6 +188,8 @@ def main() -> PaperExecutionBatchResult | None:
             "Effective runtime configuration does not match the active "
             "paper store used by lifecycle."
         )
+    # B5-C: the contract verified above is recorded on the NEW evidence record
+    # (v3 fingerprints + contract status). Historical records are untouched.
     evidence = capture_prospective_portfolio_evidence(
         observation_date=result.valuation_date,
         paper_database_path=active_store.database_path,
@@ -194,6 +203,8 @@ def main() -> PaperExecutionBatchResult | None:
             *(f"MISSING_LIFECYCLE_STATE:{symbol}" for symbol in result.missing_states),
             *(f"REJECTED_EXIT:{symbol}" for symbol in result.rejected_exits),
         ),
+        # Status is derived from this identity at the evidence boundary.
+        strategy_identity_v3=contract_identity,
     )
     print(
         "Prospective evidence: "

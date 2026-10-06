@@ -43,10 +43,23 @@ CASES = (
 SIDE_EFFECTS = ("telemetry_write", "signal_row_write", "paper_queue", "telegram_send")
 
 
+# Approved contract transitions applied ON TOP of the byte-identical
+# pre-Phase-2 golden files (the files themselves stay historical evidence).
+# 2026-10-06 owner decision (docs/audit/2026-10-06-owner-contract-resolution.md):
+# canonical maximum holding is 20 market sessions (was the 30 default when the
+# goldens were captured). This is the ONLY approved difference: every decision,
+# level, routing and side-effect ordering must still match exactly.
+APPROVED_CONTRACT_TRANSITIONS = {("policy", "maximum_holding_days"): (30, 20)}
+
+
 def _golden(strategy: str, breadth: float) -> dict:
-    return json.loads(
+    golden = json.loads(
         (FIXTURES / f"daily_{strategy}_{int(breadth)}.json").read_text(encoding="utf-8")
     )
+    for (block, field), (before, after) in APPROVED_CONTRACT_TRANSITIONS.items():
+        assert golden[block][field] == before, "golden fixture changed unexpectedly"
+        golden[block][field] = after
+    return golden
 
 
 def _summary(recorder: Recorder) -> dict:

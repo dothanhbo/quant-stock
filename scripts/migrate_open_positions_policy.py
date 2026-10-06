@@ -11,6 +11,14 @@ That default is NOT the canonical active store selected by
 target and refuses ``--apply`` against a database that is not the active
 store unless that database was named explicitly with ``--database``.
 Dry-run output is unchanged apart from the target banner.
+
+Since the 2026-10-06 review (P1-3) a missing holding value is NEVER inferred
+from today's ``TradingPolicy`` default: the canonical default changed from 30
+to 20 sessions, and neither value is evidence of what an older position ran
+with. A NULL ``maximum_holding_days`` is filled only from that position's own
+persisted entry evidence (the frozen ``execution_context.lifecycle`` of its
+entry order). Positions without such evidence are reported as
+``NO_EVIDENCE`` and left NULL; there is no default-derived backfill.
 """
 
 from __future__ import annotations
@@ -27,14 +35,42 @@ except ImportError:  # pragma: no cover
     def load_dotenv() -> bool:
         return False
 
+import json
+
 from config.paper_store import resolve_active_paper_store
-from config.trading_policy import TradingPolicy
 
 
 def _target_database(explicit: str | None) -> Path:
     if explicit:
         return Path(explicit)
     return Path(os.getenv("PAPER_DATABASE_PATH", "data/paper_trading.db"))
+
+
+def _recorded_entry_holding(
+    connection: sqlite3.Connection,
+    entry_order_id: object,
+) -> int | None:
+    """Holding frozen on this position's own entry order, if persisted."""
+    if not entry_order_id:
+        return None
+    order_columns = {
+        str(row[1]) for row in connection.execute("PRAGMA table_info(paper_orders)")
+    }
+    if not {"client_order_id", "execution_context"} <= order_columns:
+        return None
+    row = connection.execute(
+        "SELECT execution_context FROM paper_orders WHERE client_order_id = ?",
+        (str(entry_order_id),),
+    ).fetchone()
+    if row is None or not row[0]:
+        return None
+    try:
+        value = json.loads(str(row[0])).get("lifecycle", {}).get("maximum_holding_days")
+    except (AttributeError, ValueError):
+        return None
+    if isinstance(value, bool) or not isinstance(value, int) or value <= 0:
+        return None
+    return value
 
 
 def main(argv: list[str] | None = None) -> int:
@@ -46,7 +82,6 @@ def main(argv: list[str] | None = None) -> int:
         help="paper database to inspect/migrate; required for --apply on a non-active store",
     )
     args = parser.parse_args(argv)
-    policy = TradingPolicy.from_env()
     path = _target_database(args.database)
     active = resolve_active_paper_store()
     is_active_store = path.resolve() == active.database_path.resolve()
@@ -63,31 +98,52 @@ def main(argv: list[str] | None = None) -> int:
 
     with sqlite3.connect(path) as connection:
         connection.row_factory = sqlite3.Row
+        columns = {
+            str(row[1])
+            for row in connection.execute("PRAGMA table_info(paper_position_lifecycle)")
+        }
+        has_entry_order = "entry_order_id" in columns
         rows = connection.execute(
-            """
-            SELECT symbol, entry_date, maximum_holding_days
+            f"""
+            SELECT symbol, entry_date, maximum_holding_days,
+                   {'entry_order_id' if has_entry_order else 'NULL AS entry_order_id'}
             FROM paper_position_lifecycle ORDER BY symbol
             """
         ).fetchall()
+        updates: list[tuple[int, str]] = []
         for row in rows:
             current = row["maximum_holding_days"]
             age = (date.today() - date.fromisoformat(row["entry_date"])).days
-            action = "KEEP" if current is not None else "SET"
+            if current is not None:
+                print(f"{row['symbol']}: age={age}d, max_hold={current}, action=KEEP")
+                continue
+            evidence = _recorded_entry_holding(connection, row["entry_order_id"])
+            if evidence is None:
+                print(
+                    f"{row['symbol']}: age={age}d, max_hold=None, action=LEAVE_NULL "
+                    "(NO_EVIDENCE: no persisted entry-order holding; today's default "
+                    "is not historical evidence)"
+                )
+                continue
+            updates.append((evidence, str(row["symbol"])))
             print(
-                f"{row['symbol']}: age={age}d, max_hold={current}, "
-                f"action={action} {policy.maximum_holding_days if current is None else ''}"
+                f"{row['symbol']}: age={age}d, max_hold=None, action=SET {evidence} "
+                f"(RECORDED_ENTRY_EVIDENCE: order {row['entry_order_id']})"
             )
         if args.apply:
-            connection.execute(
+            connection.executemany(
                 """
                 UPDATE paper_position_lifecycle
                 SET maximum_holding_days = ?
-                WHERE maximum_holding_days IS NULL
+                WHERE symbol = ? AND maximum_holding_days IS NULL
                 """,
-                (policy.maximum_holding_days,),
+                updates,
             )
             connection.commit()
-            print("Applied. Existing stop/target values were preserved.")
+            print(
+                f"Applied {len(updates)} evidence-backed value(s). Positions without "
+                "evidence were left NULL. Existing stop/target values were preserved."
+            )
         else:
             print("Dry-run only. Re-run with --apply after reviewing the list.")
     return 0

@@ -151,10 +151,21 @@ def run_strategy_scanner(
         pending_execution_result=pending_execution_result,
     )
 
+def run_contract_preflight():
+    from app.strategy_scan import preflight_strategy_contract
+
+    return preflight_strategy_contract()
+
+
 def main() -> int:
     load_dotenv()
     apply_active_paper_store_environment()
     args = build_parser().parse_args()
+    # P1-1: the canonical strategy contract must hold BEFORE any Daily
+    # mutation (market bootstrap/update, forward evidence, lifecycle, scan).
+    # Same enforcement as the lifecycle and scanner boundaries, which keep
+    # their own checks as defense in depth.
+    run_contract_preflight()
     resolve_required_market_symbols.cache_clear()
     bootstrap_market_database()
 

@@ -85,6 +85,9 @@ def test_full_v3_daily_order_instantiates_intended_scanner_policy_and_executor(
     """Lifecycle configuration must exist before the scanner singleton imports."""
     v3_database = _configure_isolated_v3_environment(monkeypatch, tmp_path)
     monkeypatch.setenv("PAPER_STRATEGY_VERSION", "V3_BREADTH_40_60")
+    # Never read a developer .env: Daily now runs the strategy-contract
+    # preflight, and machine-local overrides must not decide this test.
+    monkeypatch.setattr(run_daily, "load_dotenv", lambda *a, **k: False)
     monkeypatch.setattr(run_daily, "update_market_data", lambda: (101, []))
     monkeypatch.setattr(run_daily, "bootstrap_market_database", lambda: None)
     monkeypatch.setattr(run_daily, "validate_market_data", _pass_integrity)
@@ -321,11 +324,14 @@ def test_paper_disable_trailing_alone_is_not_the_operational_contract(
         ),
     )
 
-    run_paper_lifecycle.main()
+    # B6 (2026-10-06): this configuration used to run with trailing ENABLED.
+    # The canonical contract requires trailing off, so it now fails closed
+    # before any paper-store write instead of silently trailing.
+    from quantlab.strategy_contract import StrategyContractMismatch
 
-    exit_engine = captured["manager_kwargs"]["exit_engine"]
-    assert exit_engine.config.enable_trailing_stop is True
-    assert captured["manager_kwargs"]["default_trailing_atr_multiplier"] == 2.0
+    with pytest.raises(StrategyContractMismatch, match="lifecycle.trailing_enabled"):
+        run_paper_lifecycle.main()
+    assert "manager_kwargs" not in captured
 
     # The V3 wrapper currently works because it also sets the legacy-named
     # variable that run_paper_lifecycle actually consumes.

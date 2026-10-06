@@ -90,6 +90,13 @@ def _patch_lifecycle(
         lambda **kwargs: calls.append(f"trailing:{kwargs['enable_trailing_stop']}") or object(),
     )
     monkeypatch.setattr(run_paper_lifecycle, "PaperLifecycleManager", _Manager)
+    # These tests exercise lifecycle/evidence wiring with stub policies; the
+    # strategy-contract gate itself is covered in test_strategy_contract_enforcement.
+    monkeypatch.setattr(
+        run_paper_lifecycle,
+        "enforce_strategy_contract",
+        lambda strategy: calls.append(f"contract:{strategy}") or (None, None),
+    )
     monkeypatch.setattr(
         run_paper_lifecycle,
         "resolve_runtime_configuration",
@@ -126,6 +133,7 @@ def test_lifecycle_captures_evidence_after_consistent_lifecycle_state(
     )
     run_paper_lifecycle.main()
 
+    assert calls.index("contract:Q70_FROZEN") < calls.index("baseline-store")
     assert calls.index("pre-cursor") < calls.index("manager-run")
     assert "manager-date:2026-09-30" in calls
     assert captured["observation_date"] == date(2026, 9, 30)

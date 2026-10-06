@@ -183,6 +183,9 @@ def test_run_daily_passes_pending_result_to_scanner(
     # machine-local .env cannot redirect it into the independently tested V3
     # wrapper.
     monkeypatch.setenv("PAPER_STRATEGY_VERSION", "Q70_FROZEN")
+    # Never read a developer .env: Daily now runs the strategy-contract
+    # preflight, and machine-local overrides must not decide this test.
+    monkeypatch.setattr(run_daily, "load_dotenv", lambda *a, **k: False)
 
     monkeypatch.setattr(
         run_daily,

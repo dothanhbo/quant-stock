@@ -162,6 +162,9 @@ def test_lifecycle_passes_canonical_market_path_to_pending_execution(
     monkeypatch.setenv("MARKET_DATABASE_PATH", str(configured))
     monkeypatch.setattr(run_paper_lifecycle, "load_dotenv", lambda: None)
     monkeypatch.setattr(run_paper_lifecycle, "require_market_data_integrity", lambda **_kwargs: None)
+    # Path-routing test only; the strategy-contract gate is covered in
+    # tests/test_strategy_contract_enforcement.py.
+    monkeypatch.setattr(run_paper_lifecycle, "enforce_strategy_contract", lambda _strategy: (None, None))
     monkeypatch.setattr(
         run_paper_lifecycle.sqlite3,
         "connect",

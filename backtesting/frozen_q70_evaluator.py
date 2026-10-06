@@ -248,6 +248,46 @@ def _accepted_candidate_audit(
     )
 
 
+def _research_signal_identity_metadata(
+    *,
+    entry_model: Any,
+    quality_threshold: float,
+    universe_mode: str,
+    warmup_bars: int,
+) -> dict[str, Any]:
+    from quantlab.strategy_identity import CONTRACT, VERSION
+    from quantlab.strategy_identity_runtime import (
+        collect_frozen_research_signal_identity,
+        shadow_strategy_identity,
+    )
+
+    # Both modules are pure/import-light (no DB, provider or env access at
+    # import); the collection itself runs under the shadow wrapper.
+    result = shadow_strategy_identity(
+        lambda: collect_frozen_research_signal_identity(
+            entry_model=entry_model,
+            quality_threshold=quality_threshold,
+            quality_features=QUALITY_FEATURES,
+            universe_mode=universe_mode,
+            warmup_bars=warmup_bars,
+        )
+    )
+    identity = result.identity
+    return {
+        "signal_identity": None if identity is None else identity.signal_identity,
+        "strategy_identity_v3": {
+            "contract": CONTRACT,
+            "version": VERSION,
+            "scope": "signal_only",
+            "status": result.status,
+            "diagnostic": result.diagnostic,
+            "signal_identity": None if identity is None else identity.signal_identity,
+            "signal_contract": None if identity is None else identity.as_dict()["signal"],
+            "block_fingerprints": None if identity is None else dict(identity.block_fingerprints),
+        },
+    }
+
+
 def _validate_frozen_policy() -> None:
     if (
         Q70_FROZEN.entry_model != "hybrid_trend_donchian"
@@ -693,6 +733,18 @@ def run_frozen_q70_backtest(
                 "maximum_daily_loss_pct": parity.maximum_daily_loss_pct,
             },
         }
+    )
+    # Strategy Identity v3 (Phase 3B, B4): additive provenance metadata only.
+    # Computed from the entry model and gate this evaluation actually used;
+    # signal-only (no execution contract is claimed for research). It cannot
+    # change any result above; a failure is recorded as INCOMPLETE.
+    metrics.update(
+        _research_signal_identity_metadata(
+            entry_model=entry_model,
+            quality_threshold=gate.threshold,
+            universe_mode=effective_universe_mode,
+            warmup_bars=warmup_bars,
+        )
     )
     research_provenance = build_research_provenance(effective_universe_mode)
     metrics["research_provenance"] = research_provenance.as_dict()

@@ -148,9 +148,11 @@ def test_policy_migration_refuses_implicit_apply_to_non_active_store(
     assert migrate.main([]) == 0
     assert _max_hold(generic) is None
 
-    # Naming the database explicitly is an informed choice and is honoured.
+    # Naming the database explicitly is an informed choice and is honoured,
+    # but a position without persisted holding evidence stays NULL (P1-3):
+    # today's default is never written as if it were historical.
     assert migrate.main(["--apply", "--database", str(generic)]) == 0
-    assert _max_hold(generic) is not None
+    assert _max_hold(generic) is None
 
 
 def test_policy_migration_applies_to_active_store_without_extra_flag(
@@ -166,4 +168,5 @@ def test_policy_migration_applies_to_active_store_without_extra_flag(
     monkeypatch.delenv("PAPER_STRATEGY_VERSION", raising=False)
 
     assert migrate.main(["--apply"]) == 0
-    assert _max_hold(active) is not None
+    # No per-record evidence in this legacy row: left NULL, not defaulted.
+    assert _max_hold(active) is None

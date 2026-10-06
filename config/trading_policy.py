@@ -39,7 +39,13 @@ class TradingPolicy:
     stop_atr_multiplier: float = 2.0
     target_atr_multiplier: float = 5.0
     trailing_atr_multiplier: float = 2.0
-    maximum_holding_days: int = 30
+    # Owner decision 2026-10-06 (docs/audit/2026-10-06-owner-contract-resolution.md):
+    # canonical Q70/V3 time exit is 20 MARKET SESSIONS, the research-validated
+    # value (previously 30). Paper counts VNINDEX sessions after the entry
+    # session and exits at that session's close, matching research
+    # (_simulate_exit: close of bar entry_index + 20). Open positions keep the
+    # value recorded on their own lifecycle row.
+    maximum_holding_days: int = 20
     position_sizer: str = "atr_risk"
     risk_per_trade_pct: float = 1.0
     fixed_fraction_pct: float = 20.0
@@ -59,7 +65,7 @@ class TradingPolicy:
                 "TRADING_TRAILING_ATR_MULTIPLIER",
                 2.0,
             ),
-            maximum_holding_days=_int("TRADING_MAX_HOLDING_DAYS", 30),
+            maximum_holding_days=_int("TRADING_MAX_HOLDING_DAYS", 20),
             position_sizer=os.getenv(
                 "PAPER_POSITION_SIZER", "atr_risk"
             ).strip().lower(),

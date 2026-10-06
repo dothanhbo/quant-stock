@@ -364,6 +364,25 @@ class ProspectiveExitEvidence:
         }
 
 
+_STRATEGY_IDENTITY_V3_FIELDS = (
+    "strategy_identity_v3",
+    "signal_identity",
+    "execution_identity",
+)
+# B5-C contract attestation of a NEW record (quantlab.strategy_contract).
+_STRATEGY_CONTRACT_FIELDS = (
+    "strategy_contract_version",
+    "strategy_contract_status",
+    "strategy_contract_deviations",
+    "execution_overlay",
+)
+_STRATEGY_CONTRACT_STATUSES = frozenset({"CONTRACT_MATCHED", "CONTRACT_DEVIATION"})
+_STRATEGY_BEHAVIOR_CONTRACT_FIELDS = (
+    "strategy_signal_contract",
+    "strategy_execution_contract",
+)
+
+
 @dataclass(frozen=True, slots=True)
 class ProspectivePortfolioEvidenceRecord:
     """One immutable, effective-session observation of a paper portfolio."""
@@ -401,6 +420,25 @@ class ProspectivePortfolioEvidenceRecord:
     drawdown_pct: float | None = None
     forward_protocol_link_status: str = "DISTINCT_FROM_FORWARD_PROTOCOL_EVIDENCE"
     provenance_warnings: tuple[str, ...] = ()
+    # Strategy Identity v3 (Phase 3B, shadow/additive). Nullable: records
+    # created before v3, or whose shadow identity was INCOMPLETE, carry None.
+    # Omitted from the identity payload when None so every pre-v3 record keeps
+    # its original ``record_identity`` byte-for-byte.
+    strategy_identity_v3: str | None = None
+    signal_identity: str | None = None
+    execution_identity: str | None = None
+    # B5-C (additive, nullable, NEW records only; omitted from the identity
+    # payload when None so earlier records keep their exact record_identity).
+    strategy_contract_version: str | None = None
+    strategy_contract_status: str | None = None
+    strategy_contract_deviations: tuple[str, ...] | None = None
+    execution_overlay: str | None = None
+    # The normalized behavioral contracts the v3 fingerprints describe (P2-1,
+    # second review). Every fingerprint, the canonical comparison, deviation
+    # paths and status are RECOMPUTED from these on construction; caller
+    # metadata can never assert a status the contracts do not produce.
+    strategy_signal_contract: Mapping[str, Any] | None = None
+    strategy_execution_contract: Mapping[str, Any] | None = None
     record_identity: str = field(init=False)
 
     def __post_init__(self) -> None:
@@ -466,7 +504,165 @@ class ProspectivePortfolioEvidenceRecord:
         object.__setattr__(self, "fills_since_previous", fills)
         object.__setattr__(self, "exits_since_previous", exits)
         object.__setattr__(self, "provenance_warnings", tuple(sorted(set(self.provenance_warnings))))
+        for name in _STRATEGY_IDENTITY_V3_FIELDS:
+            value = getattr(self, name)
+            if value is not None:
+                text = str(value).strip().lower()
+                if len(text) != 64 or any(ch not in "0123456789abcdef" for ch in text):
+                    raise ValueError(f"{name} must be a SHA-256 hex digest when supplied")
+                object.__setattr__(self, name, text)
+        self._validate_strategy_identity_v3()
         object.__setattr__(self, "record_identity", _identity(self.identity_payload()))
+
+    def _validate_strategy_identity_v3(self) -> None:
+        """Derive and verify every additive v3 field; legacy (all None) passes.
+
+        From the stored behavioral contracts this RECOMPUTES ``signal_identity``,
+        ``execution_identity`` and ``strategy_identity_v3`` (for this record's
+        strategy) and, when a contract status is present, the canonical
+        comparison: the stored status, deviation paths and overlay must equal
+        the derived ones exactly. Stale/forged fingerprints, mixed parts from
+        different runs, a noncanonical contract labelled CONTRACT_MATCHED,
+        blank or invented deviation paths are all rejected.
+        """
+        prints = [getattr(self, name) for name in _STRATEGY_IDENTITY_V3_FIELDS]
+        contracts = [getattr(self, name) for name in _STRATEGY_BEHAVIOR_CONTRACT_FIELDS]
+        attestation = [getattr(self, name) for name in _STRATEGY_CONTRACT_FIELDS]
+        if all(value is None for value in (*prints, *contracts, *attestation)):
+            return  # A: pre-v3 legacy record
+        if all(value is None for value in contracts):
+            # B: early v3 format (Phase 3B shadow fingerprints / Phase 3D
+            # attestation) written before contracts were embedded. Readable as
+            # historical metadata only: nothing is recomputed, inferred or
+            # promoted (see strategy_identity_verification).
+            self._validate_early_v3_format()
+            return
+        if any(value is None for value in (*prints, *contracts)):
+            raise ValueError(
+                "v3 identity requires strategy, signal and execution identities and "
+                "the signal and execution contracts they fingerprint"
+            )
+        from quantlab.strategy_identity import build_strategy_identity
+
+        signal_contract = _normalized_contract(self.strategy_signal_contract)
+        execution_contract = _normalized_contract(self.strategy_execution_contract)
+        rebuilt = build_strategy_identity(
+            strategy=self.strategy_identity,
+            signal_contract=signal_contract,
+            execution_contract=execution_contract,
+        )
+        for name, expected in rebuilt.fingerprints().items():
+            if getattr(self, name) != expected:
+                raise ValueError(
+                    f"{name} does not match the fingerprint recomputed from this "
+                    "record's strategy and behavioral contracts"
+                )
+        # Deeply immutable internal state: callers cannot mutate the contracts
+        # this record's fingerprints and status were derived from.
+        object.__setattr__(self, "strategy_signal_contract", _freeze_contract(signal_contract))
+        object.__setattr__(self, "strategy_execution_contract", _freeze_contract(execution_contract))
+        if all(value is None for value in attestation):
+            return
+        if any(value is None for value in attestation):
+            raise ValueError(
+                "strategy contract attestation requires version, status, deviations and overlay"
+            )
+        if self.strategy_contract_status not in _STRATEGY_CONTRACT_STATUSES:
+            raise ValueError("strategy contract status is invalid")
+        raw_deviations = self.strategy_contract_deviations
+        if isinstance(raw_deviations, (str, bytes)) or not isinstance(raw_deviations, (tuple, list)):
+            raise ValueError("strategy contract deviations must be a sequence of field paths")
+        if any(not isinstance(item, str) or not item.strip() for item in raw_deviations):
+            raise ValueError("strategy contract deviation paths must be non-blank strings")
+        deviations = tuple(raw_deviations)
+        if self.strategy_contract_status == "CONTRACT_DEVIATION" and not deviations:
+            raise ValueError("CONTRACT_DEVIATION requires the deviating field paths")
+        if self.strategy_contract_status == "CONTRACT_MATCHED" and deviations:
+            raise ValueError("CONTRACT_MATCHED must have no deviations")
+        from quantlab.strategy_contract import CONTRACT_VERSION, compare_to_canonical
+
+        if self.strategy_contract_version != CONTRACT_VERSION:
+            raise ValueError(
+                f"unknown strategy contract version {self.strategy_contract_version!r}; "
+                "its canonical contract is not available to verify the status"
+            )
+        comparison = compare_to_canonical(rebuilt)
+        if self.strategy_contract_status != comparison.status:
+            raise ValueError(
+                f"strategy contract status {self.strategy_contract_status} contradicts "
+                f"the status {comparison.status} derived from the recorded contracts"
+            )
+        if deviations != comparison.deviation_paths:
+            raise ValueError(
+                "strategy contract deviation paths do not equal the deviations derived "
+                "from the recorded contracts"
+            )
+        if self.execution_overlay != comparison.regime_overlay:
+            raise ValueError("execution overlay does not match the recorded execution contract")
+        object.__setattr__(self, "strategy_contract_deviations", deviations)
+
+    def _validate_early_v3_format(self) -> None:
+        """Format-only checks for early (contract-map-less) v3 records."""
+        if self.strategy_contract_status is not None and (
+            self.strategy_contract_status not in _STRATEGY_CONTRACT_STATUSES
+        ):
+            raise ValueError("strategy contract status is invalid")
+        deviations = self.strategy_contract_deviations
+        if deviations is not None:
+            if isinstance(deviations, (str, bytes)) or not isinstance(deviations, (tuple, list)):
+                raise ValueError("strategy contract deviations must be a sequence of field paths")
+            object.__setattr__(
+                self, "strategy_contract_deviations", tuple(str(item) for item in deviations)
+            )
+
+    @property
+    def strategy_identity_format(self) -> str:
+        """A: PRE_V3, B: EARLY_V3_INCOMPLETE, C: CONTRACT_COMPLETE_V3."""
+        fields = (
+            *_STRATEGY_IDENTITY_V3_FIELDS,
+            *_STRATEGY_CONTRACT_FIELDS,
+            *_STRATEGY_BEHAVIOR_CONTRACT_FIELDS,
+        )
+        if all(getattr(self, name) is None for name in fields):
+            return "PRE_V3"
+        if self.strategy_signal_contract is None:
+            return "EARLY_V3_INCOMPLETE"
+        return "CONTRACT_COMPLETE_V3"
+
+    @property
+    def historical_contract_status(self) -> str | None:
+        """Contract status exactly as stored (historical metadata, unverified
+        for early-v3 records; verified for contract-complete records)."""
+        return self.strategy_contract_status
+
+    @property
+    def strategy_identity_verification(self) -> str:
+        """Current verification state, separate from any stored status."""
+        form = self.strategy_identity_format
+        if form == "PRE_V3":
+            return "NO_STRATEGY_IDENTITY_V3"
+        if form == "EARLY_V3_INCOMPLETE":
+            return "LEGACY_INCOMPLETE_V3_IDENTITY"
+        # Construction re-derived every field from the embedded contracts.
+        return self.strategy_contract_status or "STRATEGY_IDENTITY_V3_RECORDED"
+
+    @property
+    def strategy_identity_provenance(self) -> tuple[str, ...]:
+        """Provenance labels for this record (never stored; derived, read-only).
+
+        Pre-v3 records and early v3 records without embedded behavioral
+        contracts are LEGACY_UNVERIFIED; a stored status on an early record is
+        never promoted to a verified label.
+        """
+        form = self.strategy_identity_format
+        if form == "PRE_V3":
+            return ("LEGACY_UNVERIFIED", "NO_STRATEGY_IDENTITY_V3")
+        if form == "EARLY_V3_INCOMPLETE":
+            return ("LEGACY_UNVERIFIED", "LEGACY_INCOMPLETE_V3_IDENTITY")
+        labels = ["STRATEGY_IDENTITY_V3_RECORDED"]
+        if self.strategy_contract_status is not None:
+            labels.append(self.strategy_contract_status)
+        return tuple(labels)
 
     def identity_payload(self) -> dict[str, Any]:
         """Return all immutable content, excluding capture wall-clock time."""
@@ -504,13 +700,24 @@ class ProspectivePortfolioEvidenceRecord:
             "drawdown_pct": self.drawdown_pct,
             "forward_protocol_link_status": self.forward_protocol_link_status,
             "provenance_warnings": self.provenance_warnings,
+            # Additive v3 fields appear only when present (see field comment).
+            **{
+                name: getattr(self, name)
+                for name in (
+                    *_STRATEGY_IDENTITY_V3_FIELDS,
+                    *_STRATEGY_CONTRACT_FIELDS,
+                    *_STRATEGY_BEHAVIOR_CONTRACT_FIELDS,
+                )
+                if getattr(self, name) is not None
+            },
         }
 
     def as_dict(self) -> dict[str, Any]:
+        """Plain, fully independent copy (mutating it never affects the record)."""
         payload = self.identity_payload()
         payload["captured_at_utc"] = self.captured_at_utc
         payload["record_identity"] = self.record_identity
-        return payload
+        return json.loads(canonical_json(canonical_identity_value(payload)).decode("utf-8"))
 
     @classmethod
     def from_dict(cls, payload: Mapping[str, Any]) -> "ProspectivePortfolioEvidenceRecord":
@@ -552,6 +759,19 @@ class ProspectivePortfolioEvidenceRecord:
             drawdown_pct=payload.get("drawdown_pct"),
             forward_protocol_link_status=str(payload.get("forward_protocol_link_status", "DISTINCT_FROM_FORWARD_PROTOCOL_EVIDENCE")),
             provenance_warnings=tuple(str(item) for item in payload.get("provenance_warnings", ())),
+            strategy_identity_v3=payload.get("strategy_identity_v3"),
+            signal_identity=payload.get("signal_identity"),
+            execution_identity=payload.get("execution_identity"),
+            strategy_contract_version=payload.get("strategy_contract_version"),
+            strategy_contract_status=payload.get("strategy_contract_status"),
+            strategy_contract_deviations=(
+                None
+                if payload.get("strategy_contract_deviations") is None
+                else tuple(payload["strategy_contract_deviations"])
+            ),
+            execution_overlay=payload.get("execution_overlay"),
+            strategy_signal_contract=payload.get("strategy_signal_contract"),
+            strategy_execution_contract=payload.get("strategy_execution_contract"),
         )
 
 
@@ -747,6 +967,38 @@ class ProspectivePortfolioEvidenceLedger:
             self._validate_schema(connection)
 
     @staticmethod
+    def _revalidated_for_append(
+        record: ProspectivePortfolioEvidenceRecord,
+    ) -> ProspectivePortfolioEvidenceRecord:
+        """Re-derive the record from its CURRENT payload before persistence.
+
+        Construction-time validation is not trusted: the exact payload that
+        would be written is rebuilt from scratch, which recomputes every v3
+        fingerprint, the canonical comparison, deviation paths and status from
+        the current behavioral contracts and recomputes ``record_identity``.
+        Any difference from the cached values (e.g. an injected mutable
+        contract mutated after validation) is rejected. New early-v3
+        (contract-map-less) records are refused; that format is read-only.
+        """
+        try:
+            rebuilt = ProspectivePortfolioEvidenceRecord.from_dict(
+                json.loads(canonical_json(canonical_identity_value(record.as_dict())).decode("utf-8"))
+            )
+        except (KeyError, TypeError, ValueError) as exc:
+            raise ValueError(f"evidence record failed re-validation before append: {exc}") from exc
+        if rebuilt.record_identity != record.record_identity:
+            raise ValueError(
+                "evidence record content no longer matches its validated identity; "
+                "refusing to persist"
+            )
+        if rebuilt.strategy_identity_format == "EARLY_V3_INCOMPLETE":
+            raise ValueError(
+                "new evidence must be pre-v3 or contract-complete v3; the early v3 "
+                "format without behavioral contracts is read-only"
+            )
+        return rebuilt
+
+    @staticmethod
     def _evidence_key(record: ProspectivePortfolioEvidenceRecord) -> str:
         return _identity(
             {
@@ -760,6 +1012,7 @@ class ProspectivePortfolioEvidenceLedger:
         )
 
     def append(self, record: ProspectivePortfolioEvidenceRecord) -> ProspectiveEvidenceCaptureResult:
+        record = self._revalidated_for_append(record)
         self.initialize()
         key = self._evidence_key(record)
         encoded = canonical_json(record.as_dict()).decode("utf-8")
@@ -1413,6 +1666,7 @@ def capture_prospective_portfolio_evidence(
     baseline_event_cursor: PaperEventCursor | None = None,
     captured_at_utc: str | None = None,
     lifecycle_warnings: Iterable[str] = (),
+    strategy_identity_v3: Any = None,
 ) -> ProspectiveEvidenceCaptureResult:
     """Capture one immutable observation after a successful paper lifecycle.
 
@@ -1532,8 +1786,46 @@ def capture_prospective_portfolio_evidence(
         running_equity_peak=running_peak,
         drawdown_pct=drawdown,
         provenance_warnings=tuple(warnings),
+        **_strategy_identity_v3_kwargs(strategy_identity_v3),
     )
     return ledger.append(record)
+
+
+def _strategy_identity_v3_kwargs(identity: Any) -> dict[str, Any]:
+    """v3 identity and contract attestation for a NEW record.
+
+    ``identity`` is a ``quantlab.strategy_identity.StrategyIdentityV3`` (or
+    None). Fingerprints are recomputed from its contracts and the status is
+    derived against the canonical contract here; the record re-verifies all of
+    it from the stored contracts. Callers cannot supply a status.
+    """
+    if identity is None:
+        return {}
+    from quantlab.strategy_contract import evidence_attestation_fields
+
+    fields = evidence_attestation_fields(identity)
+    return {
+        name: fields[name]
+        for name in (
+            *_STRATEGY_IDENTITY_V3_FIELDS,
+            *_STRATEGY_CONTRACT_FIELDS,
+            *_STRATEGY_BEHAVIOR_CONTRACT_FIELDS,
+        )
+    }
+
+
+def _freeze_contract(value: Any) -> Any:
+    if isinstance(value, Mapping):
+        return MappingProxyType({str(key): _freeze_contract(item) for key, item in value.items()})
+    if isinstance(value, (list, tuple)):
+        return tuple(_freeze_contract(item) for item in value)
+    return value
+
+
+def _normalized_contract(value: Any) -> dict[str, Any]:
+    if not isinstance(value, Mapping):
+        raise ValueError("strategy behavioral contract must be a mapping")
+    return json.loads(canonical_json(canonical_identity_value(value)).decode("utf-8"))
 
 
 def inspect_prospective_portfolio_evidence(

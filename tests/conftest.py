@@ -27,3 +27,27 @@ def _restore_process_environment():
         if os.environ != snapshot:
             os.environ.clear()
             os.environ.update(snapshot)
+
+
+
+# Tests never read the developer's real ``.env`` (it may hold secrets and
+# machine-local strategy overrides). Several modules call ``load_dotenv()`` at
+# import time, i.e. during collection, which would otherwise copy the local
+# ``.env`` into ``os.environ`` for the whole session. Since the strategy-
+# contract gate fails closed on non-canonical configuration (B6), such a file
+# would decide test outcomes. This is installed when conftest is imported,
+# before any test module (and therefore any production module) is imported.
+# Production entrypoints are unchanged; tests that need values set them with
+# ``monkeypatch``.
+def _no_dotenv(*_args, **_kwargs) -> bool:
+    return False
+
+
+try:
+    import dotenv as _dotenv
+    import dotenv.main as _dotenv_main
+except ImportError:  # pragma: no cover
+    pass
+else:
+    _dotenv.load_dotenv = _no_dotenv
+    _dotenv_main.load_dotenv = _no_dotenv
