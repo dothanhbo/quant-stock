@@ -82,7 +82,7 @@ def test_direct_scanner_fails_before_paper_runtime_on_integrity_failure(
     )
 
     with pytest.raises(RuntimeError, match="failed closed"):
-        scanner.run_scan()
+        scanner.run_scan(result_processor=lambda results, stats: (results, stats))
 
     assert initialized == []
 
@@ -141,7 +141,7 @@ def test_direct_scanner_valid_integrity_reaches_read_only_scan_boundary(
 
     monkeypatch.setattr(scanner, "telegram_client", _Telegram())
 
-    scanner.run_scan()
+    scanner.run_scan(result_processor=lambda results, stats: (results, stats))
 
     assert calls[:2] == ["integrity", "runtime"]
 

@@ -6,7 +6,6 @@ from config.paper_store import V3_STRATEGY_IDENTITY, apply_active_paper_store_en
 
 from config.strategy_config import V3_BREADTH_PAPER
 from config import trading_policy
-from strategy.paper_v3_scanner import PaperV3Scanner
 
 
 def configure() -> None:
@@ -21,14 +20,10 @@ def configure() -> None:
 
 def main() -> None:
     configure()
-    from strategy import scanner
+    # Canonical strategy-aware path (same as daily / quantctl scan).
+    from app.strategy_scan import run_strategy_scan
 
-    v3_scanner = PaperV3Scanner(
-        float(os.getenv("PAPER_V2_QUALITY_THRESHOLD", "0.70"))
-    )
-    results, stats = scanner.run_scan(
-        result_processor=v3_scanner.process,
-    )
+    results, stats = run_strategy_scan(strategy_identity=V3_STRATEGY_IDENTITY)
 
     print("\n" + "=" * 65)
     print("🧪 PAPER V3 — Q70 + MARKET BREADTH")
@@ -37,7 +32,7 @@ def main() -> None:
     print(f"Breadth blocked : {stats['paper_v3_zero_exposure']}")
     print(f"Full exposure   : {stats['paper_v3_full_exposure']}")
     print(f"Half exposure   : {stats['paper_v3_half_exposure']}")
-    print(f"Q threshold     : {v3_scanner.gate.threshold:.2f}")
+    print(f"Q threshold     : {stats['paper_v3_quality_threshold']:.2f}")
 
     for item in results + stats["paper_v3_breadth_blocked"]:
         print(

@@ -502,7 +502,22 @@ def run_scan(
     ) = None,
     result_processor=None,
 ) -> tuple[list[dict], dict]:
-    """Run the production scan, persist passed signals and notify Telegram."""
+    """Run the production scan, persist passed signals and notify Telegram.
+
+    Low-level orchestration only. Operational callers must use the canonical
+    strategy-aware entrypoint ``app.strategy_scan.run_strategy_scan``, which
+    pins the strategy runtime and supplies the Q70/V3 ``result_processor``.
+    Every side effect below (telemetry, signal rows, paper queue, Telegram)
+    happens after that processor has returned.
+    """
+    if result_processor is None:
+        # Before 2026-10-06 `python -m strategy.scanner` (and therefore
+        # `quantctl scan` / Manager scan) reached this point without the
+        # strategy decision and queued/broadcast ungated raw signals.
+        raise ValueError(
+            "run_scan requires the strategy-aware result_processor; use "
+            "app.strategy_scan.run_strategy_scan()"
+        )
     # Fail before any provider read, integrity check or state write when the
     # Telegram configuration is missing (previously enforced at import time).
     broadcast_client = initialize_telegram_client()
@@ -675,6 +690,11 @@ def run_scan(
 
 
 if __name__ == "__main__":
+    # `python -m strategy.scanner` is the module QuantCtl/Manager launch for
+    # the "scan" operation. It delegates to the canonical strategy-aware path;
+    # the decision is made by a freshly imported `strategy.scanner` module
+    # configured for the selected strategy, never by this `__main__` copy.
+    from app.strategy_scan import main as run_canonical_strategy_scan
     from quantctl.run_history import run_tracked_entrypoint
 
-    raise SystemExit(run_tracked_entrypoint("scan", run_scan))
+    raise SystemExit(run_tracked_entrypoint("scan", run_canonical_strategy_scan))

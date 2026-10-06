@@ -1,0 +1,86 @@
+{
+ "accepted": [
+  {
+   "exposure": null,
+   "gate": "Q0.70_PASS",
+   "quality": 1.0,
+   "stop_loss": 23.4,
+   "symbol": "AAA",
+   "take_profit": 29.0,
+   "v3_gate": null
+  },
+  {
+   "exposure": null,
+   "gate": "Q0.70_PASS",
+   "quality": 0.857143,
+   "stop_loss": 37.8,
+   "symbol": "BBB",
+   "take_profit": 45.5,
+   "v3_gate": null
+  }
+ ],
+ "breadth_blocked": [],
+ "events": [
+  "integrity",
+  "paper_runtime_init",
+  "raw_scan",
+  "decision_start:PaperV2Scanner",
+  "decision_end:PaperV2Scanner",
+  "telemetry_write",
+  "signal_row_write",
+  "signal_row_write",
+  "paper_queue",
+  "telegram_send"
+ ],
+ "executor_database": "q70.db",
+ "executor_enabled": true,
+ "policy": {
+  "entry_model": "hybrid",
+  "maximum_holding_days": 30,
+  "stop_atr_multiplier": 2.0,
+  "target_atr_multiplier": 5.0,
+  "trailing_atr_multiplier": 2.0
+ },
+ "queued": [
+  {
+   "breadth_exposure_multiplier": null,
+   "entry": 25.0,
+   "paper_v2_gate": "Q0.70_PASS",
+   "paper_v2_quality": 1.0,
+   "paper_v3_breadth_gate": null,
+   "stop_loss": 23.4,
+   "symbol": "AAA",
+   "take_profit": 29.0
+  },
+  {
+   "breadth_exposure_multiplier": null,
+   "entry": 40.0,
+   "paper_v2_gate": "Q0.70_PASS",
+   "paper_v2_quality": 0.857143,
+   "paper_v3_breadth_gate": null,
+   "stop_loss": 37.8,
+   "symbol": "BBB",
+   "take_profit": 45.5
+  }
+ ],
+ "rejected": [
+  {
+   "quality": 0.619048,
+   "reason": "quality<0.70",
+   "symbol": "CCC"
+  },
+  {
+   "quality": 0.333333,
+   "reason": "quality<0.70",
+   "symbol": "DDD"
+  }
+ ],
+ "saved_signals": [
+  "AAA",
+  "BBB"
+ ],
+ "strategy_version": "Q70_FROZEN",
+ "telegram_messages": [
+  "📊 <b>KẾT QUẢ QUÉT VN100</b>\nThị trường: <b>BULL</b>\n\n🚀 <b>TOP TÍN HIỆU</b>\n<b>1. AAA</b> — 92/100\n💪 RS20: <code>+14.00%</code>\n💰 Entry: <code>25,000 VNĐ</code>\n📈 RSI: <code>61.0</code> | ADX: <code>41.0</code>\n📊 Volume: <code>1.40x MA20</code>\n⚡ Breakout 20 phiên: <code>Chưa</code>\n🛑 SL: <code>23,400 VNĐ</code> (-%)\n🎯 TP: <code>29,000 VNĐ</code> (+-%)\n\n<b>2. BBB</b> — 88/100\n💪 RS20: <code>+9.00%</code>\n💰 Entry: <code>40,000 VNĐ</code>\n📈 RSI: <code>61.0</code> | ADX: <code>36.0</code>\n📊 Volume: <code>1.40x MA20</code>\n⚡ Breakout 20 phiên: <code>Chưa</code>\n🛑 SL: <code>37,800 VNĐ</code> (-%)\n🎯 TP: <code>45,500 VNĐ</code> (+-%)\n\n🟡 <b>WATCHLIST GẦN ĐẠT</b>\n1. <b>GGG</b> — 66/- | RS <code>+1.00%</code> | thiếu: <code>-</code>\n\n✅ Tín hiệu: <b>2</b> | Watchlist: <b>1</b>"
+ ]
+}

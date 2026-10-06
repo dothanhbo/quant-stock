@@ -1,0 +1,44 @@
+{
+ "accepted": [],
+ "breadth_blocked": [
+  "AAA",
+  "BBB"
+ ],
+ "events": [
+  "integrity",
+  "paper_runtime_init",
+  "raw_scan",
+  "decision_start:PaperV3Scanner",
+  "decision_end:PaperV3Scanner",
+  "telemetry_write",
+  "paper_queue",
+  "telegram_send"
+ ],
+ "executor_database": "v3.db",
+ "executor_enabled": true,
+ "policy": {
+  "entry_model": "hybrid",
+  "maximum_holding_days": 30,
+  "stop_atr_multiplier": 2.0,
+  "target_atr_multiplier": 5.0,
+  "trailing_atr_multiplier": 2.0
+ },
+ "queued": [],
+ "rejected": [
+  {
+   "quality": 0.619048,
+   "reason": "quality<0.70",
+   "symbol": "CCC"
+  },
+  {
+   "quality": 0.333333,
+   "reason": "quality<0.70",
+   "symbol": "DDD"
+  }
+ ],
+ "saved_signals": [],
+ "strategy_version": "V3_BREADTH_40_60",
+ "telegram_messages": [
+  "📊 <b>KẾT QUẢ QUÉT VN100</b>\nThị trường: <b>BULL</b>\n\nKhông có mã nào đạt toàn bộ điều kiện hôm nay.\n\n🟡 <b>WATCHLIST GẦN ĐẠT</b>\n1. <b>GGG</b> — 66/- | RS <code>+1.00%</code> | thiếu: <code>-</code>\n\n✅ Tín hiệu: <b>0</b> | Watchlist: <b>1</b>"
+ ]
+}

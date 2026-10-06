@@ -72,6 +72,17 @@ python -m quantctl research status
 python -m quantctl history
 ```
 
+All operational scan entrypoints use one strategy-aware decision path,
+`app/strategy_scan.py::run_strategy_scan`: the daily scanner stage,
+`python -m strategy.scanner` (which `quantctl scan` and the Manager scan
+operation launch), and the compatibility wrappers `scripts.run_paper_v2` /
+`scripts.run_paper_v3`. It resolves the strategy from
+`PAPER_STRATEGY_VERSION`, pins that strategy's frozen runtime (the same
+functions the daily lifecycle wrappers use), verifies the scanner's
+`TradingPolicy` matches it, and applies the Q70 gate or V3 breadth processor
+before any telemetry, signal row, paper queue write or Telegram message.
+`strategy.scanner.run_scan` refuses to run without that processor.
+
 The mutating `python -m quantctl update`, `scan`, and `daily` commands launch
 the existing canonical modules in subprocesses; they do not duplicate updater,
 scanner, or daily-pipeline logic. Quant Manager is the Streamlit control UI for

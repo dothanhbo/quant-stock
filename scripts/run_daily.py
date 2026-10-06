@@ -140,20 +140,15 @@ def run_paper_v3_lifecycle():
 def run_strategy_scanner(
     pending_execution_result=None,
 ):
-    from strategy.scanner import run_scan
+    """Daily scanner stage: the canonical strategy-aware scan path.
 
-    if _use_v3():
-        from strategy.paper_v3_scanner import PaperV3Scanner
+    Same function used by ``python -m strategy.scanner`` (``quantctl scan``,
+    Manager scan) and the V2/V3 standalone wrappers; see app.strategy_scan.
+    """
+    from app.strategy_scan import run_strategy_scan
 
-        processor = PaperV3Scanner(threshold=0.70).process
-    else:
-        from strategy.paper_v2_scanner import PaperV2Scanner
-
-        processor = PaperV2Scanner(threshold=0.70).process
-
-    return run_scan(
+    return run_strategy_scan(
         pending_execution_result=pending_execution_result,
-        result_processor=processor,
     )
 
 def main() -> int:

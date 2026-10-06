@@ -4,7 +4,6 @@ import os
 from config.paper_store import Q70_STRATEGY_IDENTITY, apply_active_paper_store_environment
 from config.strategy_config import Q70_FROZEN
 from config import trading_policy
-from strategy.paper_v2_scanner import PaperV2Scanner
 
 def configure() -> None:
     os.environ["PAPER_TRADING_ENABLED"] = "true"
@@ -25,15 +24,11 @@ def configure() -> None:
 def main() -> None:
     configure()
 
-    from strategy import scanner
+    # Canonical strategy-aware path (same as daily / quantctl scan). The
+    # Q70 threshold there is the frozen 0.70 that configure() also exports.
+    from app.strategy_scan import run_strategy_scan
 
-    v2_scanner = PaperV2Scanner(
-        float(os.getenv("PAPER_V2_QUALITY_THRESHOLD", "0.70"))
-    )
-
-    results, stats = scanner.run_scan(
-        result_processor=v2_scanner.process,
-    )
+    results, stats = run_strategy_scan(strategy_identity=Q70_STRATEGY_IDENTITY)
 
     quality_universe = stats.get("evaluations", [])
 
@@ -45,7 +40,7 @@ def main() -> None:
         "Quality scored  : "
         f"{stats['paper_v2_quality_scored']}"
     )
-    print(f"Q threshold     : {v2_scanner.gate.threshold:.2f}")
+    print(f"Q threshold     : {stats['paper_v2_quality_threshold']:.2f}")
     #print(f"V1 candidates   : {stats.get('paper_v2_v1_candidates', 'N/A')}")
     print(f"V2 accepted     : {len(results)}")
     print(f"V2 rejected     : {len(stats['paper_v2_rejected'])}")
