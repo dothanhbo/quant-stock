@@ -47,8 +47,21 @@ from strategy.base_strategy import BaseStrategy
 TRADING_POLICY = TradingPolicy.from_env()
 strategy = TRADING_POLICY.build_entry_model()
 
-telegram_client = TelegramClient.from_env()
+# The Telegram client is created when a production scan starts, not at import.
+# Research/backtest code imports helpers from this module (evaluate_prepared_row,
+# evaluate_symbol); importing must not require Telegram secrets. run_scan()
+# still resolves the client before any integrity check or state mutation, so a
+# missing token keeps failing the scan stage early, exactly as before.
+telegram_client: TelegramClient | None = None
 paper_signal_executor: PaperSignalExecutor | None = None
+
+
+def initialize_telegram_client() -> TelegramClient:
+    """Resolve the broadcast client once, at the production-scan boundary."""
+    global telegram_client
+    if telegram_client is None:
+        telegram_client = TelegramClient.from_env()
+    return telegram_client
 
 
 def _resolve_scanner_symbols() -> tuple[str, ...]:
@@ -490,6 +503,9 @@ def run_scan(
     result_processor=None,
 ) -> tuple[list[dict], dict]:
     """Run the production scan, persist passed signals and notify Telegram."""
+    # Fail before any provider read, integrity check or state write when the
+    # Telegram configuration is missing (previously enforced at import time).
+    broadcast_client = initialize_telegram_client()
     symbols = _resolve_scanner_symbols()
     _require_scanner_integrity(symbols)
     executor = initialize_scanner_runtime()
@@ -604,7 +620,7 @@ def run_scan(
         )
 
         telegram_result = (
-            telegram_client.send_message(
+            broadcast_client.send_message(
                 message
             )
         )
@@ -632,7 +648,7 @@ def run_scan(
 
         if paper_message:
             paper_telegram_result = (
-                telegram_client.send_message(
+                broadcast_client.send_message(
                     paper_message
                 )
             )

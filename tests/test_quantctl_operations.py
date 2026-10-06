@@ -323,6 +323,9 @@ class _FakeStreamlit:
     def spinner(self, *args: object, **kwargs: object):
         return self
 
+    def container(self, *args: object, **kwargs: object):
+        return self
+
     def expander(self, *args: object, **kwargs: object):
         self.expanders.append(str(args[0]))
         return self

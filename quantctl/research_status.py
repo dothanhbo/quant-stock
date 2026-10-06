@@ -367,7 +367,7 @@ def inspect_production_policy(
     environ: Mapping[str, str] | None = None,
 ) -> ProductionPolicySnapshot:
     configured = configured_paper_environment(root=root, environ=environ)
-    resolved = resolve_active_paper_store(configured)
+    resolved = resolve_active_paper_store(configured, root=root)
     role = "FROZEN_BASELINE" if resolved.strategy_identity == Q70_STRATEGY_IDENTITY else "DEPLOYED_BASELINE"
     return ProductionPolicySnapshot(
         deployed_strategy_identity=resolved.strategy_identity,

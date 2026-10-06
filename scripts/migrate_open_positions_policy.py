@@ -2,6 +2,15 @@
 
 Stops and targets are deliberately preserved. Only missing maximum holding
 days is populated, so existing risk decisions are never silently loosened.
+
+Target database (unchanged default): ``--database`` if given, otherwise
+``PAPER_DATABASE_PATH``, otherwise the legacy generic ``data/paper_trading.db``.
+That default is NOT the canonical active store selected by
+``config.paper_store`` (Q70 → ``paper_trading_v2.db``, V3 →
+``paper_trading_v3.db``). Since 2026-10-06 the script prints the resolved
+target and refuses ``--apply`` against a database that is not the active
+store unless that database was named explicitly with ``--database``.
+Dry-run output is unchanged apart from the target banner.
 """
 
 from __future__ import annotations
@@ -10,6 +19,7 @@ import argparse
 import os
 import sqlite3
 from datetime import date
+from pathlib import Path
 
 try:
     from dotenv import load_dotenv
@@ -17,16 +27,39 @@ except ImportError:  # pragma: no cover
     def load_dotenv() -> bool:
         return False
 
+from config.paper_store import resolve_active_paper_store
 from config.trading_policy import TradingPolicy
 
 
-def main() -> None:
+def _target_database(explicit: str | None) -> Path:
+    if explicit:
+        return Path(explicit)
+    return Path(os.getenv("PAPER_DATABASE_PATH", "data/paper_trading.db"))
+
+
+def main(argv: list[str] | None = None) -> int:
     load_dotenv()
     parser = argparse.ArgumentParser()
     parser.add_argument("--apply", action="store_true")
-    args = parser.parse_args()
+    parser.add_argument(
+        "--database",
+        help="paper database to inspect/migrate; required for --apply on a non-active store",
+    )
+    args = parser.parse_args(argv)
     policy = TradingPolicy.from_env()
-    path = os.getenv("PAPER_DATABASE_PATH", "data/paper_trading.db")
+    path = _target_database(args.database)
+    active = resolve_active_paper_store()
+    is_active_store = path.resolve() == active.database_path.resolve()
+    print(
+        f"Target paper database: {path.resolve()} "
+        f"({'ACTIVE ' + active.strategy_identity + ' store' if is_active_store else 'NOT the active store; active is ' + str(active.database_path)})"
+    )
+    if args.apply and not is_active_store and not args.database:
+        print(
+            "Refusing --apply: the implicit target is not the active paper store. "
+            "Re-run with --database <path> to name the store you intend to modify."
+        )
+        return 2
 
     with sqlite3.connect(path) as connection:
         connection.row_factory = sqlite3.Row
@@ -57,7 +90,8 @@ def main() -> None:
             print("Applied. Existing stop/target values were preserved.")
         else:
             print("Dry-run only. Re-run with --apply after reviewing the list.")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

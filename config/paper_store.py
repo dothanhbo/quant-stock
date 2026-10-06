@@ -67,21 +67,53 @@ def _definition_for_strategy(strategy_identity: str) -> PaperStoreDefinition:
     return V3_PAPER_STORE if strategy_identity == V3_STRATEGY_IDENTITY else Q70_PAPER_STORE
 
 
+class AmbiguousPaperStoreError(RuntimeError):
+    """Raised when the default paper store could silently resolve to two files."""
+
+
+def _anchored_default_path(definition: PaperStoreDefinition, *, root: Path) -> Path:
+    """Anchor a store's default path to the repository root, never the CWD.
+
+    Before 2026-10-06 the default (no override variable) was returned as the
+    bare relative path ``data/paper_trading*.db`` and therefore opened relative
+    to the process working directory, while overrides, the market database and
+    the QuantCtl/Manager inspectors were all repository-anchored. Launching
+    from the repository root (the documented production contract) resolves to
+    the same file either way. To make sure this change can never silently
+    switch a running deployment to a different paper store, a distinct,
+    already-existing CWD-relative store file stops resolution with an explicit
+    error instead of being ignored or used.
+    """
+    anchored = (root / definition.default_path).resolve()
+    if root.resolve() == PROJECT_ROOT.resolve():
+        cwd_candidate = (Path.cwd() / definition.default_path).resolve()
+        if cwd_candidate != anchored and cwd_candidate.is_file():
+            raise AmbiguousPaperStoreError(
+                f"{definition.display_name}: found a paper database relative to "
+                f"the current working directory ({cwd_candidate}) that differs "
+                f"from the repository-anchored default ({anchored}). Run from "
+                f"the repository root or set {definition.override_variable} to "
+                "the intended absolute path; no store was selected."
+            )
+    return anchored
+
+
 def resolve_store_definition(
     definition: PaperStoreDefinition,
     environ: Mapping[str, str] | None = None,
     *,
     writable_by_current_pipeline: bool = False,
+    root: Path = PROJECT_ROOT,
 ) -> ResolvedPaperStore:
     values = os.environ if environ is None else environ
     configured = str(values.get(definition.override_variable, "")).strip()
     if configured:
         database_path = Path(configured).expanduser()
         if not database_path.is_absolute():
-            database_path = PROJECT_ROOT / database_path
+            database_path = root / database_path
         database_path = database_path.resolve()
     else:
-        database_path = definition.default_path
+        database_path = _anchored_default_path(definition, root=root)
     return ResolvedPaperStore(
         definition.store_id,
         definition.display_name,
@@ -96,6 +128,7 @@ def resolve_active_paper_store(
     environ: Mapping[str, str] | None = None,
     *,
     strategy_identity: str | None = None,
+    root: Path = PROJECT_ROOT,
 ) -> ResolvedPaperStore:
     effective = (
         effective_paper_strategy(environ)
@@ -106,6 +139,7 @@ def resolve_active_paper_store(
         _definition_for_strategy(effective),
         environ,
         writable_by_current_pipeline=True,
+        root=root,
     )
 
 

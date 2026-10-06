@@ -114,9 +114,13 @@ All databases are runtime data and ignored by Git.
 | Paper V3 | `data/paper_trading_v3.db` | `PAPER_V3_DATABASE_PATH`, assigned to the common paper runtime by the V3 wrapper |
 
 Market data and paper state are intentionally separate. V2 and V3 paper state
-must also remain isolated. Paper-path overrides are process-working-directory
-relative, so production services run from the repository root and use explicit
-absolute overrides when that cannot be guaranteed.
+must also remain isolated. Paper store paths, defaults and relative overrides
+alike, are anchored to the repository root (`config/paper_store.py`), the same
+as the market database. If a different, already-existing paper database is
+found relative to the current working directory, resolution stops with
+`AmbiguousPaperStoreError` instead of silently picking one; run from the
+repository root or set the store's override variable to an absolute path.
+Copy `.env.example` (names only, all commented out) to start a local `.env`.
 
 ## Paper policies
 
@@ -188,7 +192,8 @@ python -m scripts.init_db
 Operational and maintenance commands:
 
 ```bash
-# Market-only incremental update (network/provider access)
+# Market-only incremental update (network/provider access); exits 1 when any
+# symbol is still failed or needs backfill after retries
 python -m scripts.update_data
 
 # Read/check current universe coverage

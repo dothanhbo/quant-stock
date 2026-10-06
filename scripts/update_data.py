@@ -511,7 +511,16 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def main() -> None:
+def main() -> int:
+    """Run the standalone updater and return a truthful process exit code.
+
+    Exit code 1 means at least one requested symbol is still failed or needs
+    backfill after retries. Previously the process exited 0 in that case, so
+    the operation-history ledger (and QuantCtl/Manager) recorded SUCCESS for an
+    incomplete market-data update. Rows already written are unchanged either
+    way; only the reported outcome differs. The daily pipeline is unaffected:
+    it calls update_all_symbols() directly and already fails closed.
+    """
     args = build_parser().parse_args()
 
     if args.cleanup_only:
@@ -520,7 +529,7 @@ def main() -> None:
         print(f"Trước cleanup : {result['before']:,} dòng")
         print(f"Sau cleanup   : {result['after']:,} dòng")
         print(f"Đã loại       : {result['removed']:,} dòng trùng")
-        return
+        return 0
 
     if args.symbols:
         symbols = args.symbols
@@ -535,9 +544,17 @@ def main() -> None:
                 f"chỉ có {len(symbols)} mã"
             )
 
-    update_all_symbols(
+    _, pipeline_issues = update_all_symbols(
         symbols
     )
+
+    if pipeline_issues:
+        print(
+            "\n❌ Market-data update incomplete; exit code 1: "
+            + ", ".join(pipeline_issues)
+        )
+        return 1
+    return 0
 
 
 if __name__ == "__main__":

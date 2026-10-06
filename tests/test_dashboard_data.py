@@ -1,5 +1,8 @@
 from pathlib import Path
+import os
 import sys
+
+import pytest
 
 PROJECT_ROOT = Path(__file__).resolve().parents[1]
 if str(PROJECT_ROOT) not in sys.path:
@@ -29,6 +32,13 @@ def test_default_market_database_honors_root_relative_environment(
     assert DashboardPaths().market_db == (PROJECT_ROOT / "custom/market.db").resolve()
 
 
+@pytest.mark.skipif(
+    os.environ.get("QUANT_ALLOW_LIVE_DB_TESTS", "").strip() != "1",
+    reason=(
+        "Reads the real data/market.db and legacy data/paper_trading.db (opened "
+        "read-write by dashboard.data). Opt in with QUANT_ALLOW_LIVE_DB_TESTS=1."
+    ),
+)
 def test_real_project_databases_are_readable() -> None:
     paths = DashboardPaths(
         market_db=Path("data/market.db"),

@@ -354,7 +354,7 @@ def inspect_paper_system(
         value = str(configured.get(name, "")).strip()
         if value and not Path(value).expanduser().is_absolute():
             configured[name] = str((root / value).resolve())
-    active = resolve_active_paper_store(configured)
+    active = resolve_active_paper_store(configured, root=root)
     inspected: list[PaperStoreSnapshot] = []
     technical_names = {
         "generic-paper": "Generic",
@@ -367,6 +367,7 @@ def inspect_paper_system(
             definition,
             configured,
             writable_by_current_pipeline=writable,
+            root=root,
         )
         snapshot = inspect_paper_store(
             _absolute_store_path(resolved.database_path, root=root),

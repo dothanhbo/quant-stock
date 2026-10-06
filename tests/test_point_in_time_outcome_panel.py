@@ -140,7 +140,8 @@ def test_tail_censoring_is_independent_by_horizon_and_missing_future_is_not_a_lo
     missing_row = missing_panel.frame.iloc[0]
     assert missing_row["outcome_5__availability"] == "MISSING_STOCK_TARGET_CLOSE"
     assert pd.isna(missing_row["stock_forward_return_5_pct"])
-    assert missing_row["stock_forward_return_5_pct"] is not -100.0
+    # A missing target close is unavailable (NA), never a -100% loss; the
+    # former `is not -100.0` identity check was vacuous and is covered above.
 
 
 def test_every_availability_branch_and_precedence() -> None:

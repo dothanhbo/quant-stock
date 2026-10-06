@@ -70,9 +70,43 @@ def test_default_and_v3_strategy_resolve_canonical_store_not_generic_path(tmp_pa
     )
 
     assert default.strategy_identity == Q70_STRATEGY_IDENTITY
-    assert default.database_path == Path("data/paper_trading_v2.db")
+    # Defaults are repository-anchored (previously the bare relative path,
+    # which resolved against the process CWD). Same file when run from root.
+    assert default.database_path == (PROJECT_ROOT / "data/paper_trading_v2.db").resolve()
     assert v3.strategy_identity == V3_STRATEGY_IDENTITY
-    assert v3.database_path == Path("data/paper_trading_v3.db")
+    assert v3.database_path == (PROJECT_ROOT / "data/paper_trading_v3.db").resolve()
+
+
+def test_default_paper_store_is_anchored_to_repository_root_not_cwd(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.chdir(tmp_path)
+
+    resolved = resolve_active_paper_store({})
+
+    assert resolved.database_path == (PROJECT_ROOT / "data/paper_trading_v2.db").resolve()
+    assert not (tmp_path / "data").exists()
+
+
+def test_distinct_cwd_relative_default_store_fails_closed_instead_of_switching(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    from config.paper_store import AmbiguousPaperStoreError
+
+    (tmp_path / "data").mkdir()
+    stray = tmp_path / "data" / "paper_trading_v2.db"
+    stray.write_bytes(b"")
+    monkeypatch.chdir(tmp_path)
+
+    with pytest.raises(AmbiguousPaperStoreError, match="PAPER_V2_DATABASE_PATH"):
+        resolve_active_paper_store({})
+
+    # An explicit override is never ambiguous.
+    assert resolve_active_paper_store(
+        {"PAPER_V2_DATABASE_PATH": str(stray)}
+    ).database_path == stray.resolve()
 
 
 def test_strategy_specific_path_overrides_are_respected(tmp_path: Path) -> None:
