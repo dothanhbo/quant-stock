@@ -31,6 +31,12 @@ def _read_float(
 def main() -> None:
     load_dotenv()
 
+    # Position valuation consumes stored prices: refuse unresolved admission
+    # blocks / pending applications / lineage drift before touching paper state.
+    from core.market_provenance_gate import require_market_provenance
+
+    require_market_provenance(resolve_market_database_path())
+
     broker = PaperBroker(
         initial_cash=_read_float(
             "PAPER_INITIAL_CASH",

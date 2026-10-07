@@ -10,6 +10,7 @@ from vnstock.api.quote import Quote
 from core.database import (
     save_price_data,
 )
+from core.market_admission import kbs_context
 from core.universe import (
     get_all_symbols,
 )
@@ -93,9 +94,31 @@ def backfill_symbol(
         df = df.copy()
         df["symbol"] = symbol
 
-        saved_rows = save_price_data(
-            df
+        # Backfill uses the same revision admission guard as the updater:
+        # it never replaces stored rows, and a window that starts later than
+        # the oldest stored history is compared only against the stored
+        # sessions inside the window. Nothing is rebuilt here.
+        outcome = save_price_data(
+            df,
+            context=kbs_context("BACKFILL", start_date, end_date),
+            symbol=symbol,
         )
+
+        if outcome.blocked:
+            print(
+                f"🛑 {symbol}: REVISION BLOCKED "
+                f"({outcome.result.value}: {outcome.reason}); "
+                "market.db giữ nguyên, observation đã được lưu. "
+                "Không tự rebuild."
+            )
+            return False
+
+        if not outcome.applied:
+            print(
+                f"❌ {symbol}: {outcome.result.value}: "
+                f"{outcome.error or outcome.reason}"
+            )
+            return False
 
         latest_api_date = pd.to_datetime(
             df["time"],
@@ -114,7 +137,7 @@ def backfill_symbol(
 
         print(
             f"✅ {symbol}: "
-            f"upsert {saved_rows} dòng, "
+            f"append {outcome.rows_appended} phiên mới, "
             f"mới nhất {latest_text}"
         )
 

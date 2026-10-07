@@ -60,8 +60,33 @@ def ensure_price_unique_index() -> bool:
     return True
 
 
-def cleanup_price_duplicates() -> dict[str, int]:
-    with engine.begin() as conn:
+class UnguardedHistoryRewriteError(RuntimeError):
+    """Duplicate groups hold conflicting values (a revision decision, not cleanup)."""
+
+
+class MaintenanceDisabledError(RuntimeError):
+    """A history-mutating maintenance path was invoked while V1 has it disabled."""
+
+
+MAINTENANCE_DISABLED_MESSAGE = (
+    "history-mutating maintenance is disabled in V1: a deletion in market.db "
+    "would change the dataset without advancing the versioned provenance "
+    "lineage. Analysis (dry-run) remains available; rebuild/repair is deferred "
+    "(R4)."
+)
+
+
+def analyze_price_duplicates() -> dict[str, int]:
+    """Read-only duplicate analysis; never modifies ``market.db``.
+
+    Counts exactly redundant duplicate rows (identical canonical OHLCV) and
+    groups whose duplicates conflict. Maintenance that would delete rows is
+    disabled in V1 (``MaintenanceDisabledError``) because it would change the
+    dataset without advancing the dataset version.
+    """
+    from core.market_observation_log import canonical_row
+
+    with engine.connect() as conn:
         rows = conn.execute(
             text(
                 '''
@@ -72,48 +97,60 @@ def cleanup_price_duplicates() -> dict[str, int]:
             )
         ).mappings().all()
 
-        latest_by_day = {}
-        for row in rows:
-            trading_date = _normalize_trading_date(row["time"])
-            if trading_date is None:
-                continue
-            latest_by_day[(str(row["symbol"]), trading_date)] = {
-                "symbol": str(row["symbol"]),
-                "time": trading_date,
-                "open": row["open"],
-                "high": row["high"],
-                "low": row["low"],
-                "close": row["close"],
-                "volume": row["volume"],
-            }
+    groups: dict[tuple[str, str], list[dict]] = {}
+    unnormalized = 0
+    for row in rows:
+        trading_date = _normalize_trading_date(row["time"])
+        if trading_date is None:
+            continue
+        if str(row["time"]) != trading_date:
+            unnormalized += 1
+        groups.setdefault((str(row["symbol"]), trading_date), []).append(dict(row))
 
-        conn.execute(text("DELETE FROM prices"))
-
-        if latest_by_day:
-            conn.execute(
-                text(
-                    '''
-                    INSERT INTO prices (
-                        symbol, time, open, high, low, close, volume
+    redundant = 0
+    conflicts: list[str] = []
+    for (symbol, trading_date), members in groups.items():
+        if len(members) < 2:
+            continue
+        tuples = set()
+        for member in members:
+            try:
+                tuples.add(
+                    canonical_row(
+                        member["open"],
+                        member["high"],
+                        member["low"],
+                        member["close"],
+                        member["volume"],
                     )
-                    VALUES (
-                        :symbol, :time, :open, :high, :low, :close, :volume
-                    )
-                    '''
-                ),
-                list(latest_by_day.values()),
-            )
-
-    before = len(rows)
-    after = len(latest_by_day)
-
-    ensure_price_unique_index()
+                )
+            except (TypeError, ValueError):
+                tuples.add(("INVALID", str(member["id"])))
+        if len(tuples) > 1:
+            conflicts.append(f"{symbol}@{trading_date}")
+            continue
+        redundant += len(members) - 1
 
     return {
-        "before": before,
-        "after": after,
-        "removed": before - after,
+        "rows": len(rows),
+        "redundant_identical_rows": redundant,
+        "conflicting_groups": len(conflicts),
+        "conflict_examples": conflicts[:5],
+        "unnormalized_time_rows": unnormalized,
     }
+
+
+def cleanup_price_duplicates(*, apply: bool = False) -> dict[str, int]:
+    """Analyze duplicates (dry-run). ``apply=True`` is disabled in V1.
+
+    The previous implementation deleted and re-inserted the whole table;
+    the first R1/R2 revision deleted redundant rows. Either mutates stored
+    history without advancing the dataset version, so applying is disabled
+    (fail closed) and nothing is ever written here.
+    """
+    if apply:
+        raise MaintenanceDisabledError(MAINTENANCE_DISABLED_MESSAGE)
+    return analyze_price_duplicates()
 
 
 
@@ -237,119 +274,43 @@ def init_database():
 # SAVE DATA
 # ==========================
 
-def save_price_data(df):
+def save_price_data(df, *, context, symbol=None):
+    """Hand one symbol's provider batch to the revision admission guard.
 
-    if df.empty:
-        return 0
+    This is the only supported way to write provider prices. It no longer does
+    ``INSERT OR REPLACE``: historical rows are never overwritten. See
+    :mod:`core.market_admission`. ``context`` (an ``AdmissionContext``) is
+    mandatory so that every write carries its request window and provenance;
+    a call without it fails instead of silently writing unguarded.
 
-    data = df.copy()
-
-    # Chuẩn hóa tên cột
-    data.columns = [
-        c.lower()
-        for c in data.columns
-    ]
-
-    parsed_time = pd.to_datetime(
-        data["time"],
-        errors="coerce",
-    )
-
-    if parsed_time.isna().any():
-        invalid_count = int(parsed_time.isna().sum())
-        raise ValueError(
-            f"Có {invalid_count} dòng time không hợp lệ."
-        )
-
-    data["time"] = parsed_time.dt.strftime(
-        "%Y-%m-%d"
-    )
-
-    data = (
-        data
-        .drop_duplicates(
-            subset=["symbol", "time"],
-            keep="last",
-        )
-        .reset_index(drop=True)
-    )
-
-    required = [
-        "time",
-        "open",
-        "high",
-        "low",
-        "close",
-        "volume",
-        "symbol"
-    ]
-
-    for col in required:
-        if col not in data.columns:
-            raise Exception(
-                f"Missing column: {col}"
-            )
-
-    numeric_columns = ["open", "high", "low", "close", "volume"]
-    for column in numeric_columns:
-        data[column] = pd.to_numeric(data[column], errors="coerce")
-
-    invalid_ohlc = (
-        data[numeric_columns].isna().any(axis=1)
-        | (data[["open", "high", "low", "close"]] <= 0).any(axis=1)
-        | (data["volume"] < 0)
-        | (data["high"] < data["low"])
-        | (data["open"] > data["high"])
-        | (data["open"] < data["low"])
-        | (data["close"] > data["high"])
-        | (data["close"] < data["low"])
-    )
-    if invalid_ohlc.any():
-        bad = data.loc[invalid_ohlc, ["symbol", "time"]]
-        sample = ", ".join(
-            f"{row.symbol}@{row.time}" for row in bad.head(5).itertuples()
-        )
-        raise ValueError(
-            f"Có {int(invalid_ohlc.sum())} dòng OHLC không hợp lệ: {sample}"
-        )
-
-    records = data[
-        required
-    ].to_dict(
-        orient="records"
-    )
-
-    insert_sql = """
-        INSERT OR REPLACE INTO prices
-        (
-            symbol,
-            time,
-            open,
-            high,
-            low,
-            close,
-            volume
-        )
-        VALUES
-        (
-            :symbol,
-            :time,
-            :open,
-            :high,
-            :low,
-            :close,
-            :volume
-        )
+    Returns an ``AdmissionOutcome``; callers must treat ``outcome.blocked`` as
+    "do not consume this symbol for this run".
     """
+    from core.market_admission import admit_price_batch
 
-    with engine.connect() as conn:
-        conn.execute(
-            text(insert_sql),
-            records
-        )
-        conn.commit()
+    if context is None:
+        raise TypeError("save_price_data requires an AdmissionContext")
 
-    return len(records)
+    if symbol is None:
+        if df is None or len(df) == 0:
+            raise ValueError("symbol is required when the batch is empty")
+        columns = {str(c).lower(): c for c in df.columns}
+        if "symbol" not in columns:
+            raise ValueError("batch has no symbol column and no symbol was given")
+        symbols = {str(v).strip().upper() for v in df[columns["symbol"]]}
+        if len(symbols) != 1:
+            raise ValueError(
+                "save_price_data accepts exactly one symbol per batch; got "
+                + ", ".join(sorted(symbols)[:5])
+            )
+        symbol = next(iter(symbols))
+
+    return admit_price_batch(
+        df,
+        symbol=symbol,
+        context=context,
+        market_db_path=DATABASE_PATH,
+    )
 
 # ==========================
 # LOAD DATA

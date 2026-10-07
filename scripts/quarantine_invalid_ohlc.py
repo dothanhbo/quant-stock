@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import os
 import sqlite3
+from pathlib import Path
 
 try:
     from dotenv import load_dotenv
@@ -20,43 +21,41 @@ INVALID = """
 """
 
 
-def main() -> None:
+def main() -> int:
     load_dotenv()
     parser = argparse.ArgumentParser()
     parser.add_argument("--db", default=os.getenv("MARKET_DATABASE_PATH", "data/market.db"))
-    parser.add_argument("--apply", action="store_true")
+    parser.add_argument(
+        "--apply",
+        action="store_true",
+        help="DISABLED in V1: deleting history would not advance the dataset version.",
+    )
     args = parser.parse_args()
-    with sqlite3.connect(args.db) as connection:
+    if args.apply:
+        print(
+            "--apply is disabled in V1: quarantining/deleting rows would change "
+            "market.db without advancing the versioned provenance lineage. "
+            "Nothing was modified."
+        )
+        return 2
+    uri = Path(args.db).resolve().as_uri() + "?mode=ro"
+    connection = sqlite3.connect(uri, uri=True)
+    try:
         connection.row_factory = sqlite3.Row
         rows = connection.execute(
             f"SELECT * FROM prices WHERE {INVALID} ORDER BY symbol, time"
         ).fetchall()
-        print(f"Invalid OHLC rows: {len(rows)}")
-        for row in rows[:30]:
-            print(
-                f"{row['symbol']} {row['time']} O={row['open']} H={row['high']} "
-                f"L={row['low']} C={row['close']} V={row['volume']}"
-            )
-        if not args.apply:
-            print("Dry-run only. Use --apply to quarantine and remove from prices.")
-            return
-        connection.execute(
-            """
-            CREATE TABLE IF NOT EXISTS prices_quarantine AS
-            SELECT *, '' AS quarantine_reason, '' AS quarantined_at
-            FROM prices WHERE 0
-            """
+    finally:
+        connection.close()
+    print(f"Invalid OHLC rows: {len(rows)}")
+    for row in rows[:30]:
+        print(
+            f"{row['symbol']} {row['time']} O={row['open']} H={row['high']} "
+            f"L={row['low']} C={row['close']} V={row['volume']}"
         )
-        connection.execute(
-            f"""
-            INSERT INTO prices_quarantine
-            SELECT *, 'INVALID_OHLC', datetime('now') FROM prices WHERE {INVALID}
-            """
-        )
-        connection.execute(f"DELETE FROM prices WHERE {INVALID}")
-        connection.commit()
-        print(f"Quarantined and removed {len(rows)} rows. Backup remains in prices_quarantine.")
+    print("Dry-run only (the database was opened read-only; apply is disabled in V1).")
+    return 0
 
 
 if __name__ == "__main__":
-    main()
+    raise SystemExit(main())

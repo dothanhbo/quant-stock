@@ -431,6 +431,12 @@ def update_all_open_signals() -> list[dict[str, Any]]:
             "hoặc AMBIGUOUS"
         )
 
+    # Signal evaluation consumes stored prices: refuse unresolved admission
+    # blocks / pending applications / lineage drift (persistent, cross-process).
+    from core.market_provenance_gate import require_market_provenance
+
+    require_market_provenance(engine.url.database)
+
     ensure_signal_result_columns()
 
     open_signals = load_open_signals()

@@ -176,6 +176,12 @@ def run_forward_validation_daily(
         raise ValueError("runtime activation does not match the frozen protocol")
 
     database = resolve_market_database_path(database_path)
+    # Forward formation consumes the eligible universe derived from this
+    # database, so any unresolved admission block, pending application or
+    # lineage drift refuses the run before a snapshot is built.
+    from core.market_provenance_gate import require_market_provenance
+
+    require_market_provenance(database)
     snapshot = build_market_data_snapshot(database)
     benchmark_bundle = snapshot.load_ohlcv((protocol.benchmark,))
     benchmark_frame = benchmark_bundle.frame_for(protocol.benchmark)

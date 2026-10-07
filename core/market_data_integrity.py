@@ -103,6 +103,21 @@ def check_market_data_integrity(
             f"market database does not exist: {path}",
         )
 
+    # Persistent provenance gate: an unresolved admission block, a pending
+    # application or lineage drift on a required symbol fails closed, even when
+    # the block was recorded by an earlier, separate process.
+    from core.market_provenance_gate import FAIL_CLOSED as _PROVENANCE_FAIL
+    from core.market_provenance_gate import check_market_provenance
+
+    provenance = check_market_provenance(path, symbols)
+    if provenance.state == _PROVENANCE_FAIL:
+        return _result(
+            MarketDataIntegrityState.FAIL_CLOSED,
+            path,
+            symbols,
+            *provenance.reasons,
+        )
+
     placeholders = ",".join("?" for _ in symbols)
     try:
         connection = sqlite3.connect(f"file:{path.as_posix()}?mode=ro", uri=True)
