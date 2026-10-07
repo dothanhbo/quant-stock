@@ -13,6 +13,12 @@ from pathlib import Path
 from statistics import fmean
 from typing import Mapping
 
+from core.evidence_market_binding import (
+    EXCLUDED_STATES,
+    QUALIFIED_STATES,
+    EvidenceQualifier,
+    Qualification,
+)
 from quantctl.registry import PROJECT_ROOT
 from quantctl.state import (
     ForwardProtocolSnapshot,
@@ -53,6 +59,9 @@ class PaperEvidencePoint:
     daily_pnl: float | None
     daily_return_pct: float | None
     record_identity: str
+    # R3: market-data qualification of this observation (LEGACY_UNBOUND for
+    # observations captured before R3; never inferred or back-filled).
+    market_data_qualification: str = "LEGACY_UNBOUND"
 
 
 @dataclass(frozen=True, slots=True)
@@ -101,6 +110,16 @@ class ForwardOutcomeSummary:
     mean_stock_forward_return_pct: float | None
     mean_benchmark_forward_return_pct: float | None
     mean_excess_forward_return_pct_points: float | None
+    # R3 market-data provenance (counts are over AVAILABLE outcomes).  The three
+    # means above are DESCRIPTIVE: they include legacy-unbound / legacy-basis
+    # outcomes (labelled by the counts below) and exclude quarantined / rejected
+    # ones.  Only ``qualified_*`` fields may be cited as provenance-verified.
+    qualified_outcome_count: int = 0
+    legacy_unbound_outcome_count: int = 0
+    bound_legacy_input_outcome_count: int = 0
+    quarantined_outcome_count: int = 0
+    reviewed_rejected_outcome_count: int = 0
+    qualified_mean_excess_forward_return_pct_points: float | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -162,6 +181,7 @@ def _paper_presentation(
     start_date: str | None,
     end_date: str | None,
     max_records: int,
+    qualifier: EvidenceQualifier | None = None,
 ) -> PaperEvidencePresentation:
     system = inspect_paper_system(
         root=root,
@@ -184,20 +204,57 @@ def _paper_presentation(
         account_epoch_id=account_epoch,
     )
     records = ()
+    chain = ()
     warnings = list(store.evidence_warnings)
     if evidence_path.is_file() and store.evidence_schema_status == "OK":
         try:
-            records = ProspectivePortfolioEvidenceLedger(evidence_path).records(
-                strategy_identity=store.strategy_identity,
-                source_store_identity=source_identity,
-                start_date=start_date,
-                end_date=end_date,
+            _read = ProspectivePortfolioEvidenceLedger(evidence_path)
+            # R3 (P1-B): qualification needs the COMPLETE chronological series of this
+            # strategy/source identity; the caller's date window only filters what is shown.
+            chain = tuple(
+                _read.records(
+                    strategy_identity=store.strategy_identity,
+                    source_store_identity=source_identity,
+                )
+            )
+            records = tuple(
+                _read.records(
+                    strategy_identity=store.strategy_identity,
+                    source_store_identity=source_identity,
+                    start_date=start_date,
+                    end_date=end_date,
+                )
             )
         except (OSError, ValueError, KeyError) as exc:
             warnings.append(f"EVIDENCE_READ_FAILED:{type(exc).__name__}")
     records = tuple(records)
     truncated = len(records) > max_records
     presented = records[-max_records:]
+    bindings: dict = {}
+    events: dict = {}
+    if chain and evidence_path.is_file() and store.evidence_schema_status == "OK":
+        try:
+            evidence_ledger = ProspectivePortfolioEvidenceLedger(evidence_path)
+            bindings = evidence_ledger.market_bindings()
+            events = evidence_ledger.qualification_events()
+        except (OSError, ValueError, KeyError) as exc:
+            warnings.append(f"MARKET_BINDING_READ_FAILED:{type(exc).__name__}")
+    if qualifier is None:
+        qualifier = EvidenceQualifier()
+
+    # The observations are qualified as one chronological series: an observation's equity
+    # includes cumulative realized PnL, so it depends on every earlier contributing trade.
+    _ledger = ProspectivePortfolioEvidenceLedger(evidence_path)
+    _keys = [("PAPER_OBSERVATION", _ledger.evidence_key(item)) for item in chain]
+    _series = qualifier.qualify_observation_series(
+        [bindings.get(key) for key in _keys],
+        reviews=[[e for e in events.get(key, []) if e["source"] == "REVIEW"] for key in _keys],
+    ) if chain else []
+    _states = {item.record_identity: result.state for item, result in zip(chain, _series)}
+
+    def _qualification(record) -> str:
+        return _states.get(record.record_identity, "LEGACY_UNBOUND")
+
     points = tuple(
         PaperEvidencePoint(
             item.observation_date,
@@ -210,6 +267,7 @@ def _paper_presentation(
             item.daily_pnl,
             item.daily_return_pct,
             item.record_identity,
+            _qualification(item),
         )
         for item in presented
     )
@@ -261,6 +319,7 @@ def _forward_protocol_presentation(
     end_date: str | None,
     horizon_sessions: int | None,
     max_records: int,
+    qualifier: EvidenceQualifier | None = None,
 ) -> ForwardProtocolEvidencePresentation:
     ledger = ForwardValidationLedger(database_path)
     formations_all = ledger.formations(protocol.protocol_id)
@@ -292,6 +351,27 @@ def _forward_protocol_presentation(
     requested_horizons = (
         (horizon_sessions,) if horizon_sessions is not None else protocol.tracked_horizons
     )
+    bindings = ledger.market_bindings()
+    events = ledger.qualification_events()
+    if qualifier is None:
+        qualifier = EvidenceQualifier()
+    verdicts = {}
+    for item in outcomes:
+        reviews = [
+            event
+            for event in events.get(("OUTCOME", item.outcome_identity), [])
+            if event["source"] == "REVIEW"
+        ]
+        verdicts[item.outcome_identity] = qualifier.qualify(
+            (
+                (
+                    bindings.get(("FORMATION", item.formation_identity)),
+                    {item.symbol, protocol.benchmark},
+                ),
+                (bindings.get(("OUTCOME", item.outcome_identity)), None),
+            ),
+            reviews=reviews,
+        )
     summaries: list[ForwardOutcomeSummary] = []
     for horizon in requested_horizons:
         horizon_maturities = tuple(item for item in maturities if item.horizon_sessions == horizon)
@@ -299,6 +379,17 @@ def _forward_protocol_presentation(
         available = tuple(
             item for item in horizon_outcomes if item.availability is OutcomeAvailability.AVAILABLE
         )
+        # Quarantined / reviewed-rejected outcomes are never silently averaged.
+        included = tuple(
+            item for item in available if verdicts[item.outcome_identity].state not in EXCLUDED_STATES
+        )
+        qualified = tuple(
+            item for item in available if verdicts[item.outcome_identity].state in QUALIFIED_STATES
+        )
+
+        def _count(state: str) -> int:
+            return sum(verdicts[item.outcome_identity].state == state for item in available)
+
         summaries.append(
             ForwardOutcomeSummary(
                 horizon,
@@ -310,9 +401,18 @@ def _forward_protocol_presentation(
                 ),
                 len(horizon_outcomes),
                 len(available),
-                _mean(tuple(item.stock_forward_return_pct for item in available)),
-                _mean(tuple(item.benchmark_forward_return_pct for item in available)),
-                _mean(tuple(item.excess_forward_return_pct_points for item in available)),
+                _mean(tuple(item.stock_forward_return_pct for item in included)),
+                _mean(tuple(item.benchmark_forward_return_pct for item in included)),
+                _mean(tuple(item.excess_forward_return_pct_points for item in included)),
+                len(qualified),
+                _count(Qualification.LEGACY_UNBOUND.value),
+                _count(Qualification.BOUND_LEGACY_INPUT.value),
+                sum(
+                    verdicts[item.outcome_identity].state.startswith("QUARANTINED_")
+                    for item in available
+                ),
+                _count(Qualification.REVIEWED_REJECTED.value),
+                _mean(tuple(item.excess_forward_return_pct_points for item in qualified)),
             )
         )
 
@@ -369,6 +469,7 @@ def inspect_forward_evidence_catalog(
     end_date: str | None = None,
     horizon_sessions: int | None = None,
     max_records: int = DEFAULT_MAX_PRESENTED_RECORDS,
+    market_database_path: Path | str | None = None,
 ) -> ForwardEvidenceCatalog:
     """Inspect local persisted evidence without creating or mutating stores."""
     if max_records <= 0:
@@ -377,12 +478,14 @@ def inspect_forward_evidence_catalog(
         raise ValueError("start_date must not be after end_date")
 
     resolved_root = Path(root).resolve()
+    qualifier = EvidenceQualifier(market_database_path)
     paper = _paper_presentation(
         root=resolved_root,
         environ=environ,
         start_date=start_date,
         end_date=end_date,
         max_records=max_records,
+        qualifier=qualifier,
     )
     snapshot = inspect_forward_system(root=resolved_root)
     if not snapshot.exists:
@@ -423,6 +526,7 @@ def inspect_forward_evidence_catalog(
                     end_date=end_date,
                     horizon_sessions=horizon_sessions,
                     max_records=max_records,
+                    qualifier=qualifier,
                 )
             )
     except (OSError, ValueError, KeyError) as exc:

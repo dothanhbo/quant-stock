@@ -5,7 +5,14 @@ from __future__ import annotations
 import json
 from pathlib import Path
 import sqlite3
-from typing import Iterable
+from typing import Any, Iterable, Mapping
+
+from core.evidence_market_binding import (
+    ensure_binding_schema,
+    insert_binding,
+    read_bindings,
+    read_qualification_events,
+)
 
 from .contracts import (
     AuditEventType,
@@ -24,6 +31,12 @@ TABLES = (
     "forward_protocols", "forward_formations", "forward_positions",
     "forward_maturities", "forward_outcomes", "forward_audit_events",
 )
+# R3 (additive): ``forward_market_bindings`` / ``forward_qualification_events``
+# live in the same file as the evidence so a binding is written in the evidence
+# transaction.  Rows created before R3 have no binding (LEGACY_UNBOUND).
+BINDING_PREFIX = "forward"
+FORMATION_BINDING_KIND = "FORMATION"
+OUTCOME_BINDING_KIND = "OUTCOME"
 
 
 class ForwardValidationLedger:
@@ -133,6 +146,7 @@ class ForwardValidationLedger:
                     f"CREATE TRIGGER IF NOT EXISTS {table}_no_delete BEFORE DELETE ON {table} "
                     f"BEGIN SELECT RAISE(ABORT, 'append-only table: {table}'); END"
                 )
+            ensure_binding_schema(connection, BINDING_PREFIX)
 
     def activate(self, activation: ForwardProtocolActivation) -> bool:
         self.initialize()
@@ -175,13 +189,26 @@ class ForwardValidationLedger:
             row["activation_identity"],
         )
 
-    def record_formation(self, formation: ForwardFormation, horizons: tuple[int, ...]) -> bool:
+    def record_formation(
+        self,
+        formation: ForwardFormation,
+        horizons: tuple[int, ...],
+        *,
+        market_binding: Mapping[str, Any] | None = None,
+    ) -> bool:
         activation = self.activation(formation.protocol_id)
         if activation is None:
             raise ValueError("protocol must be activated before recording formations")
         if formation.formation_session <= activation.operational_start_after_session:
             raise ValueError("formation violates prospective operational cutoff")
+        if market_binding is not None and (
+            market_binding["subject"]["kind"] != FORMATION_BINDING_KIND
+            or market_binding["subject"]["ref"] != formation.formation_identity
+        ):
+            raise ValueError("market-data binding does not belong to this formation")
         with self._connect() as connection:
+            if market_binding is not None:
+                ensure_binding_schema(connection, BINDING_PREFIX)
             existing = connection.execute(
                 "SELECT formation_identity FROM forward_formations WHERE protocol_id=? AND formation_session=?",
                 (formation.protocol_id, formation.formation_session),
@@ -213,6 +240,9 @@ class ForwardValidationLedger:
                         ) for item in formation.positions
                     ],
                 )
+                if market_binding is not None:
+                    # Same transaction as the formation: both or neither.
+                    insert_binding(connection, BINDING_PREFIX, market_binding)
                 for horizon in horizons:
                     payload = {
                         "protocol": formation.protocol_id, "formation": formation.formation_identity,
@@ -310,12 +340,32 @@ class ForwardValidationLedger:
             row["reason_code"], row["recorded_at_utc"], row["maturity_identity"],
         ) for row in rows)
 
-    def record_outcomes(self, outcomes: Iterable[ForwardOutcome]) -> int:
+    def record_outcomes(
+        self,
+        outcomes: Iterable[ForwardOutcome],
+        *,
+        market_bindings: Mapping[str, Mapping[str, Any]] | None = None,
+    ) -> int:
+        """Persist matured outcomes; ``market_bindings`` maps ``outcome_identity`` to its binding.
+
+        A binding is written in the same transaction as its outcome row.  An
+        outcome that already exists is left exactly as it is (never rebound).
+        """
         values = tuple(outcomes)
         if not values:
             return 0
+        bindings = dict(market_bindings or {})
+        for item in values:
+            binding = bindings.get(item.outcome_identity)
+            if binding is not None and (
+                binding["subject"]["kind"] != OUTCOME_BINDING_KIND
+                or binding["subject"]["ref"] != item.outcome_identity
+            ):
+                raise ValueError("market-data binding does not belong to this outcome")
         inserted = 0
         with self._connect() as connection:
+            if bindings:
+                ensure_binding_schema(connection, BINDING_PREFIX)
             for item in values:
                 maturity = connection.execute(
                     "SELECT * FROM forward_maturities WHERE formation_identity=? AND horizon_sessions=? AND status=?",
@@ -341,8 +391,24 @@ class ForwardValidationLedger:
                         item.recorded_at_utc,
                     ),
                 )
+                binding = bindings.get(item.outcome_identity)
+                if binding is not None:
+                    insert_binding(connection, BINDING_PREFIX, binding)
                 inserted += 1
         return inserted
+
+    def market_bindings(self) -> dict[tuple[str, str], dict[str, Any]]:
+        """Immutable R3 bindings keyed by ``(kind, ref)``; empty for a pre-R3 database."""
+        if not self.path.exists():
+            return {}
+        with self._connect() as connection:
+            return read_bindings(connection, BINDING_PREFIX)
+
+    def qualification_events(self) -> dict[tuple[str, str], list[dict[str, Any]]]:
+        if not self.path.exists():
+            return {}
+        with self._connect() as connection:
+            return read_qualification_events(connection, BINDING_PREFIX)
 
     def outcomes(self, protocol_id: str) -> tuple[ForwardOutcome, ...]:
         if not self.path.exists():

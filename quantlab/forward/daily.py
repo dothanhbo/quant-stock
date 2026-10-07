@@ -8,6 +8,13 @@ from pathlib import Path
 from typing import Any
 
 from core.database_coverage import build_database_coverage_index
+from core.evidence_market_binding import (
+    LOG_BOUND,
+    QUARANTINED_STATES,
+    EvidenceQualifier,
+    MarketBindingSession,
+    ProvenanceQuarantineError,
+)
 from core.paths import resolve_market_database_path
 from quantlab.catalog import build_market_data_snapshot
 from quantlab.evaluation import (
@@ -182,6 +189,11 @@ def run_forward_validation_daily(
     from core.market_provenance_gate import require_market_provenance
 
     require_market_provenance(database)
+    # R3: pin the dataset version consumed by this run at the decision point.
+    # Every binding below is made against this exact version; if the dataset
+    # advances before a binding is written the run fails closed rather than
+    # binding evidence to a later ("latest") version.
+    binding_session = MarketBindingSession(database)
     snapshot = build_market_data_snapshot(database)
     benchmark_bundle = snapshot.load_ohlcv((protocol.benchmark,))
     benchmark_frame = benchmark_bundle.frame_for(protocol.benchmark)
@@ -226,6 +238,41 @@ def run_forward_validation_daily(
         formation_created = ledger.record_formation(
             formation,
             protocol.tracked_horizons,
+            market_binding=binding_session.bind(
+                "FORMATION",
+                formation.formation_identity,
+                (
+                    *(
+                        ("FORMATION_CLOSE", item.symbol, latest_session)
+                        for item in formation.positions
+                        if item.formation_close is not None
+                    ),
+                    # The ADX/RSI/EMA features that ranked and qualified the selected
+                    # symbols are recursive over the symbol's whole stored history, so
+                    # the consumed window is [first stored session, formation session].
+                    # Its lineage (not the bars) is captured: a legacy baseline session
+                    # in it makes the formation BOUND_LEGACY_INPUT, never verified.
+                    *(
+                        (
+                            "FORMATION_FEATURE_HISTORY",
+                            item.symbol,
+                            latest_session,
+                            binding_session.first_session(item.symbol) or latest_session,
+                            "WINDOW",
+                        )
+                        for item in formation.positions
+                    ),
+                    *(
+                        (("BENCHMARK_FORMATION_CLOSE", protocol.benchmark, latest_session),)
+                        if formation.benchmark_formation_close is not None
+                        else ()
+                    ),
+                ),
+                context={
+                    "protocol_id": protocol.protocol_id,
+                    "source_snapshot_identity": snapshot.snapshot_id,
+                },
+            ),
         )
         formation_existing = not formation_created
         state = (
@@ -245,6 +292,7 @@ def run_forward_validation_daily(
         (item.formation_identity, item.horizon_sessions): item
         for item in ledger.latest_maturities(protocol.protocol_id)
     }
+    qualifier: EvidenceQualifier | None = None
     for formation in formations:
         evaluated = evaluate_formation_maturities(
             protocol,
@@ -286,7 +334,47 @@ def run_forward_validation_daily(
                 target_benchmark_close=closes.get(protocol.benchmark),
                 recorded_at_utc=recorded_at,
             )
-            outcomes_created += ledger.record_outcomes(outcomes)
+            bindings = {}
+            for item in outcomes:
+                binding = binding_session.bind(
+                    "OUTCOME",
+                    item.outcome_identity,
+                    (
+                        *(
+                            (("STOCK_TARGET_CLOSE", item.symbol, effective.target_session, formation.formation_session),)
+                            if closes.get(item.symbol) is not None
+                            else ()
+                        ),
+                        *(
+                            (("BENCHMARK_TARGET_CLOSE", protocol.benchmark, effective.target_session, formation.formation_session),)
+                            if closes.get(protocol.benchmark) is not None
+                            else ()
+                        ),
+                    ),
+                    context={
+                        "protocol_id": protocol.protocol_id,
+                        "formation_identity": formation.formation_identity,
+                        "horizon_sessions": str(effective.horizon_sessions),
+                    },
+                )
+                bindings[item.outcome_identity] = binding
+            # A target session whose provenance is already unresolved / incompatible
+            # must not become an outcome (no return is manufactured from it): the
+            # write is refused before any ledger mutation and retried once resolved.
+            if bindings:
+                if qualifier is None:
+                    qualifier = EvidenceQualifier(database)
+                for binding in bindings.values():
+                    verdict = qualifier.qualify(((binding, None),))
+                    # A dataset with no registered log is the legacy NOT_APPLICABLE
+                    # mode: operation continues and the evidence is recorded as
+                    # QUARANTINED_MISSING_PROVENANCE at evaluation, not refused.
+                    if verdict.state in QUARANTINED_STATES and binding["log_state"] == LOG_BOUND:
+                        raise ProvenanceQuarantineError(
+                            "forward outcome target provenance is "
+                            f"{verdict.state}: {'; '.join(verdict.reasons)}"
+                        )
+            outcomes_created += ledger.record_outcomes(outcomes, market_bindings=bindings)
             outcome_keys.update(
                 (item.formation_identity, item.horizon_sessions, item.symbol)
                 for item in outcomes

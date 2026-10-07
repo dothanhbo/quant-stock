@@ -57,6 +57,10 @@ class PaperPerformanceReport:
     latest_snapshot_date: date | None
     snapshot_days: int
 
+    # R3: provenance scope of the trade statistics above.  Account-level
+    # (equity-curve) metrics are never trade-filtered.
+    provenance_scope: str = "UNQUALIFIED_DESCRIPTIVE"
+
     def to_dict(
         self,
     ) -> dict[str, object]:
@@ -160,10 +164,23 @@ def load_initial_equity(
 
 def load_closed_trades_frame(
     database_path: str | Path,
+    *,
+    qualifier=None,
+    qualification_required: bool = False,
 ) -> pd.DataFrame:
+    """Closed trades; optionally labelled / filtered by R3 market-data qualification.
+
+    With ``qualifier`` (an ``EvidenceQualifier``) a ``provenance_qualification``
+    column is added.  With ``qualification_required`` only trades whose entry and
+    exit provenance are PROVENANCE_VERIFIED / REVIEWED_ACCEPTED are returned:
+    quarantined, rejected, legacy-unbound and legacy-basis trades are excluded.
+    Without a qualifier the frame is exactly the legacy descriptive frame.
+    """
     path = Path(
         database_path
     )
+    if qualification_required and qualifier is None:
+        raise ValueError("qualification_required needs a qualifier")
 
     columns = [
         "symbol",
@@ -242,6 +259,21 @@ def load_closed_trades_frame(
             frame[column],
             errors="coerce",
         )
+
+    if qualifier is not None:
+        from execution.paper_provenance import qualify_closed_trades
+
+        verdicts = qualify_closed_trades(path, qualifier)
+        frame["provenance_qualification"] = [
+            verdicts[str(order_id)].state if str(order_id) in verdicts else "LEGACY_UNBOUND"
+            for order_id in frame["order_id"]
+        ]
+        if qualification_required:
+            from core.evidence_market_binding import QUALIFIED_STATES
+
+            frame = frame[
+                frame["provenance_qualification"].isin(QUALIFIED_STATES)
+            ].reset_index(drop=True)
 
     return frame
 
@@ -613,6 +645,8 @@ def calculate_paper_performance(
     fallback_initial_equity: float = (
         100_000_000.0
     ),
+    qualifier=None,
+    qualification_required: bool = False,
 ) -> PaperPerformanceReport:
     path = Path(
         database_path
@@ -632,7 +666,9 @@ def calculate_paper_performance(
     )
 
     trades = load_closed_trades_frame(
-        path
+        path,
+        qualifier=qualifier,
+        qualification_required=qualification_required,
     )
 
     equity_curve = load_daily_equity_curve(
@@ -972,4 +1008,9 @@ def calculate_paper_performance(
             latest_snapshot_date
         ),
         snapshot_days=snapshot_days,
+        provenance_scope=(
+            "QUALIFIED_TRADES_ONLY__ACCOUNT_LEVEL_METRICS_NOT_FILTERED"
+            if qualification_required
+            else "UNQUALIFIED_DESCRIPTIVE"
+        ),
     )

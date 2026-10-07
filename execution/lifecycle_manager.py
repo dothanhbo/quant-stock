@@ -24,6 +24,7 @@ from execution.order_manager import (
 from execution.paper_broker import (
     PaperBroker,
 )
+from core.evidence_market_binding import MarketBindingSession
 from core.paths import resolve_market_database_path
 
 
@@ -156,6 +157,11 @@ class PaperLifecycleManager:
         rejected_exits: list[str] = []
 
         positions = self.broker.get_positions()
+        # R3: pin the dataset version at the decision point (before the bars are
+        # read).  Exit decisions below are bound to exactly this version.
+        binding_session = (
+            MarketBindingSession(self.market_database_path) if positions else None
+        )
         bars = self._load_bars(
             symbols=[
                 position.symbol
@@ -451,19 +457,47 @@ class PaperLifecycleManager:
                     "ExitDecision không đầy đủ."
                 )
 
+            exit_intent_id = self._exit_intent_id(
+                lifecycle=lifecycle,
+                valuation_date=resolved_date,
+                quantity=quantity,
+                reason=decision.reason.value,
+            )
+            exit_binding = binding_session.bind(
+                "PAPER_EXIT",
+                exit_intent_id,
+                (
+                    (
+                        "EXIT_PRICE",
+                        symbol,
+                        resolved_date.isoformat(),
+                        lifecycle.entry_date.isoformat(),
+                    ),
+                    # The Wilder ATR / trailing logic reads every stored bar up to the
+                    # exit session, so the consumed window is the symbol's whole history.
+                    (
+                        "EXIT_HISTORY",
+                        symbol,
+                        resolved_date.isoformat(),
+                        binding_session.first_session(symbol)
+                        or lifecycle.entry_date.isoformat(),
+                        "WINDOW",
+                    ),
+                ),
+                context={
+                    "exit_reason": decision.reason.value,
+                    "entry_order_id": str(lifecycle.entry_order_id or ""),
+                },
+            )
             fill = self.order_manager.sell_market(
                 symbol=symbol,
                 quantity=quantity,
                 price=(
                     decision.execution_price
                 ),
-                source_intent_id=self._exit_intent_id(
-                    lifecycle=lifecycle,
-                    valuation_date=resolved_date,
-                    quantity=quantity,
-                    reason=decision.reason.value,
-                ),
+                source_intent_id=exit_intent_id,
                 execution_context={
+                    "market_binding": exit_binding,
                     "exit": {
                         "entry_date": lifecycle.entry_date.isoformat(),
                         "entry_price": previous_average_price,

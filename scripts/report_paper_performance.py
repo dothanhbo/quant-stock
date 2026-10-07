@@ -73,6 +73,24 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    parser.add_argument(
+        "--qualified-only",
+        action="store_true",
+        help=(
+            "R3: chỉ tính các giao dịch có provenance dữ liệu thị trường "
+            "đã được xác minh (loại trade bị quarantine, legacy, chưa bind). "
+            "Chỉ số equity cấp tài khoản không được lọc."
+        ),
+    )
+    parser.add_argument(
+        "--label-provenance",
+        action="store_true",
+        help=(
+            "R3: thêm cột provenance_qualification vào trade history "
+            "(mô tả; không lọc)."
+        ),
+    )
+
     return parser
 
 
@@ -90,6 +108,10 @@ def print_report(
         "=" * 68
     )
 
+    print(
+        f"Provenance scope  : "
+        f"{getattr(report, 'provenance_scope', 'UNQUALIFIED_DESCRIPTIVE')}"
+    )
     print(
         f"Vốn ban đầu       : "
         f"{report.initial_equity:,.0f} đ"
@@ -225,6 +247,8 @@ def export_report(
     database_path: Path,
     export_dir: Path,
     report,
+    qualifier=None,
+    qualification_required: bool = False,
 ) -> None:
     export_dir.mkdir(
         parents=True,
@@ -240,7 +264,9 @@ def export_report(
     )
 
     trades = load_closed_trades_frame(
-        database_path
+        database_path,
+        qualifier=qualifier,
+        qualification_required=qualification_required,
     )
     trades.to_csv(
         export_dir
@@ -278,11 +304,19 @@ def main() -> None:
         else resolve_active_paper_store().database_path
     )
 
+    qualifier = None
+    if args.qualified_only or args.label_provenance:
+        from core.evidence_market_binding import EvidenceQualifier
+
+        qualifier = EvidenceQualifier()
+
     report = calculate_paper_performance(
         database_path,
         risk_free_rate_pct=(
             args.risk_free_rate
         ),
+        qualifier=qualifier,
+        qualification_required=args.qualified_only,
     )
 
     print_report(
@@ -296,6 +330,8 @@ def main() -> None:
                 args.export_dir
             ),
             report=report,
+            qualifier=qualifier,
+            qualification_required=args.qualified_only,
         )
 
 

@@ -1572,6 +1572,93 @@ class ObservationLog:
             return {**base, "origin": "UNATTRIBUTED", "observation_id": None, "version_id": None}
         return {**base, "origin": "ABSENT", "observation_id": None, "version_id": None}
 
+    def state_signature(self) -> tuple[int, int, int, int]:
+        """Cheap, monotonic fingerprint of everything that can change a qualification.
+
+        ``(last admission event, resolutions, applied sessions, symbol versions)``.
+        Every log table is append-only, so any change to blocks, resolutions,
+        applications or versions changes this tuple; an unchanged tuple proves
+        that a cached evaluation is still current.
+        """
+        row = self._read(
+            "SELECT (SELECT COALESCE(MAX(event_id),0) FROM admission_events),"
+            "(SELECT COUNT(*) FROM block_resolutions),"
+            "(SELECT COUNT(*) FROM applied_sessions),"
+            "(SELECT COUNT(*) FROM symbol_versions)"
+        )[0]
+        return (int(row[0]), int(row[1]), int(row[2]), int(row[3]))
+
+    def window_provenance(self, symbol: str, start: str, end: str) -> dict[str, object]:
+        """Compact lineage summary of every stored session of ``symbol`` in ``[start, end]``.
+
+        Reads once (no per-session round trips).  ``origin_counts`` counts the
+        stored sessions per origin (same classification as :meth:`session_provenance`),
+        ``digest`` is a hash over the ordered ``(session, origin, observation_id)``
+        triples, so any later change to the window's attribution is detectable
+        without storing the bars.
+        """
+        if self.market_path is None:
+            raise ObservationLogError("window provenance needs the log to be bound to a market database")
+        baseline = self.get_baseline()
+        baseline_id = None if baseline is None else str(baseline["baseline_id"])
+        connection = open_market_readonly(self.market_path)
+        try:
+            sessions = [
+                str(row[0])
+                for row in connection.execute(
+                    "SELECT DISTINCT substr(time,1,10) FROM prices WHERE symbol=? "
+                    "AND substr(time,1,10) BETWEEN ? AND ? ORDER BY 1",
+                    (symbol, start, end),
+                )
+            ]
+        finally:
+            connection.close()
+        applied = {
+            str(row["session"]): (str(row["observation_id"]), str(row["version_id"]))
+            for row in self._read(
+                "SELECT session, observation_id, version_id FROM applied_sessions "
+                "WHERE symbol=? AND session BETWEEN ? AND ?",
+                (symbol, start, end),
+            )
+        }
+        pending: set[str] = set()
+        for intent in self.open_intents(symbol):
+            pending.update(str(item) for item in intent["sessions"] if start <= str(item) <= end)
+        baseline_row = self.baseline_symbol(symbol)
+        baseline_last = None if baseline_row is None else str(baseline_row["last_session"])
+        counts: dict[str, int] = {}
+        triples: list[tuple[str, str, str]] = []
+        present = set(sessions)
+        for session in sessions:
+            if session in applied:
+                origin, observation = "OBSERVATION", applied[session][0]
+            elif session in pending:
+                origin, observation = "PENDING_APPLICATION", ""
+            elif baseline_last is not None and session <= baseline_last:
+                origin, observation = "BASELINE_LEGACY", ""
+            else:
+                origin, observation = "UNATTRIBUTED", ""
+            counts[origin] = counts.get(origin, 0) + 1
+            triples.append((session, origin, observation))
+        for session in sorted(set(applied) - present):
+            counts["REMOVED"] = counts.get("REMOVED", 0) + 1
+            triples.append((session, "REMOVED", applied[session][0]))
+        for session in sorted(pending - present - set(applied)):
+            counts["PENDING_APPLICATION"] = counts.get("PENDING_APPLICATION", 0) + 1
+            triples.append((session, "PENDING_APPLICATION", ""))
+        triples.sort()
+        return {
+            "symbol": symbol,
+            "start": start,
+            "end": end,
+            "baseline_id": baseline_id,
+            "session_count": len(triples),
+            "origin_counts": dict(sorted(counts.items())),
+            "first_session": triples[0][0] if triples else None,
+            "last_session": triples[-1][0] if triples else None,
+            "digest": sha256_text(canonical_json(triples)),
+        }
+
     def dataset_version_identity(self) -> dict[str, object]:
         """Stable dataset identity plus the state consumers must respect.
 

@@ -38,6 +38,7 @@ from execution.paper_broker import PaperBroker
 from execution.risk_guard import RiskGuard, RiskLimits
 from config.trading_policy import TradingPolicy
 from config.paper_store import resolve_active_paper_store
+from core.evidence_market_binding import MarketBindingSession
 from core.paths import resolve_market_database_path
 
 
@@ -571,6 +572,11 @@ class PaperSignalExecutor:
         market_database_path = resolve_market_database_path(
             market_database_path
         )
+        # R3: pin the dataset version consumed by this execution at the decision
+        # point, before any price is read.  Each fill below is bound to exactly
+        # this version; a dataset that advanced meanwhile fails closed here,
+        # before any order or fill is written.
+        binding_session = MarketBindingSession(market_database_path)
         with sqlite3.connect(market_database_path) as connection:
             for signal_rank, signal in enumerate(
                 pending,
@@ -733,6 +739,12 @@ class PaperSignalExecutor:
                     continue
 
                 signal["adtv20"] = adtv20
+                # R3: the first session of the 20-session ADTV window actually read.
+                signal["_adtv20_window_start"] = self._adtv20_window_start(
+                    connection,
+                    symbol=symbol,
+                    signal_date=signal_date,
+                )
                 due.append(signal)
 
             symbols = sorted({
@@ -756,6 +768,8 @@ class PaperSignalExecutor:
         executable_ids: list[int] = []
         for signal in due:
             symbol = str(signal["symbol"]).strip().upper()
+            original_signal_date = str(signal.get("date", ""))[:10]
+            adtv_window_start = signal.pop("_adtv20_window_start", None)
             pending_id = int(signal.pop("_pending_id"))
             signal["_execution_intent_id"] = f"pending_signal:{pending_id}"
             open_price = opens.get(symbol)
@@ -792,6 +806,45 @@ class PaperSignalExecutor:
                 "take_profit": target,
                 "execution_timing": "next_open",
             })
+            signal["_market_binding"] = binding_session.bind(
+                "PAPER_ENTRY",
+                f"pending_signal:{pending_id}",
+                (
+                    ("ENTRY_OPEN", symbol, resolved_date.isoformat()),
+                    ("SIGNAL_REFERENCE", symbol, original_signal_date),
+                    # Sizing consumed the ADTV20 window and the signal was derived from
+                    # the symbol's stored history: both consumed windows are bound.
+                    *(
+                        (
+                            ("ADTV20_WINDOW", symbol, original_signal_date, adtv_window_start, "WINDOW"),
+                        )
+                        if adtv_window_start
+                        else (("ADTV20_WINDOW", symbol, original_signal_date, None, "UNPROVEN"),)
+                    ),
+                    (
+                        "SIGNAL_HISTORY",
+                        symbol,
+                        original_signal_date,
+                        min(binding_session.first_session(symbol) or original_signal_date, original_signal_date),
+                        "WINDOW",
+                    ),
+                    # The signal path also consumed VNINDEX: ``get_market_regime`` reads the
+                    # whole VNINDEX history up to the signal date (EMA200 is path dependent,
+                    # >=200 sessions required) and 20-session relative strength reads its
+                    # tail.  Bind the full consumed VNINDEX history, not a shorter window.
+                    (
+                        "REGIME_RS_HISTORY",
+                        "VNINDEX",
+                        original_signal_date,
+                        min(binding_session.first_session("VNINDEX") or original_signal_date, original_signal_date),
+                        "WINDOW",
+                    ),
+                ),
+                context={
+                    "signal_date": original_signal_date,
+                    "execution_timing": "next_open",
+                },
+            )
             executable.append(signal)
             executable_ids.append(pending_id)
 
@@ -835,6 +888,29 @@ class PaperSignalExecutor:
             (signal_date,),
         ).fetchone()
         return str(row[0]) if row is not None else None
+
+    @staticmethod
+    def _adtv20_window_start(
+        connection: sqlite3.Connection,
+        *,
+        symbol: str,
+        signal_date: str,
+    ) -> str | None:
+        """Oldest session of the exact 20-row window ``_load_adtv20_at_signal`` averages."""
+        rows = connection.execute(
+            """
+            SELECT date(time)
+            FROM prices
+            WHERE symbol = ?
+              AND date(time) <= date(?)
+              AND close > 0
+              AND volume > 0
+            ORDER BY date(time) DESC
+            LIMIT 20
+            """,
+            (symbol, signal_date),
+        ).fetchall()
+        return str(rows[-1][0]) if len(rows) == 20 and rows[-1][0] else None
 
     @classmethod
     def _load_adtv20_at_signal(
@@ -1312,7 +1388,14 @@ class PaperSignalExecutor:
                         "maximum_holding_days": self.policy.maximum_holding_days,
                         "strategy_version": signal.get("strategy_version"),
                         "policy_fingerprint": self._policy_fingerprint(),
-                    }
+                    },
+                    # R3: immutable market-data version/session binding captured
+                    # at the decision point (absent for legacy/non-pending flows).
+                    **(
+                        {"market_binding": signal["_market_binding"]}
+                        if signal.get("_market_binding") is not None
+                        else {}
+                    ),
                 } if signal.get("_execution_intent_id") is not None else None,
             )
 

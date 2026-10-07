@@ -18,6 +18,15 @@ import sqlite3
 from types import MappingProxyType
 from typing import Any, Iterable, Mapping
 
+from core.evidence_market_binding import (
+    COVERAGE_UNPROVEN,
+    MarketBindingSession,
+    compact_leg,
+    ensure_binding_schema,
+    insert_binding,
+    read_bindings,
+    read_qualification_events,
+)
 from core.paths import PROJECT_ROOT, resolve_market_database_path
 from quantlab.identity import canonical_identity_value, canonical_json
 
@@ -26,6 +35,11 @@ EVIDENCE_CONTRACT = "quantlab.prospective_portfolio_evidence"
 EVIDENCE_VERSION = "v1"
 DEFAULT_EVIDENCE_DATABASE_PATH = PROJECT_ROOT / "data" / "prospective_portfolio_evidence.db"
 _TABLE = "prospective_portfolio_evidence"
+# R3 (additive): market-data bindings live in the same file as the observation,
+# written in the observation's transaction.  Observations created before R3 have
+# no binding (LEGACY_UNBOUND) and are never retro-bound.
+BINDING_PREFIX = "prospective"
+OBSERVATION_BINDING_KIND = "PAPER_OBSERVATION"
 _BENCHMARK = "VNINDEX"
 _REGIME_COMPUTATION_IDENTITY = "strategy.market_regime.prepare_market_regime_history@v1"
 
@@ -964,6 +978,7 @@ class ProspectivePortfolioEvidenceLedger:
                 BEGIN SELECT RAISE(ABORT, 'append-only table: {_TABLE}'); END;
                 """
             )
+            ensure_binding_schema(connection, BINDING_PREFIX)
             self._validate_schema(connection)
 
     @staticmethod
@@ -1011,10 +1026,20 @@ class ProspectivePortfolioEvidenceLedger:
             }
         )
 
-    def append(self, record: ProspectivePortfolioEvidenceRecord) -> ProspectiveEvidenceCaptureResult:
+    def append(
+        self,
+        record: ProspectivePortfolioEvidenceRecord,
+        *,
+        market_binding: Mapping[str, Any] | None = None,
+    ) -> ProspectiveEvidenceCaptureResult:
         record = self._revalidated_for_append(record)
         self.initialize()
         key = self._evidence_key(record)
+        if market_binding is not None and (
+            market_binding["subject"]["kind"] != OBSERVATION_BINDING_KIND
+            or market_binding["subject"]["ref"] != key
+        ):
+            raise ValueError("market-data binding does not belong to this observation")
         encoded = canonical_json(record.as_dict()).decode("utf-8")
         with self._connect() as connection:
             # Serialize writers to make concurrent identical captures return
@@ -1053,7 +1078,26 @@ class ProspectivePortfolioEvidenceLedger:
                     encoded,
                 ),
             )
+            if market_binding is not None:
+                # Same transaction as the observation: both or neither.
+                insert_binding(connection, BINDING_PREFIX, market_binding)
         return ProspectiveEvidenceCaptureResult(record, True)
+
+    def market_bindings(self) -> dict[tuple[str, str], dict[str, Any]]:
+        """Immutable R3 bindings keyed by ``(kind, evidence_key)``; empty for a pre-R3 file."""
+        if not self.database_path.is_file():
+            return {}
+        with _sqlite_read_only(self.database_path) as connection:
+            return read_bindings(connection, BINDING_PREFIX)
+
+    def qualification_events(self) -> dict[tuple[str, str], list[dict[str, Any]]]:
+        if not self.database_path.is_file():
+            return {}
+        with _sqlite_read_only(self.database_path) as connection:
+            return read_qualification_events(connection, BINDING_PREFIX)
+
+    def evidence_key(self, record: ProspectivePortfolioEvidenceRecord) -> str:
+        return self._evidence_key(record)
 
     def existing_observation(
         self,
@@ -1654,6 +1698,93 @@ def _source_state_matches_record(
     )
 
 
+#: paper prices are market closes times this scale (execution.signal_executor.PRICE_SCALE).
+_PAPER_PRICE_SCALE = 1000.0
+_MARK_LOOKBACK_SESSIONS = 10
+
+
+def _mark_checks(
+    market_path: Path, observation_date: str, positions: Iterable[ProspectivePositionEvidence]
+) -> list[dict[str, Any]]:
+    """Prove (or fail to prove) that each stored mark is the observation-session market close."""
+    checks: list[dict[str, Any]] = []
+    positions = tuple(positions)
+    if not positions:
+        return checks
+    connection = None
+    try:
+        connection = _sqlite_read_only(market_path)
+    except sqlite3.Error:
+        connection = None
+    for item in positions:
+        check: dict[str, Any] = {
+            "symbol": item.symbol,
+            "stored_mark": item.valuation_price,
+            "market_close_scaled": None,
+            "matched_session": None,
+            "status": "NO_MARKET_CLOSE",
+        }
+        if connection is not None:
+            try:
+                rows = connection.execute(
+                    "SELECT date(time) AS session, close FROM prices WHERE UPPER(TRIM(symbol))=? "
+                    "AND date(time)<=? ORDER BY date(time) DESC, rowid DESC LIMIT ?",
+                    (item.symbol, observation_date, _MARK_LOOKBACK_SESSIONS),
+                ).fetchall()
+            except sqlite3.Error:
+                rows = []
+            seen: set[str] = set()
+            for row in rows:
+                session, close = str(row["session"]), _finite_or_none(row["close"])
+                if session in seen or close is None:
+                    continue
+                seen.add(session)
+                scaled = close * _PAPER_PRICE_SCALE
+                if session == observation_date:
+                    check["market_close_scaled"] = scaled
+                    check["status"] = "STALE_OR_UNMATCHED"
+                if math.isclose(item.valuation_price, scaled, rel_tol=1e-9, abs_tol=1e-6):
+                    check["matched_session"] = session
+                    check["status"] = (
+                        "MATCHES_OBSERVATION_CLOSE" if session == observation_date else "STALE_OR_UNMATCHED"
+                    )
+                    break
+        checks.append(check)
+    if connection is not None:
+        connection.close()
+    return checks
+
+
+def _closed_trade_count(paper_path: Path, through_closed_trade_id: int) -> int:
+    with _sqlite_read_only(paper_path) as connection:
+        return int(
+            connection.execute(
+                "SELECT COUNT(*) FROM paper_closed_trades WHERE id<=?", (int(through_closed_trade_id),)
+            ).fetchone()[0]
+        )
+
+
+def _paper_order_legs(paper_path: Path, order_ids: Iterable[str]) -> dict[str, dict[str, Any] | None]:
+    """Compact copies of the market bindings carried by the given paper orders (``None`` = legacy)."""
+    wanted = sorted({str(item) for item in order_ids if item})
+    result: dict[str, dict[str, Any] | None] = {item: None for item in wanted}
+    if not wanted:
+        return result
+    with _sqlite_read_only(paper_path) as connection:
+        columns = {str(row[1]) for row in connection.execute("PRAGMA table_info(paper_orders)")}
+        if "execution_context" not in columns:
+            return result
+        marks = ",".join("?" for _ in wanted)
+        for row in connection.execute(
+            f"SELECT client_order_id, execution_context FROM paper_orders WHERE client_order_id IN ({marks})",
+            wanted,
+        ):
+            binding = _safe_json(row["execution_context"]).get("market_binding")
+            result[str(row["client_order_id"])] = compact_leg(binding) if isinstance(binding, dict) else None
+    return result
+
+
+
 def capture_prospective_portfolio_evidence(
     *,
     observation_date: str | date | datetime,
@@ -1712,6 +1843,9 @@ def capture_prospective_portfolio_evidence(
             "conflicting prospective evidence source state for the same "
             "session, strategy, account, and configuration"
         )
+    # R3: pin the dataset version at the decision point, before the market
+    # context and paper state used by this observation are read.
+    binding_session = MarketBindingSession(market_path)
     prior = ledger.latest_before(
         strategy_identity=strategy_identity,
         source_store_identity=source_identity,
@@ -1788,7 +1922,75 @@ def capture_prospective_portfolio_evidence(
         provenance_warnings=tuple(warnings),
         **_strategy_identity_v3_kwargs(strategy_identity_v3),
     )
-    return ledger.append(record)
+    # R3: what the observation's valuation actually consumed.
+    # * open-position marks: the stored paper mark is only a MARK_CLOSE of the observation
+    #   session if it provably equals that session's market close; otherwise it is recorded
+    #   as an unproven source (never labelled as a current-session close);
+    # * realized PnL / cost basis: compact copies of the entry/exit legs of every trade that
+    #   contributed, kept in this immutable binding so they survive a paper-store reset.
+    marks = _mark_checks(market_path, resolved_date, record.positions)
+    marks_by_symbol = {check["symbol"]: check for check in marks}
+    prior_binding = None
+    if prior is not None:
+        prior_binding = ledger.market_bindings().get((OBSERVATION_BINDING_KIND, ledger.evidence_key(prior)))
+    prior_tracked = int(((prior_binding or {}).get("lineage") or {}).get("tracked_trade_count", 0))
+    legs = _paper_order_legs(
+        paper_path,
+        tuple(
+            {item.order_id for item in record.exits_since_previous}
+            | {item.entry_order_id for item in record.exits_since_previous if item.entry_order_id}
+            | {item.entry_order_id for item in record.positions if item.entry_order_id}
+        ),
+    )
+    lineage = {
+        "mark_checks": marks,
+        "closed_trade_count": _closed_trade_count(paper_path, record.event_cursor.closed_trade_id),
+        "tracked_trade_count": prior_tracked + len(record.exits_since_previous),
+        "trades_added": [
+            {
+                "closed_trade_id": item.closed_trade_id,
+                "symbol": item.symbol,
+                "exit_order_id": item.order_id,
+                "entry_order_id": item.entry_order_id,
+                "entry": legs.get(item.entry_order_id) if item.entry_order_id else None,
+                "exit": legs.get(item.order_id),
+            }
+            for item in record.exits_since_previous
+        ],
+        "open_entries": [
+            {
+                "symbol": item.symbol,
+                "entry_order_id": item.entry_order_id,
+                "entry": legs.get(item.entry_order_id) if item.entry_order_id else None,
+            }
+            for item in record.positions
+        ],
+    }
+    binding = binding_session.bind(
+        OBSERVATION_BINDING_KIND,
+        ledger.evidence_key(record),
+        (
+            *(
+                (
+                    ("MARK_CLOSE", item.symbol, resolved_date, item.entry_date)
+                    if marks_by_symbol.get(item.symbol, {}).get("status") == "MATCHES_OBSERVATION_CLOSE"
+                    else ("STORED_MARK_UNVERIFIED", item.symbol, resolved_date, None, COVERAGE_UNPROVEN)
+                )
+                for item in record.positions
+            ),
+            *(
+                (("BENCHMARK_CLOSE", _BENCHMARK, resolved_date),)
+                if record.benchmark_close is not None
+                else ()
+            ),
+        ),
+        context={
+            "strategy_identity": record.strategy_identity,
+            "source_store_identity": record.source_store_identity,
+        },
+        lineage=lineage,
+    )
+    return ledger.append(record, market_binding=binding)
 
 
 def _strategy_identity_v3_kwargs(identity: Any) -> dict[str, Any]:
