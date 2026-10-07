@@ -60,6 +60,7 @@ from core.market_observation_log import (
     EVENT_REVISION_DETECTED,
     EVENT_SUPERSEDED,
     EVENT_VALIDATION_REJECTED,
+    INTENT_KIND_REBASE,
     NORMALIZATION_VERSION,
     PRICE_BASIS_UNKNOWN,
     STATE_ADMITTED,
@@ -103,6 +104,9 @@ class AdmissionResult(str, Enum):
     BLOCKED_DATASET_MISMATCH = "BLOCKED_DATASET_MISMATCH"
     REJECTED_INVALID_CANDIDATE = "REJECTED_INVALID_CANDIDATE"
     FAILED_APPLICATION = "FAILED_APPLICATION"
+    #: recorded only by the reviewed per-symbol rebase (core.market_rebase),
+    #: never by ingestion.
+    REBASED_BY_REVIEW = "REBASED_BY_REVIEW"
 
     @property
     def admitted(self) -> bool:
@@ -673,6 +677,19 @@ def reconcile_open_intents(
       caller records a non-auto-resolvable block.
     """
     for intent in log.open_intents(symbol):
+        if intent.get("kind") == INTENT_KIND_REBASE:
+            # A reviewed rebase interrupted between its durable intent and its
+            # finalization: finalize it only if the market holds exactly the
+            # reviewed post-rebase rows, abandon it only if the old basis is
+            # fully intact, otherwise fail closed.
+            from core.market_rebase import reconcile_rebase_intent  # lazy: avoids an import cycle
+
+            if reconcile_rebase_intent(log, intent, stored, run_id=run_id) == "AMBIGUOUS":
+                return (
+                    intent["observation_id"],
+                    f"{symbol}: open reviewed-rebase intent is only partially present in the market",
+                )
+            continue
         observation = log.get_observation(intent["observation_id"])
         if observation is None:  # pragma: no cover - defensive
             continue
@@ -743,6 +760,40 @@ def _supersede_stale_pending(
                 "superseded_by": keep_observation_id,
             },
         )
+
+
+def _receipt_matches_market(
+    rows: Mapping[str, tuple[str, ...]], stored: Mapping[str, tuple[str, ...]] | None
+) -> bool:
+    """May an APPLIED receipt be reused against the CURRENT market (V1 P1-OPS-1)?
+
+    Only if every row of the observation is stored now with exactly the observed
+    values. An ordinary application always leaves its observation fully stored,
+    so outside a reviewed rebase this is always true. A rebase invalidates it
+    when it changed stored values the observation confirmed, or when its
+    reviewed observation carried sessions it deliberately did not insert.
+    """
+    if stored is None:
+        return False
+    return all(stored.get(session) == values for session, values in rows.items())
+
+
+def readmission_identity(observation_id: str, basis_version_ref: str) -> str:
+    """Identity of the same provider content re-admitted against a changed stored basis.
+
+    The original APPLIED receipt is absorbing and is never deleted or reopened;
+    the content is compared again as a new observation bound to the basis it is
+    compared with, so repeats on that basis stay idempotent.
+    """
+    return "obs-" + sha256_text(
+        canonical_json(
+            {
+                "readmission_of": observation_id,
+                "basis_version_ref": basis_version_ref,
+                "reason": "APPLIED_RECEIPT_INVALIDATED_BY_BASIS_CHANGE",
+            }
+        )
+    )
 
 
 def _applied_outcome(
@@ -844,33 +895,32 @@ def admit_price_batch(
     sessions = sorted(rows)
 
     # 1. Observation + fetch receipt are durable before any market work.
-    persisted = log.persist_observation(
-        {
-            "observation_id": observation_id,
-            "batch_hash": digest,
-            "run_id": run_id,
-            "source": context.source,
-            "endpoint": context.endpoint,
-            "source_mode": context.source_mode,
-            "package_name": context.package_name,
-            "package_version": context.package_version,
-            "normalization_version": NORMALIZATION_VERSION,
-            "symbol": symbol,
-            "interval": context.interval,
-            "request_start": request_start,
-            "request_end": request_end,
-            "completed_session_cutoff": cutoff.isoformat(),
-            "fetched_at_utc": iso_utc(context.fetched_at_utc or now_utc),
-            "price_unit": price_unit,
-            "volume_unit": volume_unit,
-            "price_basis": PRICE_BASIS_UNKNOWN,
-            "row_count": len(sessions),
-            "first_session": sessions[0] if sessions else None,
-            "last_session": sessions[-1] if sessions else None,
-            "rows": [[session, *rows[session]] for session in sessions],
-            "excluded": excluded,
-        }
-    )
+    observation_record: dict[str, object] = {
+        "observation_id": observation_id,
+        "batch_hash": digest,
+        "run_id": run_id,
+        "source": context.source,
+        "endpoint": context.endpoint,
+        "source_mode": context.source_mode,
+        "package_name": context.package_name,
+        "package_version": context.package_version,
+        "normalization_version": NORMALIZATION_VERSION,
+        "symbol": symbol,
+        "interval": context.interval,
+        "request_start": request_start,
+        "request_end": request_end,
+        "completed_session_cutoff": cutoff.isoformat(),
+        "fetched_at_utc": iso_utc(context.fetched_at_utc or now_utc),
+        "price_unit": price_unit,
+        "volume_unit": volume_unit,
+        "price_basis": PRICE_BASIS_UNKNOWN,
+        "row_count": len(sessions),
+        "first_session": sessions[0] if sessions else None,
+        "last_session": sessions[-1] if sessions else None,
+        "rows": [[session, *rows[session]] for session in sessions],
+        "excluded": excluded,
+    }
+    persisted = log.persist_observation(observation_record)
     receipt_id = int(persisted["receipt_id"])
 
     def retry_outcome() -> AdmissionOutcome | None:
@@ -879,20 +929,56 @@ def admit_price_batch(
             return None
         return _applied_outcome(symbol, observation_id, digest, receipt, receipt_id=receipt_id)
 
-    # 2. Terminal APPLIED is absorbing: a retry only adds a receipt/annotation.
+    def stored_now() -> dict[str, tuple[str, ...]] | None:
+        reader = _market_connection(market_path, write=False)
+        try:
+            return read_symbol_rows(reader, symbol)
+        except StoredHistoryError:
+            return None
+        finally:
+            reader.close()
+
+    # 2. Terminal APPLIED is absorbing: a retry only adds a receipt/annotation,
+    # but ONLY while the receipt still holds for the current stored basis. After
+    # a reviewed rebase changed stored values (or left reviewed future sessions
+    # uninserted), the identical content is re-admitted under a basis-bound
+    # identity and goes through the normal overlap comparison.
     existing = retry_outcome()
     if existing is not None:
+        if _receipt_matches_market(rows, stored_now()):
+            log.append_event(
+                observation_id=observation_id,
+                receipt_id=receipt_id,
+                symbol=symbol,
+                event_type=EVENT_RETRY_RECEIPT,
+                application_state=STATE_APPLIED,
+                admission_result=existing.result.value,
+                run_id=run_id,
+                detail={"note": "observation already applied; existing receipt returned"},
+            )
+            return existing
+        original_id = observation_id
+        observation_id = readmission_identity(original_id, log.current_version_ref(symbol))
         log.append_event(
-            observation_id=observation_id,
+            observation_id=original_id,
             receipt_id=receipt_id,
             symbol=symbol,
             event_type=EVENT_RETRY_RECEIPT,
             application_state=STATE_APPLIED,
             admission_result=existing.result.value,
             run_id=run_id,
-            detail={"note": "observation already applied; existing receipt returned"},
+            detail={
+                "note": "applied receipt no longer matches the current stored basis; content re-admitted",
+                "readmission_observation_id": observation_id,
+            },
         )
-        return existing
+        persisted = log.persist_observation(
+            {**observation_record, "observation_id": observation_id, "readmission_of": original_id}
+        )
+        receipt_id = int(persisted["receipt_id"])
+        existing = retry_outcome()
+        if existing is not None and _receipt_matches_market(rows, stored_now()):
+            return existing
 
     # 3. Serialized section under the market write lock.
     connection = _market_connection(market_path, write=True)
@@ -962,6 +1048,20 @@ def admit_price_batch(
 
             recovered = retry_outcome()
             if recovered is not None:  # this very observation was applied by recovery
+                if not _receipt_matches_market(rows, stored):
+                    # Its receipt was invalidated by a basis change between the
+                    # pre-check and the lock: nothing is written; the next attempt
+                    # re-admits the content against the new basis.
+                    outcome = AdmissionOutcome(
+                        symbol=symbol,
+                        result=AdmissionResult.FAILED_APPLICATION,
+                        observation_id=observation_id,
+                        batch_hash=digest,
+                        reason="APPLIED_RECEIPT_INVALIDATED_CONCURRENTLY",
+                        applied=False,
+                        receipt_id=receipt_id,
+                    )
+                    raise _Done()
                 outcome = recovered
                 raise _Done()
 

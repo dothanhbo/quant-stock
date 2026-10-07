@@ -59,9 +59,15 @@ COVERAGE_WINDOW = "WINDOW"
 COVERAGE_UNPROVEN = "UNPROVEN"
 #: worst-first order used to reduce a consumed window to one origin.
 _WINDOW_ORIGIN_ORDER = (
-    "PENDING_APPLICATION", "REMOVED", "UNATTRIBUTED", "ABSENT", "BASELINE_LEGACY", "OBSERVATION",
+    "PENDING_APPLICATION", "REMOVED", "UNATTRIBUTED", "ABSENT", "BASELINE_LEGACY", "REBASED_HISTORY",
+    "OBSERVATION",
 )
 BASELINE_ORIGIN = "BASELINE_LEGACY"
+#: sessions replaced by a reviewed per-symbol rebase (core.market_rebase). Their
+#: values are operator-asserted, not ingestion-verified, so they bind like the
+#: legacy baseline: never PROVENANCE_VERIFIED.
+REBASED_ORIGIN = "REBASED_HISTORY"
+LEGACY_ORIGINS = frozenset({BASELINE_ORIGIN, REBASED_ORIGIN})
 OBSERVATION_ORIGIN = "OBSERVATION"
 
 
@@ -593,7 +599,7 @@ class EvidenceQualifier:
                         blocked = True
         # underlying base state: everything except the unresolved-revision block
         if not states:
-            if any(str(dep["origin"]) == BASELINE_ORIGIN for dep in dependencies):
+            if any(str(dep["origin"]) in LEGACY_ORIGINS for dep in dependencies):
                 states.add(Qualification.BOUND_LEGACY_INPUT.value)
             else:
                 states.add(Qualification.PROVENANCE_VERIFIED.value)
@@ -1008,6 +1014,8 @@ __all__ = (
     "REGIME_BENCHMARK_SYMBOL",
     "trade_leg_symbols",
     "BASELINE_ORIGIN",
+    "LEGACY_ORIGINS",
+    "REBASED_ORIGIN",
     "CONTRACT",
     "COVERAGE_POINT",
     "COVERAGE_UNPROVEN",

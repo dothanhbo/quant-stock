@@ -185,8 +185,9 @@ baseline id and the latest version per symbol.
   `consumable` flag.
 
 `session_provenance(symbol, session)` returns `BASELINE_LEGACY`, `OBSERVATION`,
-`PENDING_APPLICATION`, `UNATTRIBUTED`, `REMOVED` or `ABSENT`; an absent session
-is never reported as legacy.
+`REBASED_HISTORY` (replaced by a reviewed rebase; the latest rebase owns the
+session), `PENDING_APPLICATION`, `UNATTRIBUTED`, `REMOVED` or `ABSENT`; an absent
+session is never reported as legacy.
 
 ## Append-only protection: what is and is not claimed
 
@@ -206,7 +207,20 @@ archival, UI.
 ## Known limits
 
 * A provider that keeps serving revised history (TPB-like) re-creates a block on
-  every Daily run (a new window is a new observation) until R3/R4; a reviewed
-  resolution applies to one block, not to future observations.
+  every Daily run (a new window is a new observation); a reviewed resolution
+  (`--action review`) applies to one block, not to future observations.
+  **Update 2026-10-07 (V1 P1-OPS-1):** the bounded exception is the reviewed
+  per-symbol rebase (`core/market_rebase.py`, `resolve_market_block.py resolve
+  --action rebase`). It moves one symbol's stored values to the exact rows of one
+  unresolved `BLOCKED_REVISION_CHANGED` observation, adds one `symbol_versions`
+  row (the dataset version advances once), records `symbol_rebases` /
+  `rebased_sessions` (append-only) and resolves the block as
+  `REBASED_BY_REVIEW`. Replaced sessions report origin `REBASED_HISTORY`.
+  Ingestion itself never rebases. V1 rebases only an observation that covers
+  the symbol's whole stored history (no partial basis seam). Since a rebase
+  can change stored values, an observation's APPLIED receipt is reused only
+  while all of its rows are still stored unchanged; otherwise the same content
+  is re-admitted under a basis-bound identity and compared normally. Runbook:
+  the V1 operational closure audit.
 * A deleted observation-log file reverts the dataset to `NOT_APPLICABLE`.
 * Forward evidence rows do not yet store a dataset version (R3).

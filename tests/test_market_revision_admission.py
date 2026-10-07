@@ -515,6 +515,7 @@ def test_no_other_source_module_writes_prices_outside_the_guard() -> None:
     mutating = ("INSERT INTO prices", "DELETE FROM prices", "UPDATE prices")
     allowed_mutation = {
         "core/market_admission.py",  # the guarded append
+        "core/market_rebase.py",  # the reviewed per-symbol rebase (operator command only)
         "quantlab/transactional_market_data.py",  # D4 shadow store, not wired to production
     }
     offenders: list[str] = []

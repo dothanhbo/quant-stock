@@ -127,6 +127,19 @@ _STATE_EVENT_SQL = ",".join(f"'{name}'" for name in STATE_EVENT_TYPES)
 RESOLUTION_SUPERSEDED_BY_ACCEPTED = "SUPERSEDED_BY_ACCEPTED_OBSERVATION"
 RESOLUTION_REEVALUATED_ACCEPTED = "REEVALUATED_ACCEPTED"
 RESOLUTION_REVIEWED = "REVIEWED"
+#: a reviewed per-symbol basis transition (see core.market_rebase) resolved the block.
+RESOLUTION_REBASED = "REBASED_BY_REVIEW"
+#: an older block on the same symbol whose proposed values equal the rebased basis.
+RESOLUTION_SUPERSEDED_BY_REBASE = "SUPERSEDED_BY_REVIEWED_REBASE"
+
+#: application-intent kinds (detail["kind"]); a missing kind is an ordinary append.
+INTENT_KIND_APPEND = "APPEND"
+INTENT_KIND_REBASE = "REBASE"
+#: admission_result of the APPLICATION_RESULT event that finalizes a reviewed rebase.
+REBASE_ADMISSION_RESULT = "REBASED_BY_REVIEW"
+#: session origin of a stored session whose values were replaced by a reviewed rebase.
+#: It is a basis transition, never a verification: R3 treats it like legacy history.
+ORIGIN_REBASED = "REBASED_HISTORY"
 
 RUN_ID_ENV = "QUANT_OPERATION_RUN_ID"  # == quantctl.run_history.RUN_ID_ENV
 
@@ -292,6 +305,45 @@ CREATE TABLE IF NOT EXISTS applied_sessions (
     applied_at_utc TEXT NOT NULL,
     PRIMARY KEY (symbol, session)
 );
+
+-- Reviewed per-symbol basis transitions (P1-OPS-1). Additive, append-only.
+CREATE TABLE IF NOT EXISTS symbol_rebases (
+    rebase_id TEXT PRIMARY KEY,
+    symbol TEXT NOT NULL,
+    seq INTEGER NOT NULL,
+    block_event_id INTEGER NOT NULL UNIQUE,
+    observation_id TEXT NOT NULL,
+    intent_event_id INTEGER NOT NULL,
+    category TEXT NOT NULL,
+    reviewer TEXT NOT NULL,
+    reason TEXT NOT NULL,
+    note TEXT,
+    pre_version_id TEXT NOT NULL,
+    new_version_id TEXT NOT NULL,
+    pre_dataset_version_id TEXT NOT NULL,
+    new_dataset_version_id TEXT NOT NULL,
+    first_session TEXT NOT NULL,
+    last_session TEXT NOT NULL,
+    session_count INTEGER NOT NULL,
+    old_content_sha256 TEXT NOT NULL,
+    new_content_sha256 TEXT NOT NULL,
+    pre_symbol_content_sha256 TEXT NOT NULL,
+    post_symbol_content_sha256 TEXT NOT NULL,
+    row_count INTEGER NOT NULL,
+    created_at_utc TEXT NOT NULL,
+    detail_json TEXT NOT NULL,
+    UNIQUE (symbol, seq)
+);
+
+CREATE TABLE IF NOT EXISTS rebased_sessions (
+    rebase_id TEXT NOT NULL,
+    symbol TEXT NOT NULL,
+    session TEXT NOT NULL,
+    rebase_seq INTEGER NOT NULL,
+    observation_id TEXT NOT NULL,
+    version_id TEXT NOT NULL,
+    PRIMARY KEY (symbol, session, rebase_seq)
+);
 """
 
 # table -> condition (over the table's columns and NEW.*) that means "this
@@ -311,6 +363,11 @@ _APPEND_ONLY_TABLES = {
     "block_resolutions": "resolution_id = NEW.resolution_id OR block_event_id = NEW.block_event_id",
     "symbol_versions": "version_id = NEW.version_id OR (symbol = NEW.symbol AND seq = NEW.seq)",
     "applied_sessions": "symbol = NEW.symbol AND session = NEW.session",
+    "symbol_rebases": (
+        "rebase_id = NEW.rebase_id OR block_event_id = NEW.block_event_id "
+        "OR (symbol = NEW.symbol AND seq = NEW.seq)"
+    ),
+    "rebased_sessions": "symbol = NEW.symbol AND session = NEW.session AND rebase_seq = NEW.rebase_seq",
 }
 _MESSAGE = "market observation log is append-only"
 
@@ -318,6 +375,16 @@ _MESSAGE = "market observation log is append-only"
 # ------------------------------------------------------------------- helpers
 class ObservationLogError(RuntimeError):
     """The observation log refused an operation or detected an inconsistency."""
+
+
+class BlockOwnedByPendingRebase(ObservationLogError):
+    """The block is claimed by an open reviewed-rebase intent (V1 P1-OPS-1).
+
+    Only that rebase's finalization, or its explicit recovery/abandonment, may
+    change the block's resolution state; ordinary review must wait.
+    """
+
+    code = "BLOCK_OWNED_BY_PENDING_REBASE"
 
 
 class StoredHistoryError(RuntimeError):
@@ -455,6 +522,32 @@ def _trigger_sql() -> list[str]:
             f"BEGIN SELECT RAISE(ABORT, '{_MESSAGE} (insert would replace an existing row)'); END"
         )
     return statements
+
+
+_LATEST_VERSIONS_SQL = (
+    "SELECT v.symbol, v.version_id FROM symbol_versions v WHERE v.seq = ("
+    "SELECT MAX(seq) FROM symbol_versions WHERE symbol=v.symbol) ORDER BY v.symbol"
+)
+
+
+def _pending_rebase_owners(connection: sqlite3.Connection) -> dict[int, int]:
+    """``{block_event_id: intent_event_id}`` for every OPEN reviewed-rebase intent."""
+    owners: dict[int, int] = {}
+    for row in connection.execute(
+        "SELECT e.event_id, e.detail_json FROM admission_events e "
+        "WHERE e.event_type='APPLICATION_INTENT' AND e.event_id = ("
+        "  SELECT MAX(event_id) FROM admission_events WHERE observation_id=e.observation_id "
+        f"  AND event_type IN ({_STATE_EVENT_SQL}))"
+    ).fetchall():
+        detail = json.loads(row["detail_json"])
+        if detail.get("kind") == INTENT_KIND_REBASE and detail.get("block_event_id") is not None:
+            owners[int(detail["block_event_id"])] = int(row["event_id"])
+    return owners
+
+
+def _dataset_identity(baseline_id: str, versions: Mapping[str, str]) -> str:
+    digest = sha256_text(canonical_json({"baseline_id": baseline_id, "versions": dict(versions)}))
+    return f"dataset-{digest[:32]}"
 
 
 # ----------------------------------------------------------------------- log
@@ -716,7 +809,10 @@ class ObservationLog:
         issues: list[str] = []
         base = self.baseline_symbol(symbol)
         latest = self.latest_symbol_version(symbol)
-        if base is not None:
+        # A reviewed rebase replaced part of the legacy slice: its integrity is then
+        # carried by the chained version content (full stored history) below; the
+        # rebase record keeps the pre-rebase digests for audit.
+        if base is not None and not self.symbol_rebases(symbol):
             legacy = {s: v for s, v in stored.items() if s <= base["last_session"]}
             if (
                 len(legacy) != base["row_count"]
@@ -922,7 +1018,14 @@ class ObservationLog:
                     application_state=STATE_OBSERVED,
                     admission_result=None,
                     run_id=observation.get("run_id"),  # type: ignore[arg-type]
-                    detail={"supersedes_observation_id": supersedes},
+                    detail={
+                        "supersedes_observation_id": supersedes,
+                        **(
+                            {"readmission_of": observation["readmission_of"]}
+                            if observation.get("readmission_of")
+                            else {}
+                        ),
+                    },
                 )
             return {"inserted": inserted, "supersedes": supersedes, "receipt_id": receipt_id}
 
@@ -1128,6 +1231,8 @@ class ObservationLog:
                     "symbol": str(row["symbol"]),
                     "sessions": list(detail["sessions"]),
                     "rows_sha256": detail["rows_sha256"],
+                    "kind": str(detail.get("kind", INTENT_KIND_APPEND)),
+                    "detail": detail,
                 }
             )
         return result
@@ -1213,6 +1318,13 @@ class ObservationLog:
                 "SELECT 1 FROM block_resolutions WHERE block_event_id=?", (block_id,)
             ).fetchone():
                 raise ObservationLogError(f"block {block_id} is already resolved")
+            owner = _pending_rebase_owners(connection).get(int(block_id))
+            if owner is not None:
+                raise BlockOwnedByPendingRebase(
+                    f"BLOCK_OWNED_BY_PENDING_REBASE: block {block_id} is claimed by the open reviewed-rebase "
+                    f"intent {owner}; finish it (re-run the same rebase) or abandon it "
+                    "(resolve_market_block.py recover-rebase) before an ordinary review"
+                )
             connection.execute(
                 "INSERT INTO block_resolutions(block_event_id,symbol,resolution_kind,"
                 "resolved_by_observation_id,reviewer,reason,resolved_at_utc,detail_json)"
@@ -1481,7 +1593,10 @@ class ObservationLog:
                 (symbol, EVENT_ADMISSION_DECISION, decision_event_id),
             ).fetchall()
         ]
+        owned = _pending_rebase_owners(connection)
         for block in blocks:
+            if int(block["event_id"]) in owned:
+                continue  # claimed by an open reviewed rebase: only that rebase may resolve it
             detail = json.loads(block["detail_json"])
             if not detail.get("auto_resolvable", True):
                 continue
@@ -1516,6 +1631,329 @@ class ObservationLog:
                 ),
             )
 
+    # ------------------------------------------------------- reviewed rebases
+    def _rebase_tables_present(self) -> bool:
+        if not self.readonly:
+            return True  # _initialize created them
+        rows = self._read(
+            "SELECT COUNT(*) FROM sqlite_master WHERE type='table' "
+            "AND name IN ('symbol_rebases','rebased_sessions')"
+        )
+        return int(rows[0][0]) == 2
+
+    def symbol_rebases(self, symbol: str | None = None) -> list[dict[str, object]]:
+        """Reviewed per-symbol basis transitions, oldest first."""
+        if not self._rebase_tables_present():
+            return []
+        if symbol is None:
+            rows = self._read("SELECT * FROM symbol_rebases ORDER BY symbol, seq")
+        else:
+            rows = self._read("SELECT * FROM symbol_rebases WHERE symbol=? ORDER BY seq", (symbol,))
+        result = []
+        for row in rows:
+            record = dict(row)
+            record["detail"] = json.loads(record.pop("detail_json"))
+            result.append(record)
+        return result
+
+    def rebase_for_block(self, block_event_id: int) -> dict[str, object] | None:
+        if not self._rebase_tables_present():
+            return None
+        rows = self._read("SELECT * FROM symbol_rebases WHERE block_event_id=?", (int(block_event_id),))
+        if not rows:
+            return None
+        record = dict(rows[0])
+        record["detail"] = json.loads(record.pop("detail_json"))
+        return record
+
+    def _rebased_attribution(self, symbol: str, start: str, end: str) -> dict[str, tuple[str, str]]:
+        """``{session: (observation_id, version_id)}`` of the LATEST rebase per session."""
+        if not self._rebase_tables_present():
+            return {}
+        rows = self._read(
+            "SELECT session, observation_id, version_id FROM rebased_sessions r "
+            "WHERE symbol=? AND session BETWEEN ? AND ? AND rebase_seq = ("
+            "  SELECT MAX(rebase_seq) FROM rebased_sessions WHERE symbol=r.symbol AND session=r.session)",
+            (symbol, start, end),
+        )
+        return {str(row["session"]): (str(row["observation_id"]), str(row["version_id"])) for row in rows}
+
+    def record_rebase_intent(
+        self,
+        *,
+        observation_id: str,
+        symbol: str,
+        block_event_id: int,
+        run_id: str | None,
+        detail: Mapping[str, object],
+    ) -> int:
+        """Durably claim one unresolved block for a reviewed rebase (one log transaction).
+
+        The caller holds the market write lock. Atomically re-checks, in the log,
+        that the block is still unresolved and that no application is open on the
+        symbol, then appends the ``REBASE`` intent. From here until finalization
+        or abandonment the block is owned by this intent (``resolve_block``
+        refuses), so an ordinary review can never strand a committed rebase.
+        """
+        with self._transaction() as connection:
+            block = connection.execute(
+                "SELECT event_id FROM admission_events WHERE event_id=? AND event_type=? "
+                "AND application_state='blocked' AND symbol=? AND observation_id=?",
+                (int(block_event_id), EVENT_ADMISSION_DECISION, symbol, observation_id),
+            ).fetchone()
+            if block is None:
+                raise ObservationLogError(f"no block {block_event_id} for {symbol}/{observation_id}")
+            if connection.execute(
+                "SELECT 1 FROM block_resolutions WHERE block_event_id=?", (int(block_event_id),)
+            ).fetchone():
+                raise ObservationLogError(f"block {block_event_id} is already resolved")
+            for row in connection.execute(
+                "SELECT e.event_id, e.symbol FROM admission_events e "
+                "WHERE e.event_type='APPLICATION_INTENT' AND e.symbol=? AND e.event_id = ("
+                "  SELECT MAX(event_id) FROM admission_events WHERE observation_id=e.observation_id "
+                f"  AND event_type IN ({_STATE_EVENT_SQL}))",
+                (symbol,),
+            ).fetchall():
+                raise ObservationLogError(f"{symbol} has an open application intent {row['event_id']}")
+            return self._insert_event(
+                connection,
+                observation_id=observation_id,
+                receipt_id=None,
+                symbol=symbol,
+                event_type=EVENT_APPLICATION_INTENT,
+                application_state=STATE_ADMITTED,
+                admission_result="REBASE_INTENT",
+                run_id=run_id,
+                detail={**dict(detail), "kind": INTENT_KIND_REBASE, "block_event_id": int(block_event_id)},
+            )
+
+    def record_rebase(self, *, intent_event_id: int, run_id: str | None = None) -> dict[str, object]:
+        """Finalize a reviewed rebase whose market change is already committed.
+
+        Everything is derived from the durable ``REBASE`` application intent, so
+        a crash between the market commit and this call is finalized later by the
+        same function (``core.market_rebase.reconcile_rebase_intent``). In one log
+        transaction: new symbol version (dataset version advances exactly once),
+        rebase record, per-session attribution, ``APPLICATION_RESULT`` for the
+        reviewed observation, resolution of the reviewed block (and of older
+        blocks the rebase made consistent). Idempotent on the reviewed block.
+
+        The caller must have proven that the market holds exactly the intended
+        post-rebase rows; this method never touches ``market.db``.
+        """
+        with self._transaction() as connection:
+            intent = connection.execute(
+                "SELECT event_id, observation_id, symbol, event_type, detail_json FROM admission_events "
+                "WHERE event_id=?",
+                (int(intent_event_id),),
+            ).fetchone()
+            if intent is None or intent["event_type"] != EVENT_APPLICATION_INTENT:
+                raise ObservationLogError(f"no rebase intent {intent_event_id}")
+            detail = json.loads(intent["detail_json"])
+            if detail.get("kind") != INTENT_KIND_REBASE:
+                raise ObservationLogError(f"intent {intent_event_id} is not a rebase intent")
+            symbol = str(intent["symbol"])
+            observation_id = str(intent["observation_id"])
+            block_event_id = int(detail["block_event_id"])
+            done = connection.execute(
+                "SELECT * FROM symbol_rebases WHERE block_event_id=?", (block_event_id,)
+            ).fetchone()
+            if done is not None:
+                record = dict(done)
+                record["detail"] = json.loads(record.pop("detail_json"))
+                return {**record, "already_applied": True}
+            latest_state = connection.execute(
+                "SELECT event_id FROM admission_events WHERE observation_id=? "
+                f"AND event_type IN ({_STATE_EVENT_SQL}) ORDER BY event_id DESC LIMIT 1",
+                (observation_id,),
+            ).fetchone()
+            if latest_state is None or int(latest_state["event_id"]) != int(intent_event_id):
+                raise ObservationLogError("rebase intent is no longer the open state of its observation")
+            if connection.execute(
+                "SELECT 1 FROM block_resolutions WHERE block_event_id=?", (block_event_id,)
+            ).fetchone():
+                raise ObservationLogError(f"reviewed block {block_event_id} is already resolved")
+            baseline = connection.execute(
+                "SELECT baseline_id FROM market_baselines WHERE baseline_kind=?",
+                (BASELINE_KIND_INITIAL_LEGACY,),
+            ).fetchone()
+            if baseline is None:
+                raise ObservationLogError("no baseline registered")
+            baseline_id = str(baseline["baseline_id"])
+            latest = connection.execute(
+                "SELECT version_id, seq FROM symbol_versions WHERE symbol=? ORDER BY seq DESC LIMIT 1",
+                (symbol,),
+            ).fetchone()
+            current_ref = f"baseline:{baseline_id}" if latest is None else str(latest["version_id"])
+            if current_ref != detail["pre_version_id"]:
+                raise ObservationLogError(
+                    f"{symbol} version advanced since the rebase intent "
+                    f"({detail['pre_version_id']} -> {current_ref}); rebase not finalized"
+                )
+            sessions = sorted(str(item) for item in detail["sessions"])
+            now = iso_utc(utc_now())
+            seq = 1 if latest is None else int(latest["seq"]) + 1
+            version_id = sha256_text(
+                canonical_json(
+                    {
+                        "parent": current_ref,
+                        "observation_id": observation_id,
+                        "content_sha256": detail["post_symbol_content_sha256"],
+                        "rebased": sessions,
+                        "block_event_id": block_event_id,
+                        "kind": INTENT_KIND_REBASE,
+                    }
+                )
+            )
+            connection.execute(
+                "INSERT INTO symbol_versions(version_id,symbol,seq,parent_version_id,"
+                "baseline_id,observation_id,row_count,last_session,content_sha256,created_at_utc)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?)",
+                (
+                    version_id,
+                    symbol,
+                    seq,
+                    current_ref,
+                    baseline_id,
+                    observation_id,
+                    int(detail["row_count"]),
+                    detail.get("last_session"),
+                    detail["post_symbol_content_sha256"],
+                    now,
+                ),
+            )
+            versions = {
+                str(row["symbol"]): str(row["version_id"])
+                for row in connection.execute(_LATEST_VERSIONS_SQL).fetchall()
+            }
+            new_dataset_version_id = _dataset_identity(baseline_id, versions)
+            rebase_seq = int(
+                connection.execute(
+                    "SELECT COALESCE(MAX(seq),0) FROM symbol_rebases WHERE symbol=?", (symbol,)
+                ).fetchone()[0]
+            ) + 1
+            rebase_id = "rebase-" + sha256_text(
+                canonical_json(
+                    {
+                        "symbol": symbol,
+                        "block_event_id": block_event_id,
+                        "observation_id": observation_id,
+                        "intent_event_id": int(intent_event_id),
+                        "version_id": version_id,
+                    }
+                )
+            )[:32]
+            record_detail = {
+                "request_start": detail.get("request_start"),
+                "request_end": detail.get("request_end"),
+                "rebased_sessions": sessions,
+                "old_rows": detail.get("old_rows", {}),
+                "history_coverage": detail.get("history_coverage"),
+                "superseded_block_ids": list(detail.get("supersedes_block_ids", [])),
+                "open_position_check": detail.get("open_position_check"),
+                "resulting_block_state": RESOLUTION_REBASED,
+            }
+            connection.execute(
+                "INSERT INTO symbol_rebases(rebase_id,symbol,seq,block_event_id,observation_id,"
+                "intent_event_id,category,reviewer,reason,note,pre_version_id,new_version_id,"
+                "pre_dataset_version_id,new_dataset_version_id,first_session,last_session,"
+                "session_count,old_content_sha256,new_content_sha256,pre_symbol_content_sha256,"
+                "post_symbol_content_sha256,row_count,created_at_utc,detail_json)"
+                " VALUES (?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?,?)",
+                (
+                    rebase_id,
+                    symbol,
+                    rebase_seq,
+                    block_event_id,
+                    observation_id,
+                    int(intent_event_id),
+                    detail["category"],
+                    detail["reviewer"],
+                    detail["reason"],
+                    detail.get("note"),
+                    current_ref,
+                    version_id,
+                    detail["pre_dataset_version_id"],
+                    new_dataset_version_id,
+                    sessions[0],
+                    sessions[-1],
+                    len(sessions),
+                    detail["old_rows_sha256"],
+                    detail["rows_sha256"],
+                    detail["pre_symbol_content_sha256"],
+                    detail["post_symbol_content_sha256"],
+                    int(detail["row_count"]),
+                    now,
+                    canonical_json(record_detail),
+                ),
+            )
+            connection.executemany(
+                "INSERT INTO rebased_sessions(rebase_id,symbol,session,rebase_seq,observation_id,version_id)"
+                " VALUES (?,?,?,?,?,?)",
+                [(rebase_id, symbol, session, rebase_seq, observation_id, version_id) for session in sessions],
+            )
+            result = {
+                "kind": INTENT_KIND_REBASE,
+                "observation_id": observation_id,
+                "symbol": symbol,
+                "version_id": version_id,
+                "parent_version_id": current_ref,
+                "baseline_id": baseline_id,
+                "appended_sessions": [],
+                "rows_appended": 0,
+                "rebased_sessions": sessions,
+                "rebase_id": rebase_id,
+                "block_event_id": block_event_id,
+                "content_sha256": detail["post_symbol_content_sha256"],
+                "already_applied": False,
+            }
+            self._insert_event(
+                connection,
+                observation_id=observation_id,
+                receipt_id=None,
+                symbol=symbol,
+                event_type=EVENT_APPLICATION_RESULT,
+                application_state=STATE_APPLIED,
+                admission_result=REBASE_ADMISSION_RESULT,
+                run_id=run_id,
+                detail=result,
+            )
+            resolutions = [(block_event_id, RESOLUTION_REBASED)]
+            for older in detail.get("supersedes_block_ids", []):
+                if not connection.execute(
+                    "SELECT 1 FROM block_resolutions WHERE block_event_id=?", (int(older),)
+                ).fetchone():
+                    resolutions.append((int(older), RESOLUTION_SUPERSEDED_BY_REBASE))
+            for block_id, kind in resolutions:
+                connection.execute(
+                    "INSERT INTO block_resolutions(block_event_id,symbol,resolution_kind,"
+                    "resolved_by_observation_id,reviewer,reason,resolved_at_utc,detail_json)"
+                    " VALUES (?,?,?,?,?,?,?,?)",
+                    (
+                        block_id,
+                        symbol,
+                        kind,
+                        observation_id,
+                        detail["reviewer"],
+                        detail["reason"],
+                        now,
+                        canonical_json(
+                            {
+                                "rebase_id": rebase_id,
+                                "category": detail["category"],
+                                "note": detail.get("note"),
+                                "reviewed_block_id": block_event_id,
+                            }
+                        ),
+                    ),
+                )
+            stored = connection.execute(
+                "SELECT * FROM symbol_rebases WHERE rebase_id=?", (rebase_id,)
+            ).fetchone()
+            record = dict(stored)
+            record["detail"] = json.loads(record.pop("detail_json"))
+            return {**record, "already_applied": False}
+
     def session_provenance(self, symbol: str, session: str) -> dict[str, object]:
         """Where did ``(symbol, session)`` come from?
 
@@ -1539,11 +1977,30 @@ class ObservationLog:
             )
         finally:
             connection.close()
+        base = {"symbol": symbol, "session": session, "baseline_id": baseline_id}
+        for intent in self.open_intents(symbol):
+            # An open reviewed-rebase intent claims sessions that already have an
+            # owner; until it is finalized or abandoned nobody may bind them.
+            if intent.get("kind") == INTENT_KIND_REBASE and session in intent["sessions"]:
+                return {
+                    **base,
+                    "origin": "PENDING_APPLICATION",
+                    "observation_id": intent["observation_id"],
+                    "version_id": None,
+                }
+        rebased = self._rebased_attribution(symbol, session, session)
+        if session in rebased:
+            # A reviewed rebase replaced this session's values: the latest rebase owns it.
+            return {
+                **base,
+                "origin": ORIGIN_REBASED if present else "REMOVED",
+                "observation_id": rebased[session][0],
+                "version_id": rebased[session][1],
+            }
         applied = self._read(
             "SELECT observation_id, version_id FROM applied_sessions WHERE symbol=? AND session=?",
             (symbol, session),
         )
-        base = {"symbol": symbol, "session": session, "baseline_id": baseline_id}
         if applied:
             origin = "OBSERVATION" if present else "REMOVED"
             return {
@@ -1621,16 +2078,27 @@ class ObservationLog:
                 (symbol, start, end),
             )
         }
+        rebased = self._rebased_attribution(symbol, start, end)
+        applied.update(rebased)  # the latest reviewed rebase owns a replaced session
+        rebased_sessions = set(rebased)
         pending: set[str] = set()
+        rebase_pending: set[str] = set()
         for intent in self.open_intents(symbol):
-            pending.update(str(item) for item in intent["sessions"] if start <= str(item) <= end)
+            claimed = {str(item) for item in intent["sessions"] if start <= str(item) <= end}
+            pending.update(claimed)
+            if intent.get("kind") == INTENT_KIND_REBASE:
+                rebase_pending.update(claimed)
         baseline_row = self.baseline_symbol(symbol)
         baseline_last = None if baseline_row is None else str(baseline_row["last_session"])
         counts: dict[str, int] = {}
         triples: list[tuple[str, str, str]] = []
         present = set(sessions)
         for session in sessions:
-            if session in applied:
+            if session in rebase_pending:
+                origin, observation = "PENDING_APPLICATION", ""
+            elif session in rebased_sessions:
+                origin, observation = ORIGIN_REBASED, applied[session][0]
+            elif session in applied:
                 origin, observation = "OBSERVATION", applied[session][0]
             elif session in pending:
                 origin, observation = "PENDING_APPLICATION", ""
@@ -1669,18 +2137,13 @@ class ObservationLog:
         baseline = self.get_baseline()
         if baseline is None:
             raise ObservationLogError("no baseline registered")
-        rows = self._read(
-            "SELECT v.symbol, v.version_id FROM symbol_versions v WHERE v.seq = ("
-            "SELECT MAX(seq) FROM symbol_versions WHERE symbol=v.symbol) ORDER BY v.symbol"
-        )
+        rows = self._read(_LATEST_VERSIONS_SQL)
         versions = {str(row["symbol"]): str(row["version_id"]) for row in rows}
-        identity = sha256_text(
-            canonical_json({"baseline_id": baseline["baseline_id"], "versions": versions})
-        )
+        identity = _dataset_identity(str(baseline["baseline_id"]), versions)
         blocks = self.unresolved_blocks()
         pending = self.open_intents()
         return {
-            "dataset_version_id": f"dataset-{identity[:32]}",
+            "dataset_version_id": identity,
             "baseline_id": baseline["baseline_id"],
             "baseline_content_sha256": baseline["content_sha256"],
             "provenance_label": baseline["provenance_label"],
