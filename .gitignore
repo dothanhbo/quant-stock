@@ -94,6 +94,10 @@ images/generated/
 tmp/
 temp/
 cache/
+*.pid
+*.claim
+*.patch
+*.msg
 
 # ============================================
 # Jupyter
