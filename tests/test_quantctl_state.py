@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+from contextlib import closing
 import hashlib
 from pathlib import Path
 import sqlite3
@@ -37,88 +38,69 @@ def _digest(path: Path) -> str:
 
 
 def _paper_database(path: Path, positions: tuple[tuple[object, ...], ...] = ()) -> None:
-    with sqlite3.connect(path) as connection:
-        connection.executescript(
-            """
-            CREATE TABLE paper_metadata(key TEXT PRIMARY KEY,value TEXT NOT NULL);
-            CREATE TABLE paper_orders(client_order_id TEXT,status TEXT,created_at TEXT,updated_at TEXT);
-            CREATE TABLE paper_fills(id INTEGER PRIMARY KEY,symbol TEXT,created_at TEXT);
-            CREATE TABLE paper_positions(symbol TEXT PRIMARY KEY,quantity INTEGER,average_price REAL,market_price REAL,realized_pnl REAL);
-            CREATE TABLE paper_portfolio_snapshots(id INTEGER PRIMARY KEY,created_at TEXT);
-            CREATE TABLE paper_position_lifecycle(symbol TEXT PRIMARY KEY,entry_date TEXT,updated_at TEXT,strategy_version TEXT);
-            CREATE TABLE paper_closed_trades(id INTEGER PRIMARY KEY,created_at TEXT);
-            CREATE TABLE paper_pending_signals(id INTEGER PRIMARY KEY,status TEXT,created_at TEXT,processed_date TEXT);
-            """
-        )
+    from execution.persistence import PaperTradingStore
+
+    # Healthy fixtures must satisfy the same column contract as production.
+    PaperTradingStore(path)
+    with closing(sqlite3.connect(path)) as connection, connection:
+        # Preserve this fixture's no-sidecar setup; WAL has a separate regression.
+        connection.execute("PRAGMA journal_mode=DELETE")
         for symbol, quantity, price, entry_date, version in positions:
             connection.execute(
                 "INSERT INTO paper_positions VALUES (?,?,?,?,?)",
                 (symbol, quantity, price, price, 0.0),
             )
             connection.execute(
-                "INSERT INTO paper_position_lifecycle VALUES (?,?,?,?)",
-                (symbol, entry_date, "2026-09-27T10:00:00Z", version),
+                "INSERT INTO paper_position_lifecycle "
+                "(symbol,entry_date,entry_price,initial_quantity,stop_price,updated_at,strategy_version) "
+                "VALUES (?,?,?,?,?,?,?)",
+                (symbol, entry_date, price, quantity, price, "2026-09-27T10:00:00Z", version),
             )
         connection.execute(
-            "INSERT INTO paper_portfolio_snapshots VALUES (?,?)",
+            "INSERT INTO paper_portfolio_snapshots "
+            "(id,cash,positions_value,equity,realized_pnl,unrealized_pnl,gross_exposure_pct,open_positions,created_at) "
+            "VALUES (?,0,0,0,0,0,0,0,?)",
             (1, "2026-09-27T11:00:00Z"),
         )
         connection.executemany(
-            "INSERT INTO paper_pending_signals VALUES (?,?,?,?)",
+            "INSERT INTO paper_pending_signals "
+            "(id,status,created_at,processed_date,signal_date,symbol,payload) "
+            "VALUES (?,?,?,?,?,?,'{}')",
             (
-                (1, "PENDING", "2026-09-27T09:00:00Z", None),
-                (2, "FILLED", "2026-09-26T09:00:00Z", "2026-09-27"),
+                (1, "PENDING", "2026-09-27T09:00:00Z", None, "2026-09-26", "AAA"),
+                (2, "FILLED", "2026-09-26T09:00:00Z", "2026-09-27", "2026-09-26", "BBB"),
             ),
         )
 
 
 def _forward_database(path: Path) -> None:
-    with sqlite3.connect(path) as connection:
-        connection.executescript(
-            """
-            CREATE TABLE forward_protocols(
-                protocol_id TEXT PRIMARY KEY,protocol_version TEXT,activated_at_utc TEXT,
-                operational_start_after_session TEXT,selection_policy TEXT,weighting_policy TEXT,
-                budget INTEGER,tracked_horizons_json TEXT,benchmark TEXT
-            );
-            CREATE TABLE forward_formations(formation_identity TEXT PRIMARY KEY,recorded_at_utc TEXT);
-            CREATE TABLE forward_positions(formation_identity TEXT,rank INTEGER,symbol TEXT);
-            CREATE TABLE forward_maturities(
-                event_sequence INTEGER PRIMARY KEY AUTOINCREMENT,formation_identity TEXT,
-                horizon_sessions INTEGER,status TEXT,recorded_at_utc TEXT
-            );
-            CREATE TABLE forward_outcomes(outcome_identity TEXT PRIMARY KEY,recorded_at_utc TEXT);
-            CREATE TABLE forward_audit_events(event_identity TEXT PRIMARY KEY,recorded_at_utc TEXT);
-            """
-        )
-        connection.execute(
-            "INSERT INTO forward_protocols VALUES (?,?,?,?,?,?,?,?,?)",
-            (
-                "QV-FWD-V1-test",
-                "V1",
-                "2026-09-25T00:00:00Z",
-                "2026-09-25",
-                "ADX_ONLY",
-                "EQUAL_WEIGHT",
-                5,
-                "[5,10]",
-                "VNINDEX",
-            ),
-        )
-        connection.execute(
-            "INSERT INTO forward_formations VALUES (?,?)",
-            ("formation-1", "2026-09-26T00:00:00Z"),
-        )
-        connection.execute("INSERT INTO forward_positions VALUES (?,?,?)", ("formation-1", 1, "AAA"))
-        connection.executemany(
-            "INSERT INTO forward_maturities(formation_identity,horizon_sessions,status,recorded_at_utc) "
-            "VALUES (?,?,?,?)",
-            (
-                ("formation-1", 5, "PENDING", "2026-09-26T00:00:00Z"),
-                ("formation-1", 5, "MATURED", "2026-09-27T00:00:00Z"),
-                ("formation-1", 10, "PENDING", "2026-09-26T00:00:00Z"),
-            ),
-        )
+    from dataclasses import replace
+    from quantlab.forward.contracts import ForwardMaturity, ForwardPosition, MaturityStatus
+    from quantlab.forward.ledger import ForwardValidationLedger
+    from tests.test_forward_evidence_view import _activation, _formation
+
+    # Use the existing production contract, rather than a partial healthy schema.
+    ledger = ForwardValidationLedger(path)
+    activation = replace(
+        _activation(), protocol_id="QV-FWD-V1-test",
+        activated_at_utc="2026-09-25T00:00:00Z",
+        activation_market_session_boundary="2026-09-24",
+        operational_start_after_session="2026-09-25",
+    )
+    ledger.activate(activation)
+    formation = replace(
+        _formation("2026-09-26"), protocol_id=activation.protocol_id,
+        recorded_at_utc="2026-09-26T00:00:00Z", formation_identity="formation-1",
+        ordered_selected_symbols=("AAA",), actual_selected_count=1,
+        positions=(ForwardPosition("AAA", 1, 1.0, 101.5, "position-1"),),
+        gross_weight=1.0, cash_weight=0.0,
+    )
+    ledger.record_formation(formation, activation.tracked_horizons)
+    ledger.record_maturities((ForwardMaturity(
+        activation.protocol_id, formation.formation_identity, formation.formation_session,
+        5, "2026-09-27", MaturityStatus.MATURED, "EXACT_SESSION",
+        "2026-09-27T00:00:00Z", "maturity-5",
+    ),))
 
 
 def _state_root(tmp_path: Path) -> Path:

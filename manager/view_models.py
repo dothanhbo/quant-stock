@@ -5,7 +5,7 @@ from pathlib import Path
 from typing import TYPE_CHECKING, Mapping
 
 from quantctl.commands.doctor import Check, collect_checks, overall_status
-from quantctl.operations import OperationSpec, list_operations, operation_available
+from quantctl.operations import OperationCapability, OperationSpec, list_operations, operation_available
 from quantctl.registry import (
     PROJECT_ROOT,
     QUANTCTL_VERSION,
@@ -92,6 +92,7 @@ class SystemViewModel:
 class OperationViewModel:
     spec: OperationSpec
     available: bool
+    unavailable_reason: str | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -201,12 +202,25 @@ def build_system_model(
     return SystemViewModel(checks, overall_status(checks))
 
 
-def build_operations_model(*, root: Path = PROJECT_ROOT) -> OperationsViewModel:
+def build_operations_model(
+    *, root: Path = PROJECT_ROOT, environ: Mapping[str, str] | None = None,
+) -> OperationsViewModel:
+    active = inspect_paper_system(root=root, environ=None if environ is None else dict(environ)).active_store
+    paper_issue = (
+        "Active Paper store is unresolved." if active is None else
+        "Active Paper store is unavailable or unreadable." if not active.readable else
+        "Active Paper store has an incompatible schema." if active.schema_status != "OK" else None
+    )
     return OperationsViewModel(
         tuple(
-            OperationViewModel(spec, operation_available(spec, root=root))
+            OperationViewModel(
+                spec,
+                operation_available(spec, root=root) and not (
+                    paper_issue and OperationCapability.PAPER_WRITE in spec.capabilities),
+                paper_issue if OperationCapability.PAPER_WRITE in spec.capabilities else None,
+            )
             for spec in list_operations()
-        )
+        ),
     )
 
 

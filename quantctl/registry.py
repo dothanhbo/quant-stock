@@ -136,8 +136,12 @@ def discover_active_runners(*, root: Path = PROJECT_ROOT) -> tuple[RunnerInfo, .
 
 
 def sqlite_read_only(path: Path) -> sqlite3.Connection:
-    connection = sqlite3.connect(path.resolve().as_uri() + "?mode=ro&immutable=1", uri=True)
+    # Operational stores may have committed data in an active WAL. Immutable
+    # mode skips that journal; mode=ro observes it without creating a database,
+    # changing journal mode or checkpointing. query_only also rejects SQL writes.
+    connection = sqlite3.connect(path.resolve().as_uri() + "?mode=ro", uri=True)
     connection.execute("PRAGMA query_only = ON")
+    connection.execute("BEGIN")
     return connection
 
 

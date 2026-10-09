@@ -16,29 +16,74 @@ from config.paper_store import (
 )
 
 
-PAPER_TABLES = frozenset(
-    {
-        "paper_metadata",
-        "paper_orders",
-        "paper_fills",
-        "paper_positions",
-        "paper_portfolio_snapshots",
-        "paper_position_lifecycle",
-        "paper_closed_trades",
-        "paper_pending_signals",
-    }
-)
+# Columns created and consumed by execution.persistence.PaperTradingStore.
+# Inspection must validate the runtime contract without initializing/migrating it.
+PAPER_REQUIRED_COLUMNS = {
+    "paper_metadata": frozenset("key value".split()),
+    "paper_orders": frozenset(
+        "client_order_id symbol side quantity order_type limit_price reference_price "
+        "status filled_quantity average_fill_price rejection_reason created_at updated_at "
+        "source_intent_id execution_context".split()
+    ),
+    "paper_fills": frozenset(
+        "id order_id symbol side quantity price gross_value commission slippage_cost "
+        "net_cash_flow created_at".split()
+    ),
+    "paper_positions": frozenset(
+        "symbol quantity average_price market_price realized_pnl".split()
+    ),
+    "paper_portfolio_snapshots": frozenset(
+        "id cash positions_value equity realized_pnl unrealized_pnl gross_exposure_pct "
+        "open_positions created_at".split()
+    ),
+    "paper_position_lifecycle": frozenset(
+        "symbol entry_date entry_price initial_quantity stop_price take_profit_price "
+        "highest_price trailing_stop_price trailing_atr_multiplier maximum_holding_days "
+        "updated_at entry_order_id strategy_version policy_fingerprint".split()
+    ),
+    "paper_closed_trades": frozenset(
+        "id symbol entry_date exit_date quantity entry_price exit_price gross_proceeds "
+        "commission realized_pnl return_pct holding_days exit_reason order_id created_at".split()
+    ),
+    "paper_pending_signals": frozenset(
+        "id signal_date symbol payload status processed_date reason created_at".split()
+    ),
+}
+PAPER_TABLES = frozenset(PAPER_REQUIRED_COLUMNS)
 
-FORWARD_TABLES = frozenset(
-    {
-        "forward_protocols",
-        "forward_formations",
-        "forward_positions",
-        "forward_maturities",
-        "forward_outcomes",
-        "forward_audit_events",
-    }
-)
+# Existing immutable ledger fields read by quantlab.forward.ledger and status.
+# Optional R3 binding tables may be absent from healthy legacy ledgers.
+FORWARD_REQUIRED_COLUMNS = {
+    "forward_protocols": frozenset(
+        "protocol_id protocol_fingerprint protocol_version activated_at_utc "
+        "activation_market_session_boundary operational_start_after_session "
+        "source_phase8_manifest_identity source_phase8_manifest_sha256 selection_policy "
+        "weighting_policy budget tracked_horizons_json benchmark activation_identity".split()
+    ),
+    "forward_formations": frozenset(
+        "formation_identity protocol_id protocol_fingerprint formation_session recorded_at_utc "
+        "source_snapshot_identity completed_session_set_identity selection_policy_identity "
+        "eligible_universe_identity selection_identity ordered_selected_symbols_json "
+        "actual_selected_count budget weighting_policy gross_weight cash_weight "
+        "benchmark_formation_close".split()
+    ),
+    "forward_positions": frozenset(
+        "formation_identity rank symbol weight formation_close position_identity".split()
+    ),
+    "forward_maturities": frozenset(
+        "event_sequence maturity_identity protocol_id formation_identity formation_session "
+        "horizon_sessions target_session status reason_code recorded_at_utc".split()
+    ),
+    "forward_outcomes": frozenset(
+        "outcome_identity protocol_id formation_identity horizon_sessions target_session "
+        "symbol weight availability stock_forward_return_pct benchmark_forward_return_pct "
+        "excess_forward_return_pct_points recorded_at_utc".split()
+    ),
+    "forward_audit_events": frozenset(
+        "event_identity protocol_id event_type market_session reason_code recorded_at_utc".split()
+    ),
+}
+FORWARD_TABLES = frozenset(FORWARD_REQUIRED_COLUMNS)
 
 
 @dataclass(frozen=True, slots=True)
@@ -180,17 +225,25 @@ def inspect_paper_store(
     market_database_path: Path | None = None,
 ) -> PaperStoreSnapshot:
     path = path.resolve()
-    evidence = (
-        inspect_prospective_portfolio_evidence(
-            evidence_database_path=evidence_database_path,
-            market_database_path=market_database_path,
-            source_store_id=store_id,
-            strategy_identity=strategy_identity,
-            paper_database_path=path,
+    evidence_error: str | None = None
+    try:
+        evidence = (
+            inspect_prospective_portfolio_evidence(
+                evidence_database_path=evidence_database_path,
+                market_database_path=market_database_path,
+                source_store_id=store_id,
+                strategy_identity=strategy_identity,
+                paper_database_path=path,
+            )
+            if evidence_database_path is not None
+            else None
         )
-        if evidence_database_path is not None
-        else None
-    )
+    except (OSError, sqlite3.Error, ValueError, TypeError) as exc:
+        # Evidence inspection reads the source account epoch too. A corrupt
+        # source must remain unavailable. Check its schema before classifying
+        # an evidence failure, since missing metadata columns can cause it.
+        evidence = None
+        evidence_error = f"{type(exc).__name__}: {exc}"
     evidence_fields = (
         {
             "evidence_schema_status": evidence.schema_status,
@@ -229,7 +282,25 @@ def inspect_paper_store(
             tables = _tables(connection)
             missing = tuple(sorted(PAPER_TABLES - tables))
             warnings = tuple(f"missing table: {table}" for table in missing)
-            schema_status = "SCHEMA_MISMATCH" if missing else "OK"
+            warnings += tuple(
+                f"missing column: {table}.{column}"
+                for table in sorted(PAPER_TABLES & tables)
+                for column in sorted(PAPER_REQUIRED_COLUMNS[table] - _columns(connection, table))
+            )
+            if warnings:
+                return PaperStoreSnapshot(
+                    name, store_id, display_name or name, PaperStoreRole.UNKNOWN,
+                    strategy_identity, writable_by_current_pipeline, path,
+                    True, True, "SCHEMA_MISMATCH", warnings=warnings,
+                    **evidence_fields,
+                )
+            if evidence_error is not None:
+                return PaperStoreSnapshot(
+                    name, store_id, display_name or name, PaperStoreRole.UNKNOWN,
+                    strategy_identity, writable_by_current_pipeline, path,
+                    True, False, "UNREADABLE", error=evidence_error,
+                )
+            schema_status = "OK"
 
             positions: tuple[PositionSnapshot, ...] = ()
             open_count: int | None = None
@@ -403,7 +474,16 @@ def inspect_forward_system(*, root: Path = PROJECT_ROOT) -> ForwardSystemSnapsho
             tables = _tables(connection)
             missing = tuple(sorted(FORWARD_TABLES - tables))
             warnings = list(f"missing table: {table}" for table in missing)
-            schema_status = "SCHEMA_MISMATCH" if missing else "OK"
+            warnings.extend(
+                f"missing column: {table}.{column}"
+                for table in sorted(FORWARD_TABLES & tables)
+                for column in sorted(FORWARD_REQUIRED_COLUMNS[table] - _columns(connection, table))
+            )
+            if warnings:
+                return ForwardSystemSnapshot(
+                    path, True, True, "SCHEMA_MISMATCH", warnings=tuple(warnings),
+                )
+            schema_status = "OK"
 
             protocols: tuple[ForwardProtocolSnapshot, ...] = ()
             if "forward_protocols" in tables:

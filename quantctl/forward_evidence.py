@@ -10,6 +10,7 @@ captures, reconciles, matures, or reconstructs a missing observation.
 from dataclasses import dataclass
 from enum import Enum
 from pathlib import Path
+import sqlite3
 from statistics import fmean
 from typing import Mapping
 
@@ -529,7 +530,7 @@ def inspect_forward_evidence_catalog(
                     qualifier=qualifier,
                 )
             )
-    except (OSError, ValueError, KeyError) as exc:
+    except (OSError, sqlite3.Error, ValueError, KeyError, IndexError) as exc:
         return ForwardEvidenceCatalog(
             paper,
             (),
