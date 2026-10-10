@@ -1,0 +1,700 @@
+{
+  "classification": "EXPLORATORY_ONLY / LEGACY_UNVERIFIED",
+  "decisions": {
+    "ADX14": "INSUFFICIENT_EVIDENCE",
+    "MOM20": "RETAIN_FOR_PROSPECTIVE_CONSIDERATION",
+    "VOL20": "DO_NOT_PRIORITIZE"
+  },
+  "mom_vol_daily_ic_correlation": {
+    "first_date": "2018-09-05",
+    "joint_undefined_dates": 30,
+    "last_date": "2026-09-22",
+    "matched_defined_dates": 2004,
+    "method": "Pearson correlation of saved daily Spearman Rank ICs; date join; no fill",
+    "pearson_r": -0.055714822548873624,
+    "unmatched_defined_dates": 0,
+    "unmatched_scheduled_dates": 0
+  },
+  "saved_daily_aggregations": {
+    "ADX14": {
+      "annual": [
+        {
+          "defined_dates": 224,
+          "mean_ic": -0.045905294406291056,
+          "year": "2024"
+        },
+        {
+          "defined_dates": 249,
+          "mean_ic": 0.1081299878094032,
+          "year": "2025"
+        },
+        {
+          "defined_dates": 172,
+          "mean_ic": 0.045484954664614344,
+          "year": "2026"
+        }
+      ],
+      "annual_sign_changes": 1
+    },
+    "MOM20": {
+      "annual": [
+        {
+          "defined_dates": 83,
+          "mean_ic": 0.08182791894775046,
+          "year": "2018"
+        },
+        {
+          "defined_dates": 247,
+          "mean_ic": 0.013900828402156763,
+          "year": "2019"
+        },
+        {
+          "defined_dates": 252,
+          "mean_ic": 0.05583581721295599,
+          "year": "2020"
+        },
+        {
+          "defined_dates": 249,
+          "mean_ic": 0.048683477585106216,
+          "year": "2021"
+        },
+        {
+          "defined_dates": 249,
+          "mean_ic": -0.028194995078080938,
+          "year": "2022"
+        },
+        {
+          "defined_dates": 249,
+          "mean_ic": 0.023600734172360065,
+          "year": "2023"
+        },
+        {
+          "defined_dates": 250,
+          "mean_ic": -0.019495559356293615,
+          "year": "2024"
+        },
+        {
+          "defined_dates": 249,
+          "mean_ic": 0.01216754256897193,
+          "year": "2025"
+        },
+        {
+          "defined_dates": 176,
+          "mean_ic": -0.028229561629121738,
+          "year": "2026"
+        }
+      ],
+      "annual_sign_changes": 5
+    },
+    "VOL20": {
+      "annual": [
+        {
+          "defined_dates": 83,
+          "mean_ic": 0.03496581109733051,
+          "year": "2018"
+        },
+        {
+          "defined_dates": 247,
+          "mean_ic": 0.007207369244229303,
+          "year": "2019"
+        },
+        {
+          "defined_dates": 252,
+          "mean_ic": -0.04745170340960062,
+          "year": "2020"
+        },
+        {
+          "defined_dates": 249,
+          "mean_ic": -0.08755707646179932,
+          "year": "2021"
+        },
+        {
+          "defined_dates": 249,
+          "mean_ic": 0.028870382230876512,
+          "year": "2022"
+        },
+        {
+          "defined_dates": 249,
+          "mean_ic": -0.09573938364422874,
+          "year": "2023"
+        },
+        {
+          "defined_dates": 250,
+          "mean_ic": 0.0419037487737631,
+          "year": "2024"
+        },
+        {
+          "defined_dates": 249,
+          "mean_ic": 0.017772124230535716,
+          "year": "2025"
+        },
+        {
+          "defined_dates": 176,
+          "mean_ic": 0.10599271368364435,
+          "year": "2026"
+        }
+      ],
+      "annual_sign_changes": 4
+    }
+  },
+  "studies": {
+    "ADX14": {
+      "benchmark": "VNINDEX",
+      "classification": "EXPLORATORY_ONLY / LEGACY_UNVERIFIED",
+      "code_identity": "5e744d4cdd6dfb0109325ad1d5ab5e42d5b000f6854e3b5d66af48199cb8819d",
+      "cohort": [
+        "VHM",
+        "PHR",
+        "CTR",
+        "TPB",
+        "DGW",
+        "MSB",
+        "TCH",
+        "VIB",
+        "VPB",
+        "DSE"
+      ],
+      "configuration_sha256": "b722044968e42b9eb3f89186ab1cf2bdc8be16cf0c53d8661700bbc8082d6072",
+      "controlled_adx_v1": "DATA_BLOCKED",
+      "daily_eligible_pair_count_distribution": {
+        "0": 36,
+        "10": 525,
+        "9": 120
+      },
+      "defined_ic_dates": 645,
+      "first_defined_ic_date": "2024-02-07",
+      "input_sha256": "69281165b1cac4a0d05e93fc2f9235a9f44172b7d52ad363e670c703d6999fdb",
+      "input_unchanged": true,
+      "last_defined_ic_date": "2026-09-16",
+      "limitations": [
+        "Unknown adjustment basis: labels are observed provider-basis returns, not verified RAW returns",
+        "Current historical vintage; original point-in-time availability and revision policy unverified",
+        "Purposive fixed 10-stock cohort is not a historical market universe",
+        "Only stored VNINDEX sessions are used; official calendar completeness unverified",
+        "No pre-2024 history; existing ADX initialisation and missingness retained",
+        "DSE history begins 2024-07-01; pre-history rows retained as unavailable",
+        "Authoritative corporate-action/lifecycle coverage and provider retention rights unverified",
+        "Overlapping H10 labels and small cross-sections; no uncertainty or significance inference"
+      ],
+      "logical_fingerprint": "2b23660fc3da374dbf9be2c3eab9f32040580ce8eb9872fac848c588e4f2a9db",
+      "market_available_observations": 6690,
+      "missingness": {
+        "adx_status_counts": {
+          "AVAILABLE": 6430,
+          "OBSERVATION_MARKET_ROW_MISSING": 120,
+          "SOURCE_VALUE_NONFINITE": 260
+        },
+        "exclusion_counts": {
+          "ELIGIBLE": 6330,
+          "FACTOR_AND_H10_UNAVAILABLE": 120,
+          "FACTOR_UNAVAILABLE": 260,
+          "H10_OUTCOME_UNAVAILABLE": 100
+        },
+        "h10_status_counts": {
+          "AVAILABLE": 6590,
+          "CENSORED_AFTER_DATA_END": 100,
+          "OBSERVATION_MARKET_ROW_MISSING": 120
+        },
+        "undefined_daily_reasons": {
+          "fewer_than_minimum_pairwise_finite_observations": 36
+        }
+      },
+      "network": "FORBIDDEN",
+      "overall_equal_date_mean_rank_ic": 0.03793022204627266,
+      "pairwise_eligible_observations": 6330,
+      "population_observations": 6810,
+      "research_eligible": false,
+      "significance_alpha_profitability_claims": false,
+      "snapshot_id": "b2ee38f8490368ad918f1d8de8e298a1e1a774e2731462ef8a85792e9d64fcb1",
+      "spec_fingerprints": {
+        "dataset": "0adbbb87fe3b56bcccecb709e0d0f899cf4f2409de6327bf8ab1ac35332d6e24",
+        "evaluation": "11ddc43018bb644a76b5b5ac9f057b93de9343ff48a84b2c74674a155b184037",
+        "outcome": "259ffcbb589dab9ca269aea237d37e456b13fa4ded7fc8e99861fc5aa1250dd1"
+      },
+      "status": "COMPLETE",
+      "stored_benchmark_dates": 681,
+      "undefined_ic_dates": 36,
+      "window": {
+        "end": "2026-09-30",
+        "start": "2024-01-01"
+      }
+    },
+    "MOM20": {
+      "adx_comparison": {
+        "directly_comparable": false,
+        "reason": "Saved VCI ADX study used a different input hash, 10-symbol cohort and 2024-2026 window; no paired comparison or ranking claim.",
+        "saved_vci_mean_ic": 0.03793022
+      },
+      "benchmark": "VNINDEX",
+      "chronological_slices": [
+        {
+          "classification": "EXPLORATORY_ONLY / LEGACY_UNVERIFIED",
+          "code_identity": "0ac4bc2e681f488612e5adc1603ba0146b8381d5c22e6d5b8b9871f39dba187d",
+          "configuration_sha256": "bdb6aa76ec74d1193073e8ff08114e7a980d8a32fd403940094a70b413785607",
+          "defined_ic_dates": 83,
+          "eligible_pairs": 7039,
+          "equal_date_mean_ic": 0.08182791894775046,
+          "first_session": "2018-08-07",
+          "input_sha256": "75704e29fe5a3bcf44dba754b42264664523f3270b2eaeefcc7c6812f4055d01",
+          "last_session": "2018-12-28",
+          "positive_ic_share": 0.6144578313253012,
+          "scheduled_dates": 103,
+          "year": "2018"
+        },
+        {
+          "classification": "EXPLORATORY_ONLY / LEGACY_UNVERIFIED",
+          "code_identity": "0ac4bc2e681f488612e5adc1603ba0146b8381d5c22e6d5b8b9871f39dba187d",
+          "configuration_sha256": "bdb6aa76ec74d1193073e8ff08114e7a980d8a32fd403940094a70b413785607",
+          "defined_ic_dates": 247,
+          "eligible_pairs": 21179,
+          "equal_date_mean_ic": 0.013900828402156758,
+          "first_session": "2019-01-02",
+          "input_sha256": "75704e29fe5a3bcf44dba754b42264664523f3270b2eaeefcc7c6812f4055d01",
+          "last_session": "2019-12-31",
+          "positive_ic_share": 0.5303643724696356,
+          "scheduled_dates": 247,
+          "year": "2019"
+        },
+        {
+          "classification": "EXPLORATORY_ONLY / LEGACY_UNVERIFIED",
+          "code_identity": "0ac4bc2e681f488612e5adc1603ba0146b8381d5c22e6d5b8b9871f39dba187d",
+          "configuration_sha256": "bdb6aa76ec74d1193073e8ff08114e7a980d8a32fd403940094a70b413785607",
+          "defined_ic_dates": 252,
+          "eligible_pairs": 21777,
+          "equal_date_mean_ic": 0.055835817212955996,
+          "first_session": "2020-01-02",
+          "input_sha256": "75704e29fe5a3bcf44dba754b42264664523f3270b2eaeefcc7c6812f4055d01",
+          "last_session": "2020-12-31",
+          "positive_ic_share": 0.6865079365079365,
+          "scheduled_dates": 252,
+          "year": "2020"
+        },
+        {
+          "classification": "EXPLORATORY_ONLY / LEGACY_UNVERIFIED",
+          "code_identity": "0ac4bc2e681f488612e5adc1603ba0146b8381d5c22e6d5b8b9871f39dba187d",
+          "configuration_sha256": "bdb6aa76ec74d1193073e8ff08114e7a980d8a32fd403940094a70b413785607",
+          "defined_ic_dates": 249,
+          "eligible_pairs": 22416,
+          "equal_date_mean_ic": 0.04868347758510622,
+          "first_session": "2021-01-04",
+          "input_sha256": "75704e29fe5a3bcf44dba754b42264664523f3270b2eaeefcc7c6812f4055d01",
+          "last_session": "2021-12-31",
+          "positive_ic_share": 0.606425702811245,
+          "scheduled_dates": 249,
+          "year": "2021"
+        },
+        {
+          "classification": "EXPLORATORY_ONLY / LEGACY_UNVERIFIED",
+          "code_identity": "0ac4bc2e681f488612e5adc1603ba0146b8381d5c22e6d5b8b9871f39dba187d",
+          "configuration_sha256": "bdb6aa76ec74d1193073e8ff08114e7a980d8a32fd403940094a70b413785607",
+          "defined_ic_dates": 249,
+          "eligible_pairs": 23048,
+          "equal_date_mean_ic": -0.028194995078080938,
+          "first_session": "2022-01-04",
+          "input_sha256": "75704e29fe5a3bcf44dba754b42264664523f3270b2eaeefcc7c6812f4055d01",
+          "last_session": "2022-12-30",
+          "positive_ic_share": 0.4779116465863454,
+          "scheduled_dates": 249,
+          "year": "2022"
+        },
+        {
+          "classification": "EXPLORATORY_ONLY / LEGACY_UNVERIFIED",
+          "code_identity": "0ac4bc2e681f488612e5adc1603ba0146b8381d5c22e6d5b8b9871f39dba187d",
+          "configuration_sha256": "bdb6aa76ec74d1193073e8ff08114e7a980d8a32fd403940094a70b413785607",
+          "defined_ic_dates": 249,
+          "eligible_pairs": 23142,
+          "equal_date_mean_ic": 0.023600734172360065,
+          "first_session": "2023-01-03",
+          "input_sha256": "75704e29fe5a3bcf44dba754b42264664523f3270b2eaeefcc7c6812f4055d01",
+          "last_session": "2023-12-29",
+          "positive_ic_share": 0.5421686746987951,
+          "scheduled_dates": 249,
+          "year": "2023"
+        },
+        {
+          "classification": "EXPLORATORY_ONLY / LEGACY_UNVERIFIED",
+          "code_identity": "0ac4bc2e681f488612e5adc1603ba0146b8381d5c22e6d5b8b9871f39dba187d",
+          "configuration_sha256": "bdb6aa76ec74d1193073e8ff08114e7a980d8a32fd403940094a70b413785607",
+          "defined_ic_dates": 250,
+          "eligible_pairs": 23497,
+          "equal_date_mean_ic": -0.01949555935629362,
+          "first_session": "2024-01-02",
+          "input_sha256": "75704e29fe5a3bcf44dba754b42264664523f3270b2eaeefcc7c6812f4055d01",
+          "last_session": "2024-12-31",
+          "positive_ic_share": 0.512,
+          "scheduled_dates": 250,
+          "year": "2024"
+        },
+        {
+          "classification": "EXPLORATORY_ONLY / LEGACY_UNVERIFIED",
+          "code_identity": "0ac4bc2e681f488612e5adc1603ba0146b8381d5c22e6d5b8b9871f39dba187d",
+          "configuration_sha256": "bdb6aa76ec74d1193073e8ff08114e7a980d8a32fd403940094a70b413785607",
+          "defined_ic_dates": 249,
+          "eligible_pairs": 24030,
+          "equal_date_mean_ic": 0.012167542568971932,
+          "first_session": "2025-01-02",
+          "input_sha256": "75704e29fe5a3bcf44dba754b42264664523f3270b2eaeefcc7c6812f4055d01",
+          "last_session": "2025-12-31",
+          "positive_ic_share": 0.5261044176706827,
+          "scheduled_dates": 249,
+          "year": "2025"
+        },
+        {
+          "classification": "EXPLORATORY_ONLY / LEGACY_UNVERIFIED",
+          "code_identity": "0ac4bc2e681f488612e5adc1603ba0146b8381d5c22e6d5b8b9871f39dba187d",
+          "configuration_sha256": "bdb6aa76ec74d1193073e8ff08114e7a980d8a32fd403940094a70b413785607",
+          "defined_ic_dates": 176,
+          "eligible_pairs": 17582,
+          "equal_date_mean_ic": -0.028229561629121738,
+          "first_session": "2026-01-05",
+          "input_sha256": "75704e29fe5a3bcf44dba754b42264664523f3270b2eaeefcc7c6812f4055d01",
+          "last_session": "2026-10-06",
+          "positive_ic_share": 0.4147727272727273,
+          "scheduled_dates": 186,
+          "year": "2026"
+        }
+      ],
+      "classification": "EXPLORATORY_ONLY / LEGACY_UNVERIFIED",
+      "code_identity": "0ac4bc2e681f488612e5adc1603ba0146b8381d5c22e6d5b8b9871f39dba187d",
+      "cohort_count": 100,
+      "cohort_identity": "FIXED_COHORT_V1:a56872b859b018d8a8dfb7f034b15ceb9a68ea2805aeb5c7150fa53204d14faf",
+      "configuration_sha256": "bdb6aa76ec74d1193073e8ff08114e7a980d8a32fd403940094a70b413785607",
+      "daily_eligible_pair_count_distribution": {
+        "0": 30,
+        "100": 163,
+        "82": 1,
+        "83": 8,
+        "84": 31,
+        "85": 167,
+        "86": 184,
+        "87": 191,
+        "88": 41,
+        "89": 34,
+        "90": 52,
+        "91": 154,
+        "92": 66,
+        "93": 465,
+        "94": 108,
+        "95": 94,
+        "96": 111,
+        "97": 99,
+        "98": 27,
+        "99": 8
+      },
+      "defined_ic_dates": 2004,
+      "eligible_pairs_per_defined_date": {
+        "maximum": 100,
+        "minimum": 82
+      },
+      "first_defined_ic_date": "2018-09-05",
+      "ic_coverage_fraction": 0.9852507374631269,
+      "input_sha256": "75704e29fe5a3bcf44dba754b42264664523f3270b2eaeefcc7c6812f4055d01",
+      "input_unchanged": true,
+      "last_defined_ic_date": "2026-09-22",
+      "limitations": [
+        "Current tracked 100-ticker cohort applied retrospectively: survivorship/selection bias; no verified historical membership or ticker continuity.",
+        "Unknown provider and price-adjustment basis; ratios describe stored closes, not verified RAW or total economic returns; corporate-action seams unverified.",
+        "Current historical vintage, not original point-in-time data availability; revision history and source timestamps unavailable without a provenance ledger.",
+        "Calendar uses only stored normalized VNINDEX sessions; official session completeness unverified.",
+        "Missing exact endpoints are unavailable, never filled or substituted; intervening missing bars do not invalidate an otherwise available endpoint ratio.",
+        "Overlapping H10 labels, cross-sectional/temporal dependence and variable coverage; no inferential significance, alpha or profitability confirmation.",
+        "Minimum five eligible pairs is the existing software convention, not a scientific sample qualification gate.",
+        "Private local input preserved; external provider retention/publication permissions remain unverified."
+      ],
+      "logical_fingerprint": "7749b5a8eb7d06cb9f5bf50c6ab72585cdb6558e6a98e730f27d6f2449ed0f9e",
+      "market_available_observations": 187191,
+      "missing_symbols": [],
+      "missingness": {
+        "availability": {
+          "AVAILABLE": 187191,
+          "MISSING_EXACT_MARKET_ROW": 16209
+        },
+        "exclusion_reason": {
+          "ELIGIBLE": 183710,
+          "FACTOR_AND_H10_UNAVAILABLE": 16211,
+          "FACTOR_UNAVAILABLE": 2245,
+          "H10_OUTCOME_UNAVAILABLE": 1234
+        },
+        "mom20_reason": {
+          "AVAILABLE": 184944,
+          "MISSING_CURRENT_CLOSE": 16209,
+          "MISSING_EXACT_LAG_CLOSE": 547,
+          "WARMUP_BENCHMARK_SESSION": 1700
+        },
+        "outcome_10__availability": {
+          "AVAILABLE": 185955,
+          "CENSORED_AFTER_DATA_END": 1000,
+          "MISSING_STOCK_TARGET_CLOSE": 236,
+          "OBSERVATION_MARKET_ROW_MISSING": 16209
+        },
+        "stock_return_20d_pct__availability": {
+          "AVAILABLE": 184944,
+          "OBSERVATION_MARKET_ROW_MISSING": 16209,
+          "SOURCE_VALUE_NONFINITE": 2247
+        },
+        "undefined_daily_reasons": {
+          "fewer_than_minimum_pairwise_finite_observations": 30
+        }
+      },
+      "negative_ic_dates": 912,
+      "observation_coverage_fraction": 0.9031956735496558,
+      "overall_equal_date_mean_rank_ic": 0.014202339417516493,
+      "pairwise_eligible_observations": 183710,
+      "parameter_search": false,
+      "population_observations": 203400,
+      "positive_ic_dates": 1092,
+      "positive_ic_share": 0.5449101796407185,
+      "provider_requests": 0,
+      "qualified": false,
+      "schema_version": "prices-v1-57f2c4d2d2d497b5826e9799fc31af56e28abf769268b4e5f249058d3ba7f49d",
+      "snapshot_id": "28a7609b53682484fecf1c802db6f11e295b9445460e99097720fae1015557ba",
+      "spec_fingerprints": {
+        "dataset": "9a7a1c0b5031f0a9a34ef0d9390fc0bf05fec15528e7382f509ac40263d44bd2",
+        "evaluation": "a311d9567bca352f182c48536ddef56a3244b329618428d444b9b0fb92539415",
+        "feature": "1e6cea66d32fa9cc52024142f03e846672c0a842ccd84da8dbd873f8b89b7510",
+        "outcome": "259ffcbb589dab9ca269aea237d37e456b13fa4ded7fc8e99861fc5aa1250dd1"
+      },
+      "status": "COMPLETED",
+      "stored_benchmark_sessions": 2034,
+      "undefined_ic_dates": 30,
+      "window": {
+        "end": "2026-10-06",
+        "start": "2018-08-07"
+      },
+      "zero_ic_dates": 0
+    },
+    "VOL20": {
+      "benchmark": "VNINDEX",
+      "chronological_slices": [
+        {
+          "classification": "EXPLORATORY_ONLY / LEGACY_UNVERIFIED",
+          "code_identity": "7932f0bc3f18c008181b3b2fe5a00d542d96b159453259d43f8a211cf755c1a1",
+          "configuration_sha256": "5135777e459507e1025f5245e5ba17fb8f34c09e16e2992331de389ab1afa79f",
+          "defined_ic_dates": 83,
+          "eligible_pairs": 7003,
+          "equal_date_mean_ic": 0.03496581109733051,
+          "first_session": "2018-08-07",
+          "input_sha256": "75704e29fe5a3bcf44dba754b42264664523f3270b2eaeefcc7c6812f4055d01",
+          "last_session": "2018-12-28",
+          "positive_ic_share": 0.7108433734939759,
+          "scheduled_dates": 103,
+          "year": "2018"
+        },
+        {
+          "classification": "EXPLORATORY_ONLY / LEGACY_UNVERIFIED",
+          "code_identity": "7932f0bc3f18c008181b3b2fe5a00d542d96b159453259d43f8a211cf755c1a1",
+          "configuration_sha256": "5135777e459507e1025f5245e5ba17fb8f34c09e16e2992331de389ab1afa79f",
+          "defined_ic_dates": 247,
+          "eligible_pairs": 20834,
+          "equal_date_mean_ic": 0.007207369244229303,
+          "first_session": "2019-01-02",
+          "input_sha256": "75704e29fe5a3bcf44dba754b42264664523f3270b2eaeefcc7c6812f4055d01",
+          "last_session": "2019-12-31",
+          "positive_ic_share": 0.5222672064777328,
+          "scheduled_dates": 247,
+          "year": "2019"
+        },
+        {
+          "classification": "EXPLORATORY_ONLY / LEGACY_UNVERIFIED",
+          "code_identity": "7932f0bc3f18c008181b3b2fe5a00d542d96b159453259d43f8a211cf755c1a1",
+          "configuration_sha256": "5135777e459507e1025f5245e5ba17fb8f34c09e16e2992331de389ab1afa79f",
+          "defined_ic_dates": 252,
+          "eligible_pairs": 21523,
+          "equal_date_mean_ic": -0.04745170340960062,
+          "first_session": "2020-01-02",
+          "input_sha256": "75704e29fe5a3bcf44dba754b42264664523f3270b2eaeefcc7c6812f4055d01",
+          "last_session": "2020-12-31",
+          "positive_ic_share": 0.38095238095238093,
+          "scheduled_dates": 252,
+          "year": "2020"
+        },
+        {
+          "classification": "EXPLORATORY_ONLY / LEGACY_UNVERIFIED",
+          "code_identity": "7932f0bc3f18c008181b3b2fe5a00d542d96b159453259d43f8a211cf755c1a1",
+          "configuration_sha256": "5135777e459507e1025f5245e5ba17fb8f34c09e16e2992331de389ab1afa79f",
+          "defined_ic_dates": 249,
+          "eligible_pairs": 22232,
+          "equal_date_mean_ic": -0.08755707646179932,
+          "first_session": "2021-01-04",
+          "input_sha256": "75704e29fe5a3bcf44dba754b42264664523f3270b2eaeefcc7c6812f4055d01",
+          "last_session": "2021-12-31",
+          "positive_ic_share": 0.3253012048192771,
+          "scheduled_dates": 249,
+          "year": "2021"
+        },
+        {
+          "classification": "EXPLORATORY_ONLY / LEGACY_UNVERIFIED",
+          "code_identity": "7932f0bc3f18c008181b3b2fe5a00d542d96b159453259d43f8a211cf755c1a1",
+          "configuration_sha256": "5135777e459507e1025f5245e5ba17fb8f34c09e16e2992331de389ab1afa79f",
+          "defined_ic_dates": 249,
+          "eligible_pairs": 22969,
+          "equal_date_mean_ic": 0.028870382230876512,
+          "first_session": "2022-01-04",
+          "input_sha256": "75704e29fe5a3bcf44dba754b42264664523f3270b2eaeefcc7c6812f4055d01",
+          "last_session": "2022-12-30",
+          "positive_ic_share": 0.5220883534136547,
+          "scheduled_dates": 249,
+          "year": "2022"
+        },
+        {
+          "classification": "EXPLORATORY_ONLY / LEGACY_UNVERIFIED",
+          "code_identity": "7932f0bc3f18c008181b3b2fe5a00d542d96b159453259d43f8a211cf755c1a1",
+          "configuration_sha256": "5135777e459507e1025f5245e5ba17fb8f34c09e16e2992331de389ab1afa79f",
+          "defined_ic_dates": 249,
+          "eligible_pairs": 23127,
+          "equal_date_mean_ic": -0.09573938364422874,
+          "first_session": "2023-01-03",
+          "input_sha256": "75704e29fe5a3bcf44dba754b42264664523f3270b2eaeefcc7c6812f4055d01",
+          "last_session": "2023-12-29",
+          "positive_ic_share": 0.3172690763052209,
+          "scheduled_dates": 249,
+          "year": "2023"
+        },
+        {
+          "classification": "EXPLORATORY_ONLY / LEGACY_UNVERIFIED",
+          "code_identity": "7932f0bc3f18c008181b3b2fe5a00d542d96b159453259d43f8a211cf755c1a1",
+          "configuration_sha256": "5135777e459507e1025f5245e5ba17fb8f34c09e16e2992331de389ab1afa79f",
+          "defined_ic_dates": 250,
+          "eligible_pairs": 23468,
+          "equal_date_mean_ic": 0.0419037487737631,
+          "first_session": "2024-01-02",
+          "input_sha256": "75704e29fe5a3bcf44dba754b42264664523f3270b2eaeefcc7c6812f4055d01",
+          "last_session": "2024-12-31",
+          "positive_ic_share": 0.588,
+          "scheduled_dates": 250,
+          "year": "2024"
+        },
+        {
+          "classification": "EXPLORATORY_ONLY / LEGACY_UNVERIFIED",
+          "code_identity": "7932f0bc3f18c008181b3b2fe5a00d542d96b159453259d43f8a211cf755c1a1",
+          "configuration_sha256": "5135777e459507e1025f5245e5ba17fb8f34c09e16e2992331de389ab1afa79f",
+          "defined_ic_dates": 249,
+          "eligible_pairs": 24001,
+          "equal_date_mean_ic": 0.017772124230535716,
+          "first_session": "2025-01-02",
+          "input_sha256": "75704e29fe5a3bcf44dba754b42264664523f3270b2eaeefcc7c6812f4055d01",
+          "last_session": "2025-12-31",
+          "positive_ic_share": 0.4779116465863454,
+          "scheduled_dates": 249,
+          "year": "2025"
+        },
+        {
+          "classification": "EXPLORATORY_ONLY / LEGACY_UNVERIFIED",
+          "code_identity": "7932f0bc3f18c008181b3b2fe5a00d542d96b159453259d43f8a211cf755c1a1",
+          "configuration_sha256": "5135777e459507e1025f5245e5ba17fb8f34c09e16e2992331de389ab1afa79f",
+          "defined_ic_dates": 176,
+          "eligible_pairs": 17572,
+          "equal_date_mean_ic": 0.10599271368364435,
+          "first_session": "2026-01-05",
+          "input_sha256": "75704e29fe5a3bcf44dba754b42264664523f3270b2eaeefcc7c6812f4055d01",
+          "last_session": "2026-10-06",
+          "positive_ic_share": 0.8011363636363636,
+          "scheduled_dates": 186,
+          "year": "2026"
+        }
+      ],
+      "classification": "EXPLORATORY_ONLY / LEGACY_UNVERIFIED",
+      "code_identity": "7932f0bc3f18c008181b3b2fe5a00d542d96b159453259d43f8a211cf755c1a1",
+      "cohort_count": 100,
+      "cohort_identity": "FIXED_COHORT_V1:a56872b859b018d8a8dfb7f034b15ceb9a68ea2805aeb5c7150fa53204d14faf",
+      "configuration_sha256": "5135777e459507e1025f5245e5ba17fb8f34c09e16e2992331de389ab1afa79f",
+      "defined_ic_dates": 2004,
+      "eligible_pairs_per_defined_date": {
+        "maximum": 100,
+        "minimum": 81
+      },
+      "first_defined_ic_date": "2018-09-05",
+      "hypothesis": "Lower realized volatility over the previous 20 daily simple returns ending at t is associated with higher subsequent exact-session H10 close returns.",
+      "ic_coverage_fraction": 0.9852507374631269,
+      "input_sha256": "75704e29fe5a3bcf44dba754b42264664523f3270b2eaeefcc7c6812f4055d01",
+      "input_unchanged": true,
+      "last_defined_ic_date": "2026-09-22",
+      "limitations": [
+        "Fixed current tracked ticker cohort applied retrospectively; survivorship, selection and ticker-identity limitations.",
+        "Unknown provider, adjustment basis and corporate-action treatment; observed-basis close returns, not verified RAW or total returns.",
+        "Current historical vintage; original publication times, revisions and provenance ledger unavailable.",
+        "Stored VNINDEX sessions are not an independently verified official calendar; missing bars never filled.",
+        "Overlapping H10 outcomes and cross-sectional/temporal dependence; no significance, alpha or profitability claims.",
+        "Prior MOM20/ADX outcomes already exposed; descriptive study is not independent confirmation.",
+        "VOL20 requires all 20 exact-session returns; its eligible pairs can differ from MOM20 even on the same input.",
+        "Private data retention only; redistribution rights remain unverified."
+      ],
+      "logical_fingerprint": "7749b5a8eb7d06cb9f5bf50c6ab72585cdb6558e6a98e730f27d6f2449ed0f9e",
+      "market_available_observations": 187191,
+      "missingness": {
+        "availability": {
+          "AVAILABLE": 187191,
+          "MISSING_EXACT_MARKET_ROW": 16209
+        },
+        "exclusion_reason": {
+          "ELIGIBLE": 182729,
+          "FACTOR_AND_H10_UNAVAILABLE": 16230,
+          "FACTOR_UNAVAILABLE": 3226,
+          "H10_OUTCOME_UNAVAILABLE": 1215
+        },
+        "neg_vol20__availability": {
+          "AVAILABLE": 183944,
+          "OBSERVATION_MARKET_ROW_MISSING": 16209,
+          "SOURCE_VALUE_NONFINITE": 3247
+        },
+        "outcome_10__availability": {
+          "AVAILABLE": 185955,
+          "CENSORED_AFTER_DATA_END": 1000,
+          "MISSING_STOCK_TARGET_CLOSE": 236,
+          "OBSERVATION_MARKET_ROW_MISSING": 16209
+        },
+        "undefined_daily_reasons": {
+          "fewer_than_minimum_pairwise_finite_observations": 30
+        },
+        "vol20_reason": {
+          "AVAILABLE": 183944,
+          "INCOMPLETE_EXACT_20_RETURN_WINDOW": 1547,
+          "MISSING_CURRENT_CLOSE": 16209,
+          "WARMUP_BENCHMARK_SESSION": 1700
+        }
+      },
+      "negative_ic_dates": 1023,
+      "observation_coverage_fraction": 0.8983726647000984,
+      "overall_equal_date_mean_rank_ic": -0.006073665863554613,
+      "pairwise_eligible_observations": 182729,
+      "parameter_search": false,
+      "population_observations": 203400,
+      "positive_ic_dates": 981,
+      "positive_ic_share": 0.48952095808383234,
+      "price_basis": "UNKNOWN",
+      "provider_requests": 0,
+      "qualified": false,
+      "snapshot_id": "28a7609b53682484fecf1c802db6f11e295b9445460e99097720fae1015557ba",
+      "spec_fingerprints": {
+        "dataset": "c63ffdc565f96bb86d548ff085cbdf1623a79364fed2f065a19c82c2035d9313",
+        "feature": "3bf6a64aa4258850b3822415a5266d748fda4bf79f366a92f7112902915b76f9",
+        "outcome": "259ffcbb589dab9ca269aea237d37e456b13fa4ded7fc8e99861fc5aa1250dd1"
+      },
+      "status": "COMPLETED",
+      "stored_benchmark_sessions": 2034,
+      "undefined_ic_dates": 30,
+      "window": {
+        "end": "2026-10-06",
+        "start": "2018-08-07"
+      },
+      "zero_ic_dates": 0
+    }
+  },
+  "verification": {
+    "checksum_manifest_history": {
+      "current_sha256": "18f1bd65b8cbce42317c737634b446ea715b2679a051e584b8c6a60a82600c10",
+      "explanation": "Old digest exactly reproduces current manifest with verification.json entry removed; result contents unchanged.",
+      "older_verification_sha256": "f31ec78027308ba8f2798f407c3e4cc6a2e3fb8e44b3cf5eba53073480f79407",
+      "path": "research/alpha_hypotheses/vol20_h10_exploratory_20261010/outputs/SHA256.json"
+    },
+    "distinct_source_files_verified": 91,
+    "factor_runs": 0,
+    "manifest_entry_counts": {
+      "ADX14": 5,
+      "MOM20": 41,
+      "VOL20": 10
+    },
+    "network_calls": 0,
+    "ohlcv_queries": 0
+  }
+}

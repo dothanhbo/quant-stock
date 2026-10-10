@@ -1,0 +1,33 @@
+{
+  "activation": false,
+  "branch": "main",
+  "canonical_sqlite_connections": 0,
+  "changed_existing_files": [],
+  "classification": "EXPLORATORY_ONLY / LEGACY_UNVERIFIED",
+  "commit": false,
+  "existing_files_preserved": 1064,
+  "factor_runs": 0,
+  "head": "b76e1d208ed2f18364ca9d79bd2127af15d7544b",
+  "head_branch_refs_index_staged_diff_unchanged": true,
+  "index_sha256": "2fca40825685d63572b89663f0d9b17c7fb7c57a60c0fec744aca50375864699",
+  "merge": false,
+  "new_git_visible_paths": [
+    "research/alpha_hypotheses/research_synthesis_v1_20261010/RESEARCH_SYNTHESIS_V1.md",
+    "research/alpha_hypotheses/research_synthesis_v1_20261010/synthesize.py"
+  ],
+  "numeric_synthesis_replays_byte_identical": {
+    "replay": {
+      "source_manifest.json": true,
+      "synthesis.json": true
+    },
+    "replay_documented_runtime": {
+      "source_manifest.json": true,
+      "synthesis.json": true
+    }
+  },
+  "ohlcv_queries": 0,
+  "production_source_changes": false,
+  "provider_calls": 0,
+  "push": false,
+  "status": "COMPLETED"
+}

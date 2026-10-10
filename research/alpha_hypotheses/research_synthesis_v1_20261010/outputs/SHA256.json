@@ -1,0 +1,11 @@
+{
+  "base": "study_root",
+  "classification": "EXPLORATORY_ONLY / LEGACY_UNVERIFIED",
+  "files": {
+    "RESEARCH_SYNTHESIS_V1.md": "ee5e0d22db8ec02871fcef86b14e37a5f7bfcedd156be6bdd92397aaa306ff8d",
+    "outputs/source_manifest.json": "06103fc3d0eec2e0c0798c775060ac498de42e0cb2b34d400515401c6642a525",
+    "outputs/synthesis.json": "4ba992d8087ed0f6dd570cdc63787087788107e264f40130265629a813adf94f",
+    "preservation.json": "f945d4d92c47887dc39d2e436e06e42cee1feadc71445a38affb887fcd3a8bd5",
+    "synthesize.py": "8427b03867786decc6c11ea43220a8be1b1721bacafde9bcab2e77d52a66eefe"
+  }
+}
