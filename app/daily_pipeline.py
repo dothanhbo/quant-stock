@@ -80,6 +80,7 @@ class DailyPipeline:
         run_forward_validation: Callable[[], object] | None = None,
         get_market_date: Callable[[], str | None] | None = None,
         get_today: Callable[[], date] = date.today,
+        research_checkpoint: Callable[[MarketDataIntegrityResult], object] | None = None,
     ) -> None:
         self.update_market_data = (
             update_market_data
@@ -90,6 +91,8 @@ class DailyPipeline:
         self.run_forward_validation = run_forward_validation
         self.get_market_date = get_market_date
         self.get_today = get_today
+        self.research_checkpoint = research_checkpoint
+        self._integrity_result: MarketDataIntegrityResult | None = None
 
     def run(
         self,
@@ -99,6 +102,7 @@ class DailyPipeline:
         skip_scan: bool = False,
         stop_on_data_errors: bool = False,
     ) -> DailyPipelineResult:
+        self._integrity_result = None
         result = DailyPipelineResult(
             started_at=datetime.now()
         )
@@ -164,6 +168,25 @@ class DailyPipeline:
                 result.finished_at = datetime.now()
                 self._print_summary(result)
                 return result
+
+        if self.research_checkpoint is not None:
+            if skip_update:
+                result.stages.append(PipelineStageResult(
+                    name="Research Checkpoint", success=True, duration_seconds=0.0,
+                    warning="Research checkpoint skipped: market update was skipped.",
+                ))
+            elif data_stage.warning or self._integrity_result is None:
+                result.stages.append(PipelineStageResult(
+                    name="Research Checkpoint", success=False, duration_seconds=0.0,
+                    error="Research checkpoint requires a complete update and integrity PASS.",
+                ))
+            else:
+                # Optional research failure remains visible in summary/history,
+                # but does not prevent the existing operational stages running.
+                result.stages.append(self._run_stage(
+                    name="Research Checkpoint",
+                    function=lambda: self.research_checkpoint(self._integrity_result),
+                ))
 
         if self.run_forward_validation is not None:
             if skip_update:
@@ -283,6 +306,7 @@ class DailyPipeline:
         started = perf_counter()
         try:
             integrity = self.validate_market_data()
+            self._integrity_result = integrity
             elapsed = perf_counter() - started
             if integrity.state is MarketDataIntegrityState.PASS:
                 return PipelineStageResult(

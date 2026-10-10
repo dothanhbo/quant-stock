@@ -8,6 +8,7 @@ plus small metadata. Physical SQLite details are deliberately excluded.
 """
 
 from dataclasses import dataclass
+from contextlib import closing
 from datetime import date, datetime
 from hashlib import sha256
 import json
@@ -277,7 +278,7 @@ class MarketDataSnapshot:
             raise ValueError("start_date must be on or before through_date")
         if not normalized_symbols:
             return MarketDataBundle((), (), (), start, through, 0, MappingProxyType({}), "empty", 0)
-        with _readonly_connection(self.canonical_db_path) as connection:
+        with closing(_readonly_connection(self.canonical_db_path)) as connection:
             try:
                 cursor = _execute_json_query(
                     connection, start_date=start, through_date=through, requested_symbols=normalized_symbols,
@@ -312,7 +313,7 @@ def build_market_data_snapshot(database_path: str | Path | None = None) -> Marke
     ``{"rows":[...],"schema_version":"..."}``.
     """
     canonical_path = resolve_market_database_path(database_path)
-    with _readonly_connection(canonical_path) as connection:
+    with closing(_readonly_connection(canonical_path)) as connection:
         schema_version = _schema_version(_schema_metadata(connection))
         query, params = _query_parts(start_date=None, through_date=None, requested_symbols_json=None)
         digest = sha256(); digest.update(b'{"rows":[')

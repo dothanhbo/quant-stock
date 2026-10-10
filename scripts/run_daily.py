@@ -4,6 +4,7 @@ import argparse
 from functools import lru_cache
 import json
 import sys
+from pathlib import Path
 
 from dotenv import load_dotenv
 
@@ -50,6 +51,12 @@ def build_parser() -> argparse.ArgumentParser:
         ),
     )
 
+    parser.add_argument("--research-checkpoint-root", type=Path, default=None,
+                        help="Optional isolated local research checkpoint directory.")
+    parser.add_argument("--research-cohort-manifest", type=Path, default=None,
+                        help="Frozen FIXED_COHORT_V1 manifest (required for checkpointing).")
+    parser.add_argument("--research-retention-reference", type=Path, default=None,
+                        help="Local evidence of permitted private retention (required for checkpointing).")
     return parser
 
 
@@ -115,6 +122,17 @@ def run_forward_validation_daily():
 
     result = run_forward()
     print(json.dumps(result.as_dict(), sort_keys=True))
+    return result
+
+
+def preserve_research_checkpoint(integrity, *, root, cohort_manifest, retention_reference):
+    from quantlab.catalog.research_checkpoint import create_research_checkpoint
+
+    result = create_research_checkpoint(
+        integrity, root=root, cohort_manifest=cohort_manifest,
+        retention_reference=retention_reference,
+    )
+    print(json.dumps(result, sort_keys=True))
     return result
 
 
@@ -209,6 +227,13 @@ def main() -> int:
         get_market_date=(
             get_market_date
         ),
+        research_checkpoint=(
+            lambda integrity: preserve_research_checkpoint(
+                integrity, root=args.research_checkpoint_root,
+                cohort_manifest=args.research_cohort_manifest,
+                retention_reference=args.research_retention_reference,
+            )
+        ) if args.research_checkpoint_root is not None else None,
     )
 
     try:
