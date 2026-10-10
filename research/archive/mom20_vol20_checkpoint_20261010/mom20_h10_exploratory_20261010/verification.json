@@ -1,0 +1,29 @@
+{
+  "artifact_hashes_verified": 40,
+  "canonical_database_sidecar_files_preserved": 12,
+  "canonical_sqlite_connections": 0,
+  "classification": "EXPLORATORY_ONLY / LEGACY_UNVERIFIED",
+  "cohort_manifest_sha256": "503959d0d300963130fc16274ef28ff293d8d01975beac73053d20685b8cfb27",
+  "commit": false,
+  "executions": 1,
+  "frozen_source_modules": 26,
+  "head_branch_refs_unchanged": true,
+  "index_unchanged": true,
+  "input_sha256": "75704e29fe5a3bcf44dba754b42264664523f3270b2eaeefcc7c6812f4055d01",
+  "membership_sha256": "a56872b859b018d8a8dfb7f034b15ceb9a68ea2805aeb5c7150fa53204d14faf",
+  "no_new_paths_outside_study": true,
+  "preexisting_files_preserved": 1005,
+  "production_source_changes": false,
+  "provider_requests": 0,
+  "push": false,
+  "replay_executed": false,
+  "result_hashes": {
+    "RESEARCH_NOTE.md": "a8b7bb468c0d741248729e6f0333436883ec5b8652aa7a3ce66731866efefdea",
+    "chronological_slices.csv": "48748585f1e065e66246660bb2429d966bcf0e3de825256a4bd37525c33116ea",
+    "daily_ic.csv": "538264ed7baf7fcff11c6677fff2d5e1852bb44cceeebda3d00d36b63134fd60",
+    "observations.csv.gz": "b67ad2dffcbecc22edbf82777e28c84ef62c08fdf40f98f34368ff872e713909",
+    "summary.json": "e454e155742d4af334de5dda280df136cc8d7445bddd5a56cfac05518b7f56c8"
+  },
+  "snapshot_readonly_and_unchanged": true,
+  "status": "COMPLETED"
+}

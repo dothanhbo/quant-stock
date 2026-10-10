@@ -1,0 +1,42 @@
+{
+  "baseline_head": "b76e1d208ed2f18364ca9d79bd2127af15d7544b",
+  "classification": "EXPLORATORY_ONLY / LEGACY_UNVERIFIED",
+  "configuration_sha256": "5135777e459507e1025f5245e5ba17fb8f34c09e16e2992331de389ab1afa79f",
+  "engine_manifest_sha256": "46f5f95da71c0130c7ca74cc5cc42bc74465b17e44fc21febec4b43edc62f0f5",
+  "module_sha256": {
+    "core/__init__.py": "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855",
+    "core/database_coverage.py": "4343569ba7a14aae01844e5850193294c5bc0fe588ec8844aa9d9e4651d22700",
+    "core/paths.py": "3f4191327e027b007592b03faeef6f096470f7e7a8950c00e6d935e4165e7949",
+    "quantlab/__init__.py": "72c7fd2574a20a698e0182a87a950175b7a58ad9db82b7befe69399440ce422a",
+    "quantlab/catalog/__init__.py": "88a5cd9f20aadfa62a888a7744551abc309dc241b750951660b2ed55b1ea6377",
+    "quantlab/catalog/market_data_snapshot.py": "95e32d26741c277184836eeeb540fae4bc886164fec065fe3aa48f0fc2cd4309",
+    "quantlab/evaluation/__init__.py": "b3372e3c3d9dafb749de11f4c280edc04d7b094b11f9877e9902f8457cb665d7",
+    "quantlab/evaluation/panel_factor_analysis.py": "3be5af33754ed1aec987dc40c7e9db37fbd3f4cc8c11074dd817cf6e2ceae079",
+    "quantlab/evaluation/panel_factor_contracts.py": "b79f6ffe540119c07ccd894021a67768cce4fd94457271585d5d8bb6009ecc22",
+    "quantlab/features/__init__.py": "6f3e10b8e19320a59ac8d039cdb075e7ee91029a900dac2aa2d39486ca48f369",
+    "quantlab/features/builtins.py": "533df29f7b346399d34fc877821f37aaf68113a7e119f977c3fb72591fb4feed",
+    "quantlab/features/cache.py": "91937942922369c4ace08f9af5d1b748f4867aa0846548d11a39fcfbb02de085",
+    "quantlab/features/contracts.py": "b24093c1e972ff05c1f416909e0f8b4af680eafcc4bad902b25f0912b189bba5",
+    "quantlab/features/registry.py": "625305dd7607543039793be0426d6375e179d690fc58a33769b0366eda84526c",
+    "quantlab/features/universe_context.py": "90cef2f50f72719076d51de52a1d20a8812958b8e564e941abb686b039039c45",
+    "quantlab/identity.py": "2b30bd564b84e64c1f0d1522affca706e0aea66478d92b585005ca7ae76f4c26",
+    "quantlab/panels/__init__.py": "c4c259780f757a4c346d9f0b33ba3a034ef653b91d2725e00d7a0b73ac51d977",
+    "quantlab/panels/contracts.py": "ab1de86028b7f86a8b48bb086da8860f2cf83eb4d3ec56ca000344583ce9e9a1",
+    "quantlab/panels/feature_contracts.py": "61b7cec5127141ccb1cb8bf0a9282a2f2a1a644598abebf9569c6215802cfc29",
+    "quantlab/panels/feature_panel.py": "0f29ce0b18ad7ef63e4997e7be8413aa5caad071d7faad65c60def7cf18a1842",
+    "quantlab/panels/neutral_features.py": "5fb216a7e250715ab6a768bdb02ef9ae9466da211be7730137abef642693447a",
+    "quantlab/panels/observation_index.py": "227fec226a30e9908cab95b98ce60e2861561dcdd8369ac8164dd0537381a1d8",
+    "quantlab/panels/outcome_contracts.py": "6a03b49567e35e55c977673f950f0da100ee16ff161f48da76525a698f2c25f4",
+    "quantlab/panels/outcome_panel.py": "510ab8283e1aa93924ef6db9ca78a803df52afb25d3d19bfe66e2e7297a42262",
+    "quantlab/panels/research_dataset.py": "0bef9bbc0a7cca13ed6117851b2e895003b2845e4840984f4cd03df25953e66a",
+    "quantlab/panels/research_dataset_contracts.py": "ac8db75b785e9ede2106a08a3ffc5c98c7e32afa63f2406308b1c16a376c7d8d"
+  },
+  "rank_ic_reuse": "Generic named feature panel; unchanged _average_ranks, _pearson and _mean. Built-in factor whitelist unchanged.",
+  "runner_sha256": "ee0d57711419eec78529a2362f1c1b4c759f922e452c3772bd17480e63b9cb6c",
+  "versions": {
+    "numpy": "2.5.3",
+    "pandas": "3.0.6",
+    "python": "3.14.6 (tags/v3.14.6:c63aec6, Jun 10 2026, 10:26:10) [MSC v.1944 64 bit (AMD64)]",
+    "sqlite": "3.50.4"
+  }
+}

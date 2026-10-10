@@ -1,0 +1,26 @@
+{
+  "canonical_database_sidecar_files_preserved": 12,
+  "canonical_sqlite_connections": 0,
+  "classification": "EXPLORATORY_ONLY / LEGACY_UNVERIFIED",
+  "main_index_head_branch_refs_unchanged": true,
+  "main_working_files_preserved": 1039,
+  "mom20_rerun": false,
+  "original_mom20_files_preserved": 42,
+  "production_source_changes": false,
+  "provider_requests": 0,
+  "replay_executed": false,
+  "result_hashes": {
+    "RESEARCH_NOTE.md": "1c03357d43d98665e181d2fa9993efaba3bf37cc3fc39020371147901eba41c9",
+    "SHA256.json": "f31ec78027308ba8f2798f407c3e4cc6a2e3fb8e44b3cf5eba53073480f79407",
+    "chronological_slices.csv": "0d5c287e194a9b38c9a0d28154b8190ecb4c22050f94d3c5d006ca342db23f28",
+    "code_manifest.json": "dc5ff707f8be8ea6854b80740b55e71c0327032bb4589daa226a4c181e2e094b",
+    "daily_ic.csv": "96ce54505584d645d0f190329e42a680781167b48bafe184ce8b0fac8c04cbbb",
+    "observations.csv.gz": "37c5e986a79e89d77b8ab453a46c613802c54a5b4ec9617c69136a87208dc16b",
+    "summary.json": "e5a2a8f15c455d50b735507b7562df23df12a6d0c72d4b0869b0e9c0eefb2f78",
+    "validation.json": "ae68db4d64a413341abfa15f5a5aa4c283e38ef06e9582c11713eece58984d10"
+  },
+  "same_snapshot_cohort_calendar_h10_targets_as_mom20": true,
+  "saved_output_consistency": "PASS",
+  "status": "COMPLETED",
+  "vol20_historical_executions": 1
+}

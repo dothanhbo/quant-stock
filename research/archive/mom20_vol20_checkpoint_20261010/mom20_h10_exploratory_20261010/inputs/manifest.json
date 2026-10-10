@@ -1,0 +1,26 @@
+{
+  "classification": "EXPLORATORY_ONLY / LEGACY_UNVERIFIED",
+  "captured_at_utc": "2026-10-10T05:23:57.942372+00:00",
+  "source_path": "C:\\Users\\hello\\Desktop\\quant-stock\\data\\market.db",
+  "source_file_state": {
+    "sha256": "75704e29fe5a3bcf44dba754b42264664523f3270b2eaeefcc7c6812f4055d01",
+    "bytes": 17448960,
+    "mtime_ns": 1791281738438683000
+  },
+  "snapshot_sha256": "75704e29fe5a3bcf44dba754b42264664523f3270b2eaeefcc7c6812f4055d01",
+  "snapshot_method": "byte-identical copy; no source WAL/journal content; only private copy opened with SQLite",
+  "cohort_original_path": "C:\\Users\\hello\\.codex\\visualizations\\2026\\10\\08\\01a11bfe-dcc4-7163-b338-1d1e66c085e8\\fixed_cohort_v1_existing_tracked_universe_20261009\\cohort_v1_manifest.json",
+  "cohort_manifest_sha256": "503959d0d300963130fc16274ef28ff293d8d01975beac73053d20685b8cfb27",
+  "source_provenance_log": {
+    "path": "C:\\Users\\hello\\Desktop\\quant-stock\\data\\market_observations.db",
+    "available": false
+  },
+  "source_provider": "LEGACY_UNVERIFIED; no source ledger available",
+  "price_basis": "UNKNOWN",
+  "retention": "private local preservation authorized for this task; no publication or provider retention-rights claim",
+  "files_sha256": {
+    "cohort_v1_manifest.json": "503959d0d300963130fc16274ef28ff293d8d01975beac73053d20685b8cfb27",
+    "cohort_v1_tickers.txt": "a56872b859b018d8a8dfb7f034b15ceb9a68ea2805aeb5c7150fa53204d14faf",
+    "market.sqlite": "75704e29fe5a3bcf44dba754b42264664523f3270b2eaeefcc7c6812f4055d01"
+  }
+}

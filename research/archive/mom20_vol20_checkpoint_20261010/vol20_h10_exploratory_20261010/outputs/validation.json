@@ -1,0 +1,11 @@
+{
+  "canonical_sqlite_connections": 0,
+  "causal_prefix_and_future_perturbation": "PASS",
+  "classification": "EXPLORATORY_ONLY / LEGACY_UNVERIFIED",
+  "ddof_1_and_20_returns": "PASS",
+  "exact_h10_no_target_substitution": "PASS",
+  "missing_intermediate_bar_no_fill": "PASS",
+  "rank_ties_constant_and_minimum_size": "PASS",
+  "sample_std_fixture_actual": 0.010259783520851527,
+  "sample_std_fixture_expected": 0.01025978352085154
+}

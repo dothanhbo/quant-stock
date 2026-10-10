@@ -1,0 +1,2 @@
+# Frozen scientific source/metadata hashes cover exact bytes, including line endings.
+* -text whitespace=blank-at-eol,blank-at-eof,space-before-tab,cr-at-eol

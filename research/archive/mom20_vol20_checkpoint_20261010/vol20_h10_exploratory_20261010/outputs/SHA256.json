@@ -1,0 +1,15 @@
+{
+  "classification": "EXPLORATORY_ONLY / LEGACY_UNVERIFIED",
+  "files": {
+    "experiment.json": "5135777e459507e1025f5245e5ba17fb8f34c09e16e2992331de389ab1afa79f",
+    "outputs/RESEARCH_NOTE.md": "1c03357d43d98665e181d2fa9993efaba3bf37cc3fc39020371147901eba41c9",
+    "outputs/chronological_slices.csv": "0d5c287e194a9b38c9a0d28154b8190ecb4c22050f94d3c5d006ca342db23f28",
+    "outputs/code_manifest.json": "dc5ff707f8be8ea6854b80740b55e71c0327032bb4589daa226a4c181e2e094b",
+    "outputs/daily_ic.csv": "96ce54505584d645d0f190329e42a680781167b48bafe184ce8b0fac8c04cbbb",
+    "outputs/observations.csv.gz": "37c5e986a79e89d77b8ab453a46c613802c54a5b4ec9617c69136a87208dc16b",
+    "outputs/summary.json": "e5a2a8f15c455d50b735507b7562df23df12a6d0c72d4b0869b0e9c0eefb2f78",
+    "outputs/validation.json": "ae68db4d64a413341abfa15f5a5aa4c283e38ef06e9582c11713eece58984d10",
+    "run_study.py": "ee0d57711419eec78529a2362f1c1b4c759f922e452c3772bd17480e63b9cb6c",
+    "verification.json": "a35ef8eb7c90887a11c1f3151c8ea1d2296f57a55ce28c4b428506fdece6d9be"
+  }
+}

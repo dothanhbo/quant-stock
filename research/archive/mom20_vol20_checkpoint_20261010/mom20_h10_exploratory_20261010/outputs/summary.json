@@ -1,0 +1,244 @@
+{
+  "adx_comparison": {
+    "directly_comparable": false,
+    "reason": "Saved VCI ADX study used a different input hash, 10-symbol cohort and 2024-2026 window; no paired comparison or ranking claim.",
+    "saved_vci_mean_ic": 0.03793022
+  },
+  "benchmark": "VNINDEX",
+  "chronological_slices": [
+    {
+      "classification": "EXPLORATORY_ONLY / LEGACY_UNVERIFIED",
+      "code_identity": "0ac4bc2e681f488612e5adc1603ba0146b8381d5c22e6d5b8b9871f39dba187d",
+      "configuration_sha256": "bdb6aa76ec74d1193073e8ff08114e7a980d8a32fd403940094a70b413785607",
+      "defined_ic_dates": 83,
+      "eligible_pairs": 7039,
+      "equal_date_mean_ic": 0.08182791894775046,
+      "first_session": "2018-08-07",
+      "input_sha256": "75704e29fe5a3bcf44dba754b42264664523f3270b2eaeefcc7c6812f4055d01",
+      "last_session": "2018-12-28",
+      "positive_ic_share": 0.6144578313253012,
+      "scheduled_dates": 103,
+      "year": "2018"
+    },
+    {
+      "classification": "EXPLORATORY_ONLY / LEGACY_UNVERIFIED",
+      "code_identity": "0ac4bc2e681f488612e5adc1603ba0146b8381d5c22e6d5b8b9871f39dba187d",
+      "configuration_sha256": "bdb6aa76ec74d1193073e8ff08114e7a980d8a32fd403940094a70b413785607",
+      "defined_ic_dates": 247,
+      "eligible_pairs": 21179,
+      "equal_date_mean_ic": 0.013900828402156758,
+      "first_session": "2019-01-02",
+      "input_sha256": "75704e29fe5a3bcf44dba754b42264664523f3270b2eaeefcc7c6812f4055d01",
+      "last_session": "2019-12-31",
+      "positive_ic_share": 0.5303643724696356,
+      "scheduled_dates": 247,
+      "year": "2019"
+    },
+    {
+      "classification": "EXPLORATORY_ONLY / LEGACY_UNVERIFIED",
+      "code_identity": "0ac4bc2e681f488612e5adc1603ba0146b8381d5c22e6d5b8b9871f39dba187d",
+      "configuration_sha256": "bdb6aa76ec74d1193073e8ff08114e7a980d8a32fd403940094a70b413785607",
+      "defined_ic_dates": 252,
+      "eligible_pairs": 21777,
+      "equal_date_mean_ic": 0.055835817212955996,
+      "first_session": "2020-01-02",
+      "input_sha256": "75704e29fe5a3bcf44dba754b42264664523f3270b2eaeefcc7c6812f4055d01",
+      "last_session": "2020-12-31",
+      "positive_ic_share": 0.6865079365079365,
+      "scheduled_dates": 252,
+      "year": "2020"
+    },
+    {
+      "classification": "EXPLORATORY_ONLY / LEGACY_UNVERIFIED",
+      "code_identity": "0ac4bc2e681f488612e5adc1603ba0146b8381d5c22e6d5b8b9871f39dba187d",
+      "configuration_sha256": "bdb6aa76ec74d1193073e8ff08114e7a980d8a32fd403940094a70b413785607",
+      "defined_ic_dates": 249,
+      "eligible_pairs": 22416,
+      "equal_date_mean_ic": 0.04868347758510622,
+      "first_session": "2021-01-04",
+      "input_sha256": "75704e29fe5a3bcf44dba754b42264664523f3270b2eaeefcc7c6812f4055d01",
+      "last_session": "2021-12-31",
+      "positive_ic_share": 0.606425702811245,
+      "scheduled_dates": 249,
+      "year": "2021"
+    },
+    {
+      "classification": "EXPLORATORY_ONLY / LEGACY_UNVERIFIED",
+      "code_identity": "0ac4bc2e681f488612e5adc1603ba0146b8381d5c22e6d5b8b9871f39dba187d",
+      "configuration_sha256": "bdb6aa76ec74d1193073e8ff08114e7a980d8a32fd403940094a70b413785607",
+      "defined_ic_dates": 249,
+      "eligible_pairs": 23048,
+      "equal_date_mean_ic": -0.028194995078080938,
+      "first_session": "2022-01-04",
+      "input_sha256": "75704e29fe5a3bcf44dba754b42264664523f3270b2eaeefcc7c6812f4055d01",
+      "last_session": "2022-12-30",
+      "positive_ic_share": 0.4779116465863454,
+      "scheduled_dates": 249,
+      "year": "2022"
+    },
+    {
+      "classification": "EXPLORATORY_ONLY / LEGACY_UNVERIFIED",
+      "code_identity": "0ac4bc2e681f488612e5adc1603ba0146b8381d5c22e6d5b8b9871f39dba187d",
+      "configuration_sha256": "bdb6aa76ec74d1193073e8ff08114e7a980d8a32fd403940094a70b413785607",
+      "defined_ic_dates": 249,
+      "eligible_pairs": 23142,
+      "equal_date_mean_ic": 0.023600734172360065,
+      "first_session": "2023-01-03",
+      "input_sha256": "75704e29fe5a3bcf44dba754b42264664523f3270b2eaeefcc7c6812f4055d01",
+      "last_session": "2023-12-29",
+      "positive_ic_share": 0.5421686746987951,
+      "scheduled_dates": 249,
+      "year": "2023"
+    },
+    {
+      "classification": "EXPLORATORY_ONLY / LEGACY_UNVERIFIED",
+      "code_identity": "0ac4bc2e681f488612e5adc1603ba0146b8381d5c22e6d5b8b9871f39dba187d",
+      "configuration_sha256": "bdb6aa76ec74d1193073e8ff08114e7a980d8a32fd403940094a70b413785607",
+      "defined_ic_dates": 250,
+      "eligible_pairs": 23497,
+      "equal_date_mean_ic": -0.01949555935629362,
+      "first_session": "2024-01-02",
+      "input_sha256": "75704e29fe5a3bcf44dba754b42264664523f3270b2eaeefcc7c6812f4055d01",
+      "last_session": "2024-12-31",
+      "positive_ic_share": 0.512,
+      "scheduled_dates": 250,
+      "year": "2024"
+    },
+    {
+      "classification": "EXPLORATORY_ONLY / LEGACY_UNVERIFIED",
+      "code_identity": "0ac4bc2e681f488612e5adc1603ba0146b8381d5c22e6d5b8b9871f39dba187d",
+      "configuration_sha256": "bdb6aa76ec74d1193073e8ff08114e7a980d8a32fd403940094a70b413785607",
+      "defined_ic_dates": 249,
+      "eligible_pairs": 24030,
+      "equal_date_mean_ic": 0.012167542568971932,
+      "first_session": "2025-01-02",
+      "input_sha256": "75704e29fe5a3bcf44dba754b42264664523f3270b2eaeefcc7c6812f4055d01",
+      "last_session": "2025-12-31",
+      "positive_ic_share": 0.5261044176706827,
+      "scheduled_dates": 249,
+      "year": "2025"
+    },
+    {
+      "classification": "EXPLORATORY_ONLY / LEGACY_UNVERIFIED",
+      "code_identity": "0ac4bc2e681f488612e5adc1603ba0146b8381d5c22e6d5b8b9871f39dba187d",
+      "configuration_sha256": "bdb6aa76ec74d1193073e8ff08114e7a980d8a32fd403940094a70b413785607",
+      "defined_ic_dates": 176,
+      "eligible_pairs": 17582,
+      "equal_date_mean_ic": -0.028229561629121738,
+      "first_session": "2026-01-05",
+      "input_sha256": "75704e29fe5a3bcf44dba754b42264664523f3270b2eaeefcc7c6812f4055d01",
+      "last_session": "2026-10-06",
+      "positive_ic_share": 0.4147727272727273,
+      "scheduled_dates": 186,
+      "year": "2026"
+    }
+  ],
+  "classification": "EXPLORATORY_ONLY / LEGACY_UNVERIFIED",
+  "code_identity": "0ac4bc2e681f488612e5adc1603ba0146b8381d5c22e6d5b8b9871f39dba187d",
+  "cohort_count": 100,
+  "cohort_identity": "FIXED_COHORT_V1:a56872b859b018d8a8dfb7f034b15ceb9a68ea2805aeb5c7150fa53204d14faf",
+  "configuration_sha256": "bdb6aa76ec74d1193073e8ff08114e7a980d8a32fd403940094a70b413785607",
+  "daily_eligible_pair_count_distribution": {
+    "0": 30,
+    "100": 163,
+    "82": 1,
+    "83": 8,
+    "84": 31,
+    "85": 167,
+    "86": 184,
+    "87": 191,
+    "88": 41,
+    "89": 34,
+    "90": 52,
+    "91": 154,
+    "92": 66,
+    "93": 465,
+    "94": 108,
+    "95": 94,
+    "96": 111,
+    "97": 99,
+    "98": 27,
+    "99": 8
+  },
+  "defined_ic_dates": 2004,
+  "eligible_pairs_per_defined_date": {
+    "maximum": 100,
+    "minimum": 82
+  },
+  "first_defined_ic_date": "2018-09-05",
+  "ic_coverage_fraction": 0.9852507374631269,
+  "input_sha256": "75704e29fe5a3bcf44dba754b42264664523f3270b2eaeefcc7c6812f4055d01",
+  "input_unchanged": true,
+  "last_defined_ic_date": "2026-09-22",
+  "limitations": [
+    "Current tracked 100-ticker cohort applied retrospectively: survivorship/selection bias; no verified historical membership or ticker continuity.",
+    "Unknown provider and price-adjustment basis; ratios describe stored closes, not verified RAW or total economic returns; corporate-action seams unverified.",
+    "Current historical vintage, not original point-in-time data availability; revision history and source timestamps unavailable without a provenance ledger.",
+    "Calendar uses only stored normalized VNINDEX sessions; official session completeness unverified.",
+    "Missing exact endpoints are unavailable, never filled or substituted; intervening missing bars do not invalidate an otherwise available endpoint ratio.",
+    "Overlapping H10 labels, cross-sectional/temporal dependence and variable coverage; no inferential significance, alpha or profitability confirmation.",
+    "Minimum five eligible pairs is the existing software convention, not a scientific sample qualification gate.",
+    "Private local input preserved; external provider retention/publication permissions remain unverified."
+  ],
+  "logical_fingerprint": "7749b5a8eb7d06cb9f5bf50c6ab72585cdb6558e6a98e730f27d6f2449ed0f9e",
+  "market_available_observations": 187191,
+  "missing_symbols": [],
+  "missingness": {
+    "availability": {
+      "AVAILABLE": 187191,
+      "MISSING_EXACT_MARKET_ROW": 16209
+    },
+    "exclusion_reason": {
+      "ELIGIBLE": 183710,
+      "FACTOR_AND_H10_UNAVAILABLE": 16211,
+      "FACTOR_UNAVAILABLE": 2245,
+      "H10_OUTCOME_UNAVAILABLE": 1234
+    },
+    "mom20_reason": {
+      "AVAILABLE": 184944,
+      "MISSING_CURRENT_CLOSE": 16209,
+      "MISSING_EXACT_LAG_CLOSE": 547,
+      "WARMUP_BENCHMARK_SESSION": 1700
+    },
+    "outcome_10__availability": {
+      "AVAILABLE": 185955,
+      "CENSORED_AFTER_DATA_END": 1000,
+      "MISSING_STOCK_TARGET_CLOSE": 236,
+      "OBSERVATION_MARKET_ROW_MISSING": 16209
+    },
+    "stock_return_20d_pct__availability": {
+      "AVAILABLE": 184944,
+      "OBSERVATION_MARKET_ROW_MISSING": 16209,
+      "SOURCE_VALUE_NONFINITE": 2247
+    },
+    "undefined_daily_reasons": {
+      "fewer_than_minimum_pairwise_finite_observations": 30
+    }
+  },
+  "negative_ic_dates": 912,
+  "observation_coverage_fraction": 0.9031956735496558,
+  "overall_equal_date_mean_rank_ic": 0.014202339417516493,
+  "pairwise_eligible_observations": 183710,
+  "parameter_search": false,
+  "population_observations": 203400,
+  "positive_ic_dates": 1092,
+  "positive_ic_share": 0.5449101796407185,
+  "provider_requests": 0,
+  "qualified": false,
+  "schema_version": "prices-v1-57f2c4d2d2d497b5826e9799fc31af56e28abf769268b4e5f249058d3ba7f49d",
+  "snapshot_id": "28a7609b53682484fecf1c802db6f11e295b9445460e99097720fae1015557ba",
+  "spec_fingerprints": {
+    "dataset": "9a7a1c0b5031f0a9a34ef0d9390fc0bf05fec15528e7382f509ac40263d44bd2",
+    "evaluation": "a311d9567bca352f182c48536ddef56a3244b329618428d444b9b0fb92539415",
+    "feature": "1e6cea66d32fa9cc52024142f03e846672c0a842ccd84da8dbd873f8b89b7510",
+    "outcome": "259ffcbb589dab9ca269aea237d37e456b13fa4ded7fc8e99861fc5aa1250dd1"
+  },
+  "status": "COMPLETED",
+  "stored_benchmark_sessions": 2034,
+  "undefined_ic_dates": 30,
+  "window": {
+    "end": "2026-10-06",
+    "start": "2018-08-07"
+  },
+  "zero_ic_dates": 0
+}
